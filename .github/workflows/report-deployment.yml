@@ -44,7 +44,7 @@ jobs:
       - name: Checkout evdt-service-shipscope (scripts + data)
         uses: actions/checkout@v4
         with:
-          repository: TWOJ-LOGIN/evdt-service-shipscope
+          repository: dbqm45/evdt-service-shipscope
           token: ${{ secrets.STATUS_REPO_TOKEN }}
           path: shipscope
 

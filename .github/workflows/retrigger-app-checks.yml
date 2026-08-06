@@ -13,7 +13,7 @@ jobs:
 
       - name: Re-run failed flag metadata checks in the app repo
         env:
-          APP_REPO: TWOJ-LOGIN/doc_test
+          APP_REPO: dbqm45/doc_test
           APP_REPO_RERUN_TOKEN: ${{ secrets.APP_REPO_RERUN_TOKEN }}
           WORKFLOW_FILE: check-flags-trigger.yml
         run: node scripts/retrigger-app-checks.js

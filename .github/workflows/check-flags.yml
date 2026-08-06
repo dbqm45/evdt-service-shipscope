@@ -20,7 +20,7 @@ jobs:
       - name: Checkout evdt-service-shipscope (scripts + data)
         uses: actions/checkout@v4
         with:
-          repository: TWOJ-LOGIN/evdt-service-shipscope
+          repository: dbqm45/evdt-service-shipscope
           token: ${{ secrets.STATUS_REPO_TOKEN }}
           path: shipscope
 
@@ -42,5 +42,5 @@ jobs:
         env:
           FLAGS_META_PATH: shipscope/docs/data/flags-meta.json
           FLAGS_SEARCH_ROOT: ${{ inputs.FLAGS_SEARCH_ROOT }}
-          STATUS_REPO_EDIT_URL: https://github.com/TWOJ-LOGIN/evdt-service-shipscope/edit/main/docs/data/flags-meta.json
+          STATUS_REPO_EDIT_URL: https://github.com/dbqm45/evdt-service-shipscope/edit/main/docs/data/flags-meta.json
         run: node shipscope/scripts/check-flags-metadata.js
