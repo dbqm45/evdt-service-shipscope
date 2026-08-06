@@ -1,0 +1,70 @@
+{
+  "feature_1_Enabled": {
+    "test": {
+      "enabled": true,
+      "changedAt": "2026-08-02T21:11:33Z",
+      "changedBy": "dbqm45"
+    },
+    "qa": {
+      "enabled": true,
+      "changedAt": "2026-08-02T21:11:33Z",
+      "changedBy": "dbqm45"
+    },
+    "prod": {
+      "enabled": false,
+      "changedAt": "2026-08-03T12:11:33Z",
+      "changedBy": "dbqm45"
+    }
+  },
+  "feature_2_Enabled": {
+    "test": {
+      "enabled": true,
+      "changedAt": "2026-08-02T21:11:33Z",
+      "changedBy": "dbqm45"
+    },
+    "qa": {
+      "enabled": true,
+      "changedAt": "2026-08-02T21:11:33Z",
+      "changedBy": "dbqm45"
+    },
+    "prod": {
+      "enabled": false,
+      "changedAt": "2026-08-03T12:11:33Z",
+      "changedBy": "dbqm45"
+    }
+  },
+  "feature_3_Enabled": {
+    "test": {
+      "enabled": true,
+      "changedAt": "2026-08-02T21:11:33Z",
+      "changedBy": "dbqm45"
+    },
+    "qa": {
+      "enabled": true,
+      "changedAt": "2026-08-02T21:11:33Z",
+      "changedBy": "dbqm45"
+    },
+    "prod": {
+      "enabled": false,
+      "changedAt": "2026-08-03T12:11:33Z",
+      "changedBy": "dbqm45"
+    }
+  },
+  "changeCpmsAllowed": {
+    "test": {
+      "enabled": true,
+      "changedAt": "2026-06-23T01:11:33Z",
+      "changedBy": "m.nowak"
+    },
+    "qa": {
+      "enabled": true,
+      "changedAt": "2026-08-03T11:11:33Z",
+      "changedBy": "m.nowak (BE)"
+    },
+    "prod": {
+      "enabled": true,
+      "changedAt": "2026-06-23T01:11:33Z",
+      "changedBy": "m.nowak"
+    }
+  }
+}

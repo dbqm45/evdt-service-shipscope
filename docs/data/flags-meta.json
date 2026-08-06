@@ -1,0 +1,39 @@
+{
+  "feature_1_Enabled": {
+    "description": "New OCPP list for operators (demo mapping)",
+    "source": "build",
+    "jiraKeys": [
+      "SCRUM-5"
+    ],
+    "components": [
+      "evapl-service-frontend"
+    ]
+  },
+  "feature_2_Enabled": {
+    "description": "TODO — describe this flag",
+    "source": "build",
+    "jiraKeys": [],
+    "components": [
+      "evapl-service-frontend"
+    ]
+  },
+  "feature_3_Enabled": {
+    "description": "TODO — describe this flag",
+    "source": "build",
+    "jiraKeys": [],
+    "components": [
+      "evapl-service-frontend"
+    ]
+  },
+  "changeCpmsAllowed": {
+    "description": "Ability to change CPMS — controlled by BE",
+    "source": "runtime-be",
+    "jiraKeys": [
+      "SCRUM-8",
+      "SCRUM-10"
+    ],
+    "components": [
+      "evapl-service-frontend"
+    ]
+  }
+}

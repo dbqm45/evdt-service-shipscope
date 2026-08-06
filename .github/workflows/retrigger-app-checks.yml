@@ -1,0 +1,19 @@
+name: Retrigger app repo checks
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'docs/data/flags-meta.json'
+
+jobs:
+  retrigger:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Re-run failed flag metadata checks in the app repo
+        env:
+          APP_REPO: TWOJ-LOGIN/doc_test
+          APP_REPO_RERUN_TOKEN: ${{ secrets.APP_REPO_RERUN_TOKEN }}
+          WORKFLOW_FILE: check-flags-trigger.yml
+        run: node scripts/retrigger-app-checks.js

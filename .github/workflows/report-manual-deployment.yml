@@ -1,0 +1,43 @@
+name: Report manual deployment
+on:
+  workflow_dispatch:
+    inputs:
+      component:
+        description: 'Component name (e.g. evapl-service-frontend)'
+        required: true
+      environment:
+        required: true
+        type: choice
+        options: [test, qa, prod]
+      version:
+        description: 'Version / build identifier'
+        required: true
+      relatedIssues:
+        description: 'Jira keys, comma-separated (e.g. SCRUM-5, SCRUM-7)'
+        required: false
+
+permissions:
+  contents: write
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Record manual deployment
+        env:
+          COMPONENT: ${{ github.event.inputs.component }}
+          ENVIRONMENT: ${{ github.event.inputs.environment }}
+          VERSION: ${{ github.event.inputs.version }}
+          RELATED_ISSUES: ${{ github.event.inputs.relatedIssues }}
+          DEPLOYED_BY: ${{ github.actor }}
+        run: node scripts/report-manual-deployment.js
+
+      - name: Commit and push
+        run: |
+          git config user.name "manual-deploy-bot"
+          git config user.email "bot@users.noreply.github.com"
+          git add docs/data/deployments.json
+          git commit -m "chore: record manual deployment (${{ github.event.inputs.component }} -> ${{ github.event.inputs.environment }})"
+          git push

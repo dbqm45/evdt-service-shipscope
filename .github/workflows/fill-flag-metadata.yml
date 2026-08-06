@@ -1,0 +1,46 @@
+name: Fill flag metadata
+on:
+  workflow_dispatch:
+    inputs:
+      flagKey:
+        description: 'Flag key (must match the property name in the *-flags.ts interface)'
+        required: true
+      description:
+        description: 'Short description of what this flag does'
+        required: false
+      source:
+        description: 'How this flag is controlled'
+        required: true
+        type: choice
+        options: [build, runtime-be]
+      jiraKeys:
+        description: 'Jira keys, comma-separated (e.g. SCRUM-5, SCRUM-11)'
+        required: true
+      components:
+        description: 'Components, comma-separated (e.g. chargers-fe, chargers-be)'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  fill:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fill in flag metadata
+        env:
+          FLAG_KEY: ${{ github.event.inputs.flagKey }}
+          DESCRIPTION: ${{ github.event.inputs.description }}
+          SOURCE: ${{ github.event.inputs.source }}
+          JIRA_KEYS: ${{ github.event.inputs.jiraKeys }}
+          COMPONENTS: ${{ github.event.inputs.components }}
+        run: node scripts/fill-flag-metadata.js
+
+      - name: Commit and push
+        run: |
+          git config user.name "flags-meta-bot"
+          git config user.email "bot@users.noreply.github.com"
+          git add docs/data/flags-meta.json
+          git diff --staged --quiet && echo "No changes" || (git commit -m "chore: fill metadata for ${{ github.event.inputs.flagKey }}" && git push)

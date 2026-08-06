@@ -1,0 +1,31 @@
+[
+  {
+    "key": "EBO-2345",
+    "type": "Epic",
+    "title": "New OCPP list for operators",
+    "pi": "PI24.4",
+    "dependencyBlocked": false
+  },
+  {
+    "key": "EBO-2410",
+    "type": "Story",
+    "title": "Nuvolo integration — asset visibility",
+    "pi": "PI24.4",
+    "dependencyBlocked": true,
+    "dependencyNote": "Waiting on API contract from the Nuvolo team"
+  },
+  {
+    "key": "EBO-2201",
+    "type": "Story",
+    "title": "Charger templates — bulk configuration",
+    "pi": "PI24.3",
+    "dependencyBlocked": false
+  },
+  {
+    "key": "EBO-1128",
+    "type": "Task",
+    "title": "Change CPMS from the panel",
+    "pi": "PI25.1",
+    "dependencyBlocked": false
+  }
+]

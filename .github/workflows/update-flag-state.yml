@@ -1,0 +1,47 @@
+name: Update flag state
+on:
+  workflow_dispatch:
+    inputs:
+      flagKey:
+        description: 'Flag key (e.g. changeCpmsAllowed)'
+        required: true
+      environment:
+        description: 'Environment'
+        required: true
+        type: choice
+        options: [dev, qa, prod]
+      enabled:
+        description: 'New state'
+        required: true
+        type: choice
+        options: ['true', 'false']
+      changedBy:
+        description: 'Who/what is making this change'
+        required: false
+        default: 'manual-test'
+  repository_dispatch:
+    types: [flag-changed]
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Update flag-states.json
+        env:
+          FLAG_KEY: ${{ github.event.inputs.flagKey || github.event.client_payload.flagKey }}
+          ENVIRONMENT: ${{ github.event.inputs.environment || github.event.client_payload.environment }}
+          ENABLED: ${{ github.event.inputs.enabled || github.event.client_payload.enabled }}
+          CHANGED_BY: ${{ github.event.inputs.changedBy || github.event.client_payload.changedBy }}
+        run: node scripts/update-flag-state.js
+
+      - name: Commit and push if changed
+        run: |
+          git config user.name "flag-sync-bot"
+          git config user.email "bot@users.noreply.github.com"
+          git add docs/data/flag-states.json
+          git diff --staged --quiet || (git commit -m "chore: update flag state" && git push)
