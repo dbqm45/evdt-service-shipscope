@@ -1,20 +1,28 @@
-// scripts/scaffold-flags-meta.js
-//
-// Discovers all boolean flags across *-flags.ts interfaces, and for any flag
-// not yet present in flags-meta.json, adds a stub entry with empty
-// jiraKeys/components. Does NOT guess those values — that's a human decision.
-// The metadata check (check-flags-metadata.js) will still fail on these
-// stubs until someone fills them in; this script just removes the busywork
-// of typing out the JSON structure by hand.
-
 const fs = require('fs');
+const path = require('path');
 const { discoverAllFlags } = require('./lib/extract-flags');
 
-const FLAGS_META_PATH = process.env.FLAGS_META_PATH || 'status-repo/docs/data/flags-meta.json';
-const SEARCH_ROOT = process.env.FLAGS_SEARCH_ROOT || 'domains';
+function safeRelativePath(inputPath, label) {
+    const normalized = path.normalize(inputPath);
+
+    if (path.isAbsolute(normalized) || normalized.split(path.sep).includes('..')) {
+        console.error(`Error: ${label} "${inputPath}" is not a safe relative path — refusing to use it.`);
+        process.exit(1);
+    }
+
+    return normalized;
+}
+
+const FLAGS_META_PATH = safeRelativePath(
+    process.env.FLAGS_META_PATH || 'status-repo/docs/data/flags-meta.json',
+    'FLAGS_META_PATH'
+);
+const SEARCH_ROOT = safeRelativePath(process.env.FLAGS_SEARCH_ROOT || 'domains', 'FLAGS_SEARCH_ROOT');
+const COMPONENT = process.env.COMPONENT || '';
 
 function main() {
     const flags = discoverAllFlags(SEARCH_ROOT);
+
     if (!flags.length) {
         console.log(`No *.generated.ts files found under "${SEARCH_ROOT}" — nothing to scaffold.`);
         return;
@@ -25,13 +33,15 @@ function main() {
         : {};
 
     const added = [];
+
     for (const { key } of flags) {
         if (!flagsMeta[key]) {
             flagsMeta[key] = {
                 description: 'TODO — describe this flag',
-                source: 'build', // adjust to "runtime-be" if this flag can change without a FE deploy
+                source: 'build',
                 jiraKeys: [],
-                components: [],
+                components: COMPONENT ? [COMPONENT] : [],
+                createdAt: new Date().toISOString(),
             };
             added.push(key);
         }

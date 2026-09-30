@@ -1,0 +1,36 @@
+name: Backfill Jira issues for PI(s)
+on:
+  workflow_dispatch:
+    inputs:
+      pis:
+        description: 'PI(s) to (re)fetch, comma/space-separated (e.g. "PI-27.1, PI-26.5" or "27.1 26.5") — the default sync only ever fetches the current PI, so use this to seed or refresh any other one.'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: live
+
+      - name: Backfill requested PI(s)
+        env:
+          JIRA_BASE_URL: ${{ secrets.JIRA_BASE_URL }}
+          JIRA_EMAIL: ${{ secrets.JIRA_EMAIL }}
+          JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
+          BACKFILL_PIS: ${{ github.event.inputs.pis }}
+        uses: ./.github/actions/sync-with-retry
+        with:
+          run: node scripts/sync-jira.js
+          paths: docs/data/jira-issues
+          message: "chore: backfill jira issues (${{ github.event.inputs.pis }})"
+          bot-name: orchestrator-bot
+          # Same reasoning as backfill-deployment-metadata.js's cap: this script's own Jira fetch is
+          # cached per exact JQL within a job (see scripts/lib/retry-cache.js), but a losing push still
+          # means redoing that cached-but-non-trivial lookup once — workflow_dispatch-only, so the race
+          # this guards against is rare; capped lower just to bound wasted work if it ever happens.
+          max-attempts: '2'

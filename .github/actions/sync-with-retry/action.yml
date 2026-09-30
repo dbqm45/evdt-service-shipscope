@@ -1,0 +1,64 @@
+name: Sync with retry
+description: >-
+  Runs a sync command, commits any resulting changes, and pushes — retrying by re-running the sync command
+  against the latest remote state if the push loses a race to another workflow run writing to the same
+  branch. Safe because every sync script this calls already does a full read-existing-JSON -> merge ->
+  write-back cycle, so redoing it against freshly-fetched data naturally incorporates whatever anyone else
+  already pushed, instead of replaying a stale, already-computed diff.
+
+inputs:
+  run:
+    description: Shell command(s) that (re)generate the change. Re-invoked on every retry attempt.
+    required: true
+  paths:
+    description: Space-separated paths to `git add` after running the command.
+    required: true
+  message:
+    description: Commit message to use when there are staged changes.
+    required: true
+  bot-name:
+    description: git user.name for the commit. Email is always bot@users.noreply.github.com.
+    required: true
+  working-directory:
+    description: Directory to run the command and git operations in.
+    required: false
+    default: '.'
+  max-attempts:
+    description: How many times to retry after a losing push before giving up.
+    required: false
+    default: '5'
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        git config user.name "${{ inputs.bot-name }}"
+        git config user.email "bot@users.noreply.github.com"
+        branch=$(git rev-parse --abbrev-ref HEAD)
+
+        for attempt in $(seq 1 "${{ inputs.max-attempts }}"); do
+          ${{ inputs.run }}
+          git add ${{ inputs.paths }}
+
+          if git diff --staged --quiet; then
+            echo "No changes to commit."
+            exit 0
+          fi
+
+          git commit -m "${{ inputs.message }}"
+
+          if git push; then
+            echo "Pushed on attempt $attempt."
+            exit 0
+          fi
+
+          echo "::warning::Push to $branch rejected (another run pushed first) — regenerating and retrying (attempt $attempt/${{ inputs.max-attempts }})."
+          git fetch origin "$branch"
+          git reset --hard "origin/$branch"
+          sleep $((RANDOM % 5 + 1))
+        done
+
+        echo "::error::Giving up after ${{ inputs.max-attempts }} attempts to push to $branch."
+        exit 1

@@ -1,0 +1,64 @@
+name: Backfill deployment metadata
+on:
+  workflow_dispatch:
+    inputs:
+      max_records_per_run:
+        description: 'Max deployments per component to resolve workflowRunUrl/duration/manual for in this run (rerun to continue if truncated)'
+        required: false
+        default: '500'
+
+permissions:
+  contents: write
+
+jobs:
+  prepare:
+    name: Determine which components to backfill
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: live
+
+      - id: set
+        run: |
+          MATRIX=$(jq -c '{include: [.components[] | {repo: .name, component: .name}]}' docs/components.json)
+          echo "matrix=$MATRIX" >> "$GITHUB_OUTPUT"
+
+  backfill:
+    needs: prepare
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix: ${{ fromJson(needs.prepare.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: live
+
+      - uses: actions/create-github-app-token@v3
+        id: app-token
+        with:
+          client-id: ${{ secrets.CIRCLEK_GLOBAL_GITHUB_EVDT_APP_ID }}
+          private-key: ${{ secrets.CIRCLEK_GLOBAL_GITHUB_EVDT_APP_PRIVATE_KEY }}
+          repositories: ${{ matrix.repo }}
+
+      - name: Backfill deployment metadata
+        env:
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+          APP_REPO: circlek-global/${{ matrix.repo }}
+          COMPONENT: ${{ matrix.component }}
+          MAX_RECORDS_PER_RUN: ${{ github.event.inputs.max_records_per_run }}
+        uses: ./.github/actions/sync-with-retry
+        with:
+          run: node scripts/backfill-deployment-metadata.js
+          paths: docs/data/deployments.json
+          message: "chore: backfill deployment metadata (${{ matrix.component }})"
+          bot-name: orchestrator-bot
+          # This script isn't cache-safe like sync-github-deployments.js — it mutates existing records
+          # in place across several capped, rate-limited phases, so a retry redoes real API work. It's
+          # workflow_dispatch-only (manual, not on the automatic deploy/cron path), so the race this
+          # guards against is much rarer here; capped lower just to bound wasted work if it ever happens.
+          max-attempts: '2'

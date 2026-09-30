@@ -6,8 +6,15 @@ on:
       FLAGS_SEARCH_ROOT:
         required: true
         type: string
+      COMPONENT:
+        description: 'Component name flags discovered here should be attributed to. Leave empty to auto-detect from the calling repo name.'
+        required: false
+        type: string
+        default: ''
     secrets:
-      STATUS_REPO_TOKEN:
+      SHIPSCOPE_APP_ID:
+        required: true
+      SHIPSCOPE_APP_PRIVATE_KEY:
         required: true
 
 jobs:
@@ -15,32 +22,72 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout caller repo (has the *.generated.ts files)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
+
+      - uses: actions/create-github-app-token@v3
+        id: app-token
+        with:
+          client-id: ${{ secrets.SHIPSCOPE_APP_ID }}
+          private-key: ${{ secrets.SHIPSCOPE_APP_PRIVATE_KEY }}
+          repositories: evdt-service-shipscope
 
       - name: Checkout evdt-service-shipscope (scripts + data)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
-          repository: dbqm45/evdt-service-shipscope
-          token: ${{ secrets.STATUS_REPO_TOKEN }}
+          repository: circlek-global/evdt-service-shipscope
+          token: ${{ steps.app-token.outputs.token }}
+          ref: live
           path: shipscope
 
-      - name: Scaffold stub entries for any newly-discovered flags
+      - name: Scaffold new flags + resolve build-time flag states
         env:
           FLAGS_META_PATH: shipscope/docs/data/flags-meta.json
           FLAGS_SEARCH_ROOT: ${{ inputs.FLAGS_SEARCH_ROOT }}
-        run: node shipscope/scripts/scaffold-flags-meta.js
-
-      - name: Commit and push scaffolded stubs (if any)
+          FLAG_STATES_PATH: shipscope/docs/data/flag-states.json
+          FLAG_STATE_HISTORY_PATH: shipscope/docs/data/flag-state-history.json
+          CHANGED_BY: ${{ github.actor }}
+          COMPONENT: ${{ inputs.COMPONENT != '' && inputs.COMPONENT || github.event.repository.name }}
+        # Not using ./.github/actions/sync-with-retry here: FLAGS_SEARCH_ROOT is relative to *this* repo's
+        # own checkout (workspace root), while the git repo to commit/push into is the `shipscope`
+        # checkout — two different working directories in the same step, which that action's single
+        # `working-directory` can't express. `git -C shipscope` keeps the retry loop scoped to the right
+        # repo without changing the shell's cwd (and therefore without moving where FLAGS_SEARCH_ROOT
+        # resolves from).
         run: |
-          cd shipscope
-          git config user.name "flags-scaffold-bot"
-          git config user.email "bot@users.noreply.github.com"
-          git add docs/data/flags-meta.json
-          git diff --staged --quiet || (git commit -m "chore: scaffold new flag metadata stub(s)" && git push)
+          git -C shipscope config user.name "flags-scaffold-bot"
+          git -C shipscope config user.email "bot@users.noreply.github.com"
+          branch=$(git -C shipscope rev-parse --abbrev-ref HEAD)
+
+          for attempt in $(seq 1 5); do
+            node shipscope/scripts/scaffold-flags-meta.js
+            node shipscope/scripts/resolve-all-flag-states.js
+
+            git -C shipscope add docs/data/flags-meta.json docs/data/flag-states.json docs/data/flag-state-history.json
+
+            if git -C shipscope diff --staged --quiet; then
+              echo "No changes to commit."
+              exit 0
+            fi
+
+            git -C shipscope commit -m "chore: scaffold new flags + resolve build-time flag states"
+
+            if git -C shipscope push; then
+              echo "Pushed on attempt $attempt."
+              exit 0
+            fi
+
+            echo "::warning::Push to shipscope/$branch rejected (another run pushed first) — regenerating and retrying (attempt $attempt/5)."
+            git -C shipscope fetch origin "$branch"
+            git -C shipscope reset --hard "origin/$branch"
+            sleep $((RANDOM % 5 + 1))
+          done
+
+          echo "::error::Giving up after 5 attempts to push to shipscope/$branch."
+          exit 1
 
       - name: Check flag metadata completeness
         env:
           FLAGS_META_PATH: shipscope/docs/data/flags-meta.json
           FLAGS_SEARCH_ROOT: ${{ inputs.FLAGS_SEARCH_ROOT }}
-          STATUS_REPO_EDIT_URL: https://github.com/dbqm45/evdt-service-shipscope/edit/main/docs/data/flags-meta.json
+          STATUS_REPO_EDIT_URL: https://github.com/circlek-global/evdt-service-shipscope/edit/main/docs/data/flags-meta.json
         run: node shipscope/scripts/check-flags-metadata.js

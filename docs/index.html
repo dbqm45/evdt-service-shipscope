@@ -1,500 +1,191 @@
 <!DOCTYPE html>
 <html lang="pl">
 <head>
-  <meta charset="UTF-8">
-  <title>ShipScope — Deployment Tracker</title>
-  <style>
-    :root {
-      --bg: #0d1117; --panel: #151b23; --panel-2: #1c232d; --border: #2a323d;
-      --text: #e6edf3; --muted: #8b949e;
-      --mono: 'SFMono-Regular', 'JetBrains Mono', Consolas, monospace;
-      --ok: #3fb950; --fail: #f85149; --run: #d29922; --rollback: #a371f7; --blocked: #f85149;
-    }
-    * { box-sizing: border-box; }
-    body { margin:0; background:var(--bg); color:var(--text); font-family:-apple-system,"Inter","Segoe UI",sans-serif; font-size:14px; }
-    .wrap { max-width:1220px; margin:0 auto; padding:28px 20px 60px; }
-    header { display:flex; align-items:baseline; justify-content:space-between; margin-bottom:14px; flex-wrap:wrap; gap:10px;}
-    h1 { font-size:19px; font-weight:650; margin:0; letter-spacing:-0.01em; }
-    .sub { color:var(--muted); font-size:12.5px; margin-top:3px; }
-    .data-source { font-size:11px; padding:4px 10px; border-radius:20px; border:1px solid var(--border); color:var(--muted); background:var(--panel-2); }
-    .data-source.live { color:var(--ok); border-color:rgba(63,185,80,0.3); }
-    .data-source.fallback { color:var(--run); border-color:rgba(210,153,34,0.3); }
-
-    .tabs { display:flex; gap:6px; margin-bottom:18px; border-bottom:1px solid var(--border); }
-    .tab { padding:9px 4px; margin-right:14px; font-size:13px; font-weight:600; color:var(--muted); cursor:pointer; border-bottom:2px solid transparent; }
-    .tab.active { color:var(--text); border-bottom-color:#1f6feb; }
-    .view { display:none; } .view.active { display:block; }
-
-    .matrix { display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:14px; margin-bottom:26px; }
-    .env-card { background:var(--panel); border:1px solid var(--border); border-radius:10px; padding:16px; }
-    .env-title { font-weight:650; font-size:13px; display:flex; align-items:center; gap:8px; margin-bottom:12px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); }
-    .env-title .dot { width:7px;height:7px;border-radius:50%; }
-    .env-test .dot{background:#58a6ff} .env-qa .dot{background:var(--run)} .env-prod .dot{background:var(--fail)}
-    .comp-row { display:flex; align-items:center; justify-content:space-between; padding:9px 0; border-top:1px solid var(--border); cursor:pointer; }
-    .snapshot-section-label { font-size:10.5px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); font-weight:650; padding:12px 0 4px; }
-    .snapshot-flags-label { border-top:1px solid var(--border); margin-top:6px; }
-    .flag-row { display:flex; justify-content:space-between; align-items:center; padding:6px 0; font-size:12.5px; }
-    .flag-row-name { font-family:var(--mono); color:var(--text); }
-    .flag-row-state { font-size:10.5px; font-weight:650; text-transform:uppercase; letter-spacing:.03em; }
-    .flag-on-text { color:var(--ok); }
-    .flag-off-text { color:var(--muted); }
-    .comp-row:first-of-type { border-top:none; }
-    .comp-row:hover { background:rgba(255,255,255,0.02); margin:0 -8px; padding:9px 8px; border-radius:6px; }
-    .comp-name { font-weight:500; }
-    .comp-meta { text-align:right; }
-    .version { font-family:var(--mono); font-size:12.5px; }
-    .status-dot { display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:6px; vertical-align:middle; }
-    .status-success{background:var(--ok)} .status-failed{background:var(--fail)} .status-rolled_back{background:var(--rollback)}
-    .rel-time { color:var(--muted); font-size:11.5px; margin-top:2px; }
-
-    .cols { display:grid; grid-template-columns:1.4fr 1fr; gap:16px; align-items:start; }
-    @media (max-width:860px) { .cols { grid-template-columns:1fr; } }
-    .panel { background:var(--panel); border:1px solid var(--border); border-radius:10px; overflow:hidden; }
-    .panel-head { padding:13px 16px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;}
-    .panel-head h2 { font-size:13px; margin:0; font-weight:650; }
-    .panel-body { max-height:480px; overflow-y:auto; }
-    select, input { background:var(--panel-2); color:var(--text); border:1px solid var(--border); border-radius:6px; padding:5px 8px; font-size:12px; }
-
-    .deploy-item { padding:12px 16px; border-bottom:1px solid var(--border); }
-    .deploy-item:last-child { border-bottom:none; }
-    .deploy-top { display:flex; justify-content:space-between; align-items:baseline; gap:8px;}
-    .deploy-comp { font-weight:600; }
-    .deploy-env-tag { font-size:10.5px; padding:1px 7px; border-radius:20px; background:var(--panel-2); color:var(--muted); border:1px solid var(--border); text-transform:uppercase; letter-spacing:.03em;}
-    .manual-badge { font-size:10.5px; padding:1px 7px; border-radius:20px; background:rgba(210,153,34,0.15); color:var(--run); border:1px solid rgba(210,153,34,0.3); text-transform:uppercase; letter-spacing:.03em; margin-left:6px; }
-    .deploy-meta { color:var(--muted); font-size:12px; margin-top:3px; }
-    .issue-badge { display:inline-block; font-family:var(--mono); font-size:10.5px; background:var(--panel-2); border:1px solid var(--border); padding:1px 7px; border-radius:5px; margin:6px 4px 0 0; color:#58a6ff; }
-    .resolved-flag-badge { display:inline-block; font-size:10.5px; padding:1px 7px; border-radius:5px; margin:6px 4px 0 0; }
-
-    .flag-item { padding:12px 16px; border-bottom:1px solid var(--border); }
-    .flag-item:last-child { border-bottom:none; }
-    .flag-name { font-family:var(--mono); font-weight:600; font-size:13px; }
-    .flag-desc { color:var(--muted); font-size:11.5px; margin:3px 0 8px; }
-    .flag-source { display:inline-block; font-size:10px; padding:1px 7px; border-radius:20px; margin-left:7px; text-transform:uppercase; letter-spacing:.03em; font-weight:650; vertical-align:middle; }
-    .src-build { background:rgba(88,166,255,0.15); color:#58a6ff; border:1px solid rgba(88,166,255,0.3); }
-    .src-runtime { background:rgba(210,153,34,0.15); color:var(--run); border:1px solid rgba(210,153,34,0.3); }
-    .flag-envs { display:flex; gap:6px; }
-    .flag-pill { flex:1; text-align:center; padding:6px 4px; border-radius:6px; font-size:10.5px; font-weight:650; text-transform:uppercase; letter-spacing:.03em; border:1px solid transparent; }
-    .flag-on { background:rgba(63,185,80,0.15); color:var(--ok); border-color:rgba(63,185,80,0.3); }
-    .flag-off { background:rgba(72,79,88,0.2); color:var(--muted); border-color:var(--border); }
-
-    .empty { color:var(--muted); padding:24px 16px; text-align:center; font-size:12.5px; }
-    ::-webkit-scrollbar { width:8px; } ::-webkit-scrollbar-thumb { background:var(--border); border-radius:4px; }
-
-    .filters-bar { display:flex; gap:10px; flex-wrap:wrap; margin-bottom:14px; align-items:center; }
-    .filters-bar label { color:var(--muted); font-size:11.5px; margin-right:4px; }
-    .issue-table { width:100%; border-collapse:collapse; }
-    .issue-table thead th { text-align:left; padding:10px 14px; font-size:11px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); border-bottom:1px solid var(--border); font-weight:650; }
-    .issue-row { border-bottom:1px solid var(--border); cursor:pointer; }
-    .issue-row:hover { background:rgba(255,255,255,0.02); }
-    .issue-table td { padding:11px 14px; vertical-align:middle; }
-    .issue-key { font-family:var(--mono); color:var(--muted); font-size:11.5px; }
-    .issue-title { font-weight:550; margin-top:2px; }
-    .issue-type { font-size:10px; text-transform:uppercase; letter-spacing:.03em; color:var(--muted); border:1px solid var(--border); padding:1px 6px; border-radius:4px; margin-left:7px;}
-    .pi-tag { font-size:10.5px; background:var(--panel-2); border:1px solid var(--border); padding:2px 8px; border-radius:20px; color:var(--muted); }
-    .status-pill { display:inline-flex; align-items:center; gap:5px; font-size:11px; font-weight:650; padding:4px 10px; border-radius:20px; white-space:nowrap; }
-    .status-date { color:var(--muted); font-size:11px; margin-top:5px; }
-    .st-none { background:rgba(72,79,88,0.2); color:var(--muted); }
-    .st-deployed { background:rgba(88,166,255,0.15); color:#58a6ff; }
-    .st-released { background:rgba(63,185,80,0.15); color:var(--ok); }
-    .st-partial { background:rgba(210,153,34,0.15); color:var(--run); }
-    .dep-badge { background:rgba(248,81,73,0.15); color:var(--blocked); font-size:10px; font-weight:700; padding:2px 7px; border-radius:20px; margin-left:6px; }
-    .breakdown { padding:4px 14px 14px 14px; background:rgba(255,255,255,0.015); font-size:12px; }
-    .breakdown-title { color:var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:.03em; padding:10px 0 8px; font-weight:650; }
-    .breakdown-table { width:100%; border-collapse:collapse; margin-bottom:8px; }
-    .breakdown-table th { text-align:left; font-size:10.5px; text-transform:uppercase; letter-spacing:.03em; color:var(--muted); padding:5px 8px; border-bottom:1px solid var(--border); font-weight:600; }
-    .breakdown-table td { padding:6px 8px; font-size:12px; border-bottom:1px dashed var(--border); }
-    .breakdown-table tr:last-child td { border-bottom:none; }
-    .breakdown-table .mono { font-family:var(--mono); color:var(--muted); font-size:11.5px; }
-    .dot-yes { color:var(--ok); }
-    .dot-no { color:var(--muted); }
-    .breakdown-hint { color:var(--muted); font-size:11px; font-style:italic; padding-bottom:6px; }
-    .breakdown-row { display:flex; justify-content:space-between; padding:5px 0; border-bottom:1px dashed var(--border); color:var(--muted); }
-    .breakdown-row:last-child { border-bottom:none; }
-    .breakdown-row b { color:var(--text); font-weight:550; }
-  </style>
+    <meta charset="UTF-8">
+    <title>ShipScope — Deployment Tracker</title>
+    <link rel="icon" type="image/svg+xml" href="favicon.svg">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
 </head>
 <body>
 <div class="wrap">
-  <header>
-    <div>
-      <h1>ShipScope <span style="color:var(--muted); font-weight:500;">— Deployment Tracker</span></h1>
-      <div class="sub">Environment status, feature flags, and release status per Epic/US — reads static data from <code>data/*.json</code></div>
-    </div>
-    <span class="data-source" id="dataSourceTag">loading data…</span>
-  </header>
-
-  <div class="tabs">
-    <div class="tab active" data-view="product">Product view (PI)</div>
-    <div class="tab" data-view="tech">Technical view</div>
-  </div>
-
-  <div class="view active" id="view-product">
-    <div class="filters-bar">
-      <div><label>PI</label><select id="filterPi"><option value="">All</option></select></div>
-      <div><label>Type</label><select id="filterType"><option value="">All</option><option value="Epic">Epic</option><option value="Story">Story</option><option value="Task">Task</option></select></div>
-      <div><label>Changed from</label><input type="date" id="filterFrom"></div>
-      <div><label>to</label><input type="date" id="filterTo"></div>
-      <button style="background:var(--panel-2); border:1px solid var(--border); color:var(--text); padding:7px 13px; border-radius:7px; font-size:12.5px; cursor:pointer;" id="btnClearFilters">Clear filters</button>
-      <span class="sub" id="issueCount" style="margin-left:auto;"></span>
-    </div>
-    <div class="panel">
-      <div class="panel-body" style="max-height:none;">
-        <table class="issue-table">
-          <thead>
-          <tr>
-            <th>Epics / User Stories / Tasks</th>
-            <th></th>
-            <th>QA</th>
-            <th>PROD</th>
-          </tr>
-          </thead>
-          <tbody id="issueBody"></tbody>
-        </table>
-      </div>
-    </div>
-  </div>
-
-  <div class="view" id="view-tech">
-    <div class="matrix" id="matrix"></div>
-    <div class="cols">
-      <div class="panel">
-        <div class="panel-head">
-          <h2>Deployment history</h2>
-          <select id="filterEnv"><option value="">All environments</option></select>
+    <header>
+        <div class="brand">
+            <div class="mark">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 4 14h7l-1 8 9-12h-7l1-8z"/></svg>
+            </div>
+            <div class="brand-text">
+                <span class="brand-name">ShipScope</span>
+                <span class="brand-sep">/</span>
+                <span class="brand-page">Deployment Tracker</span>
+            </div>
         </div>
-        <div class="panel-body" id="timeline"></div>
-      </div>
-      <div class="panel">
-        <div class="panel-head"><h2>Feature flags per environment</h2></div>
-        <div class="panel-body" id="flags"></div>
-      </div>
+        <div class="status-badge" id="statusBadge">
+            <span class="status-badge-dot"></span>
+            <span id="statusBadgeLabel">Loading…</span>
+            <span class="status-badge-time" id="statusBadgeTime"></span>
+        </div>
+    </header>
+
+    <div class="tabs-row">
+        <div class="tabs">
+            <div class="tab active" data-view="product">Product view (PI)</div>
+            <div class="tab" data-view="tech">Technical view</div>
+            <div class="tab" data-view="notes">Release Notes</div>
+            <div class="tab" data-view="insights" style="display:none">Insights</div>
+        </div>
+        <div class="ctrl-select" id="globalPiSelectWrap">
+            <label for="globalPiSelect">PI</label>
+            <select id="globalPiSelect"></select>
+        </div>
     </div>
-  </div>
+
+    <div class="view active" id="view-product">
+        <div class="pv-summary" id="pvSummary"></div>
+
+        <div class="pv-filters">
+            <div class="segmented" id="filterTypeGroup" role="group" aria-label="Work item type">
+                <button type="button" class="segmented-btn active" data-value="">All</button>
+            </div>
+            <input type="hidden" id="filterType" value="" />
+            <div class="ctrl-select">
+                <label for="filterPriority">Priority</label>
+                <select id="filterPriority">
+                    <option value="">All</option>
+                </select>
+            </div>
+            <div class="ctrl-select ctrl-select-date">
+                <label for="filterFrom">From</label>
+                <input type="date" id="filterFrom" />
+            </div>
+            <div class="ctrl-select ctrl-select-date">
+                <label for="filterTo">To</label>
+                <input type="date" id="filterTo" />
+            </div>
+            <button class="pv-clear" id="btnClearFilters">Clear</button>
+            <span class="pv-count" id="issueCount" style="margin-left:auto;"></span>
+        </div>
+
+        <div class="table-legend">
+            <span><span class="legend-dot st-released"></span>Released</span>
+            <span><span class="legend-dot st-deployed"></span>Code deployed</span>
+            <span><span class="legend-dot st-partial"></span>Partial</span>
+            <span><span class="legend-dot st-dependency"></span>Dependency</span>
+            <span><span class="legend-dot st-none"></span>Not deployed</span>
+        </div>
+
+        <div class="wi-table">
+            <div class="wi-body" id="productPanelBody" style="max-height:calc(100vh - 230px); min-height:300px;">
+                <div class="wi-row wi-head">
+                    <div>Work item</div>
+                    <div><svg class="th-icon" viewBox="0 0 16 16" width="10" height="10" aria-hidden="true"><rect x="1" y="9" width="3" height="6" rx="1" fill="#ECEEF1"/><rect x="6.5" y="5" width="3" height="10" rx="1" fill="#33373D"/><rect x="12" y="1" width="3" height="14" rx="1" fill="#33373D"/></svg>TEST</div>
+                    <div><svg class="th-icon" viewBox="0 0 16 16" width="10" height="10" aria-hidden="true"><rect x="1" y="9" width="3" height="6" rx="1" fill="#ECEEF1"/><rect x="6.5" y="5" width="3" height="10" rx="1" fill="#ECEEF1"/><rect x="12" y="1" width="3" height="14" rx="1" fill="#33373D"/></svg>QA</div>
+                    <div><svg class="th-icon" viewBox="0 0 16 16" width="10" height="10" aria-hidden="true"><rect x="1" y="9" width="3" height="6" rx="1" fill="#ECEEF1"/><rect x="6.5" y="5" width="3" height="10" rx="1" fill="#ECEEF1"/><rect x="12" y="1" width="3" height="14" rx="1" fill="#ECEEF1"/></svg>PROD</div>
+                </div>
+                <div id="issueBody"></div>
+            </div>
+        </div>
+    </div>
+
+    <div class="view" id="view-tech">
+        <div class="summary-grid" id="summaryGrid"></div>
+        <div class="matrix" id="matrix"></div>
+        <div class="cols">
+            <div class="dh-panel">
+                <div class="dh-head">
+                    <div class="dh-title-wrap">
+                        <h2 class="dh-title">Deployment history</h2>
+                        <span class="dh-sub" id="dhSub"></span>
+                    </div>
+                    <div class="dh-controls">
+                        <div class="ctrl-select">
+                            <select id="filterComponent" aria-label="Service">
+                                <option value="">All services</option>
+                            </select>
+                        </div>
+                        <div class="ctrl-select">
+                            <select id="filterEnv" aria-label="Environment">
+                                <option value="">All stages</option>
+                            </select>
+                        </div>
+                        <div class="ctrl-select">
+                            <select id="filterDeployRange" aria-label="Date range">
+                                <option value="">All time</option>
+                                <option value="30">Last 30 days</option>
+                                <option value="60">Last 60 days</option>
+                                <option value="90">Last 90 days</option>
+                            </select>
+                        </div>
+                        <button class="pv-clear" id="btnClearDeployFilters">Clear</button>
+                    </div>
+                </div>
+                <div class="dh-body" id="timeline"></div>
+            </div>
+            <div class="panel">
+                <div class="panel-head">
+                    <h2>Feature flags <span class="panel-head-note" id="flagsDivergeNote"></span></h2>
+                    <div class="env-filter">
+                        <div class="ctrl-select">
+                            <select id="filterFlagSource" aria-label="Flag type">
+                                <option value="">All flags</option>
+                                <option value="build">Build-time (FE)</option>
+                                <option value="runtime-be">Runtime (BE)</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+                <div class="panel-body" id="flags"></div>
+            </div>
+        </div>
+    </div>
+
+    <div class="view" id="view-notes">
+        <div class="summary-grid rn-summary-grid" id="releaseNotesSummary"></div>
+
+        <div class="pv-filters">
+            <div class="ctrl-select">
+                <label for="filterNotesApp">Service</label>
+                <select id="filterNotesApp">
+                    <option value="">All</option>
+                </select>
+            </div>
+            <div class="segmented" id="filterNotesTypeGroup" role="group" aria-label="Work item type">
+                <button type="button" class="segmented-btn active" data-value="">All</button>
+            </div>
+            <input type="hidden" id="filterNotesType" value="" />
+            <button class="pv-clear" id="btnClearNotesFilters">Clear</button>
+            <span class="pv-count" id="releaseNotesCount" style="margin-left:auto;"></span>
+        </div>
+        <div id="releaseNotesBody"></div>
+    </div>
+
+    <div class="view" id="view-insights">
+        <div class="insights-cols" style="margin-bottom:16px;">
+            <div class="panel">
+                <div class="panel-head"><h2>Release status per sprint (PROD)</h2></div>
+                <div class="panel-body" id="chartSprint"></div>
+            </div>
+            <div class="panel">
+                <div class="panel-head"><h2>Lead time: Done → PROD</h2></div>
+                <div class="panel-body" id="chartLeadTime"></div>
+            </div>
+        </div>
+        <div class="panel" style="margin-bottom:16px;">
+            <div class="panel-head"><h2>Release status per priority (PROD)</h2></div>
+            <div class="panel-body" id="chartPriority"></div>
+        </div>
+        <div class="panel" style="margin-bottom:16px;">
+            <div class="panel-head"><h2>Stale flags — days ON in PROD</h2></div>
+            <div class="panel-body" id="chartStaleFlags"></div>
+        </div>
+        <div class="panel">
+            <div class="panel-head"><h2>Rollbacks &amp; drift over time</h2></div>
+            <div class="panel-body" id="chartRollbackDrift"></div>
+        </div>
+    </div>
 </div>
 
-<script>
-  const ENVIRONMENTS = ['test','qa','prod'];
-  let state = null;
-  let expandedIssue = null;
-
-  function fmtDate(iso){ const d=new Date(iso); return d.toLocaleString('pl-PL',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}); }
-  function fmtDateShort(iso){ return new Date(iso).toLocaleDateString('pl-PL',{day:'2-digit',month:'2-digit',year:'numeric'}); }
-  function relTime(iso){
-    const s = Math.floor((Date.now()-new Date(iso).getTime())/1000);
-    if (s<60) return 'just now';
-    if (s<3600) return Math.floor(s/60)+' min ago';
-    if (s<86400) return Math.floor(s/3600)+' hr ago';
-    return Math.floor(s/86400)+' days ago';
-  }
-
-  /* ---------- Data loading: real files first, embedded fallback for standalone preview ---------- */
-  const FALLBACK = {"deployments": [{"id": "d_a1c2e3", "component": "chargers-fe", "environment": "qa", "version": "a1c2e3f", "deployedAt": "2026-07-26T18:43:41Z", "deployedBy": "ci-bot", "status": "success", "relatedIssues": ["EBO-2345"], "resolvedFlags": {"newOcppListEnabled": true}}, {"id": "d_b7d1f2", "component": "chargers-be", "environment": "qa", "version": "b7d1f2a", "deployedAt": "2026-07-26T20:43:41Z", "deployedBy": "ci-bot", "status": "success", "relatedIssues": ["EBO-2345"]}, {"id": "d_c9e0a1", "component": "chargers-fe", "environment": "prod", "version": "a1c2e3f", "deployedAt": "2026-07-28T05:43:41Z", "deployedBy": "ci-bot", "status": "success", "relatedIssues": ["EBO-2345"], "resolvedFlags": {"newOcppListEnabled": false}}, {"id": "d_f3a2b1", "component": "assets-fe", "environment": "qa", "version": "f3a2b1c", "deployedAt": "2026-07-27T14:43:41Z", "deployedBy": "ci-bot", "status": "success", "relatedIssues": ["EBO-2410"]}, {"id": "d_e5d4c3", "component": "chargers-fe", "environment": "qa", "version": "e5d4c3b", "deployedAt": "2026-07-25T22:43:41Z", "deployedBy": "j.wisniewski", "status": "success", "relatedIssues": ["EBO-2201"]}, {"id": "d_d2c1b0", "component": "chargers-fe", "environment": "prod", "version": "e5d4c3b", "deployedAt": "2026-07-27T19:43:41Z", "deployedBy": "ci-bot", "status": "success", "relatedIssues": ["EBO-2201"]}, {"id": "d_a4b3c2", "component": "chargers-be", "environment": "qa", "version": "a4b3c2d", "deployedAt": "2026-07-27T22:43:41Z", "deployedBy": "ci-bot", "status": "success", "relatedIssues": ["EBO-1128"]}, {"id": "d_1a2b3c", "component": "chargers-be", "environment": "test", "version": "1a2b3c4", "deployedAt": "2026-07-25T02:43:41Z", "deployedBy": "m.nowak", "status": "success", "relatedIssues": ["EBO-2345"]}, {"id": "d_4d5e6f", "component": "assets-be", "environment": "test", "version": "4d5e6f7", "deployedAt": "2026-07-24T16:43:41Z", "deployedBy": "a.kowalska", "status": "failed", "relatedIssues": ["EBO-2410"]}, {"id": "d_7g8h9i", "component": "assets-fe", "environment": "test", "version": "7g8h9i0", "deployedAt": "2026-07-24T11:43:41Z", "deployedBy": "ci-bot", "status": "success", "relatedIssues": ["EBO-2410"]}, {"id": "d_k1l2m3", "component": "chargers-be", "environment": "prod", "version": "k1l2m3n", "deployedAt": "2026-07-20T02:43:41Z", "deployedBy": "ci-bot", "status": "success", "relatedIssues": []}, {"id": "manual-example", "component": "chargers-be", "environment": "prod", "version": "v2.4.1-manual", "deployedAt": "2026-07-30T09:20:43Z", "deployedBy": "j.kowalski", "status": "success", "relatedIssues": ["SCRUM-5"], "manual": true}], "flagsMeta": {"newOcppListEnabled": {"description": "New OCPP list for operators", "source": "build", "jiraKeys": ["EBO-2345"], "components": ["chargers-fe", "chargers-be"]}, "templateChargersListEnabled": {"description": "Charger templates list", "source": "build", "jiraKeys": ["EBO-2201"], "components": ["chargers-fe"]}, "assetNuvoloIntegrationEnabled": {"description": "Nuvolo integration", "source": "build", "jiraKeys": ["EBO-2410"], "components": ["assets-fe", "assets-be"]}, "changeCpmsAllowed": {"description": "Ability to change CPMS — controlled by BE", "source": "runtime-be", "jiraKeys": ["EBO-1128"], "components": ["chargers-be"]}}, "flagStates": {"newOcppListEnabled": {"test": {"enabled": true, "changedAt": "2026-07-16T02:17:14Z", "changedBy": "m.nowak"}, "qa": {"enabled": true, "changedAt": "2026-07-27T08:17:14Z", "changedBy": "a.kowalska"}, "prod": {"enabled": false, "changedAt": "2026-07-16T02:17:14Z", "changedBy": "m.nowak"}}, "templateChargersListEnabled": {"test": {"enabled": true, "changedAt": "2026-07-11T22:17:14Z", "changedBy": "j.wisniewski"}, "qa": {"enabled": true, "changedAt": "2026-07-26T12:17:14Z", "changedBy": "j.wisniewski"}, "prod": {"enabled": true, "changedAt": "2026-07-28T04:17:14Z", "changedBy": "a.kowalska"}}, "assetNuvoloIntegrationEnabled": {"test": {"enabled": true, "changedAt": "2026-07-07T18:17:14Z", "changedBy": "a.kowalska"}, "qa": {"enabled": false, "changedAt": "2026-07-07T18:17:14Z", "changedBy": "a.kowalska"}, "prod": {"enabled": false, "changedAt": "2026-07-07T18:17:14Z", "changedBy": "a.kowalska"}}, "changeCpmsAllowed": {"test": {"enabled": true, "changedAt": "2026-06-16T22:17:14Z", "changedBy": "m.nowak"}, "qa": {"enabled": true, "changedAt": "2026-07-28T08:17:14Z", "changedBy": "m.nowak (BE)"}, "prod": {"enabled": true, "changedAt": "2026-06-16T22:17:14Z", "changedBy": "m.nowak"}}}, "jiraIssues": [{"key": "EBO-2345", "type": "Epic", "title": "New OCPP list for operators", "pi": "PI24.4", "dependencyBlocked": false}, {"key": "EBO-2410", "type": "Story", "title": "Nuvolo integration — asset visibility", "pi": "PI24.4", "dependencyBlocked": true, "dependencyNote": "Waiting on API contract from the Nuvolo team"}, {"key": "EBO-2201", "type": "Story", "title": "Charger templates — bulk configuration", "pi": "PI24.3", "dependencyBlocked": false}, {"key": "EBO-1128", "type": "Task", "title": "Change CPMS from the panel", "pi": "PI25.1", "dependencyBlocked": false}]};
-
-  async function loadData(){
-    try{
-      const [deployments, flagsMeta, flagStates, jiraIssues] = await Promise.all([
-        fetch('data/deployments.json').then(r=>{ if(!r.ok) throw new Error(); return r.json(); }),
-        fetch('data/flags-meta.json').then(r=>{ if(!r.ok) throw new Error(); return r.json(); }),
-        fetch('data/flag-states.json').then(r=>{ if(!r.ok) throw new Error(); return r.json(); }),
-        fetch('data/jira-issues.json').then(r=>{ if(!r.ok) throw new Error(); return r.json(); }),
-      ]);
-      document.getElementById('dataSourceTag').textContent = 'source: data/*.json (live)';
-      document.getElementById('dataSourceTag').className = 'data-source live';
-      return { deployments, flagsMeta, flagStates, jiraIssues };
-    }catch(e){
-      document.getElementById('dataSourceTag').textContent = 'source: built-in fallback data (preview without a file server)';
-      document.getElementById('dataSourceTag').className = 'data-source fallback';
-      return FALLBACK;
-    }
-  }
-
-  /* ---------- Derived lookups ---------- */
-  function flagsForIssue(issueKey){
-    return Object.entries(state.flagsMeta)
-            .filter(([key, meta]) => (meta.jiraKeys||[]).includes(issueKey))
-            .map(([key, meta]) => ({ key, ...meta }));
-  }
-  function componentDeployments(component, environment){
-    return state.deployments.filter(d=>d.component===component && d.environment===environment && d.status==='success');
-  }
-  function currentVersion(component, environment){
-    const list = componentDeployments(component, environment).sort((a,b)=> new Date(b.deployedAt)-new Date(a.deployedAt));
-    return list[0] || null;
-  }
-  function issueDeployedOnComponent(component, issueKey, env){
-    return componentDeployments(component, env).find(d => (d.relatedIssues||[]).includes(issueKey)) || null;
-  }
-  function issueLinks(issue){
-    const flags = flagsForIssue(issue.key);
-    const pairs = [];
-    flags.forEach(f => (f.components||[]).forEach(c => pairs.push({component:c, flagKey:f.key})));
-    return pairs;
-  }
-  function linkStatus(link, issueKey, env){
-    const dep = issueDeployedOnComponent(link.component, issueKey, env);
-    const fs = state.flagStates[link.flagKey] ? state.flagStates[link.flagKey][env] : null;
-    const flagOn = fs ? !!fs.enabled : false;
-    const deployed = !!dep;
-    const released = deployed && flagOn;
-    return { deployed, released, deployment: dep, flagOn, flagChangedAt: fs ? fs.changedAt : null };
-  }
-  function issueStatusForEnv(issue, env){
-    const pairs = issueLinks(issue);
-    if (!pairs.length) return { level:'none', blocked:false, results:[] };
-    const results = pairs.map(l=>({ ...linkStatus(l, issue.key, env), component:l.component, flagKey:l.flagKey }));
-    const allDeployed = results.every(r=>r.deployed);
-    const noneDeployed = results.every(r=>!r.deployed);
-    const allReleased = results.every(r=>r.released);
-    const noneReleased = results.every(r=>!r.released);
-    let level;
-    if (noneDeployed) level = 'none';
-    else if (allReleased) level = 'released';
-    else if (allDeployed && noneReleased) level = 'deployed';
-    else level = 'partial';
-    let blocked = false;
-    if (env === 'prod' && issue.dependencyBlocked && level === 'released'){ level = 'deployed'; blocked = true; }
-    return { level, blocked, results };
-  }
-  function statusLabel(level){
-    return { none:'Not deployed', deployed:'Deployed (hidden)', released:'Released', partial:'Partial' }[level];
-  }
-  function statusClass(level){ return { none:'st-none', deployed:'st-deployed', released:'st-released', partial:'st-partial' }[level]; }
-
-  function issueEnvDate(issue, env){
-    let latest = null;
-    const consider = (isoStr) => { if (!isoStr) return; const t = new Date(isoStr); if (!latest || t>latest) latest = t; };
-    issueLinks(issue).forEach(l=>{
-      const dep = issueDeployedOnComponent(l.component, issue.key, env);
-      if (dep) consider(dep.deployedAt);
-      const fs = state.flagStates[l.flagKey] ? state.flagStates[l.flagKey][env] : null;
-      if (fs) consider(fs.changedAt);
-    });
-    return latest;
-  }
-  function issueLastChange(issue){
-    const qa = issueEnvDate(issue, 'qa');
-    const prod = issueEnvDate(issue, 'prod');
-    if (qa && prod) return qa > prod ? qa : prod;
-    return qa || prod || null;
-  }
-
-  /* ---------- Rendering: Product / PI view ---------- */
-  function renderIssues(){
-    const piFilter = document.getElementById('filterPi').value;
-    const typeFilter = document.getElementById('filterType').value;
-    const fromVal = document.getElementById('filterFrom').value;
-    const toVal = document.getElementById('filterTo').value;
-    const from = fromVal ? new Date(fromVal) : null;
-    const to = toVal ? new Date(new Date(toVal).getTime()+86400000) : null;
-
-    let issues = state.jiraIssues.filter(i=>{
-      if (piFilter && i.pi !== piFilter) return false;
-      if (typeFilter && i.type !== typeFilter) return false;
-      const last = issueLastChange(i);
-      if (from && (!last || last < from)) return false;
-      if (to && last && last > to) return false;
-      return true;
-    });
-
-    document.getElementById('issueCount').textContent = `${issues.length} items`;
-    const tbody = document.getElementById('issueBody');
-    if (!issues.length){ tbody.innerHTML = '<tr><td class="empty" colspan="4">No results for the selected filters</td></tr>'; return; }
-
-    tbody.innerHTML = issues.map(issue=>{
-      const qa = issueStatusForEnv(issue, 'qa');
-      const prod = issueStatusForEnv(issue, 'prod');
-      const qaDate = issueEnvDate(issue, 'qa');
-      const prodDate = issueEnvDate(issue, 'prod');
-      const isOpen = expandedIssue === issue.key;
-      return `
-    <tr class="issue-row" data-key="${issue.key}">
-      <td style="width:30%"><div class="issue-key">${issue.key}<span class="issue-type">${issue.type}</span></div><div class="issue-title">${issue.title}</div></td>
-      <td style="width:8%"><span class="pi-tag">${issue.pi}</span></td>
-      <td style="width:28%">
-        <span class="status-pill ${statusClass(qa.level)}">${statusLabel(qa.level)}</span>
-        <div class="status-date">${qaDate ? relTime(qaDate.toISOString()) : '—'}</div>
-      </td>
-      <td style="width:34%">
-        <span class="status-pill ${statusClass(prod.level)}">${statusLabel(prod.level)}</span>
-        ${issue.dependencyBlocked ? `<span class="dep-badge" title="${issue.dependencyNote||''}">DEPENDENCY</span>` : ''}
-        <div class="status-date">${prodDate ? relTime(prodDate.toISOString()) : '—'}</div>
-      </td>
-    </tr>
-    ${isOpen ? `<tr><td colspan="4" style="padding:0;"><div class="breakdown">
-        ${issueLinks(issue).length ? `
-        <table class="breakdown-table">
-          <thead><tr><th>Component</th><th>Flag</th><th>QA code</th><th>QA flag</th><th>PROD code</th><th>PROD flag</th></tr></thead>
-          <tbody>
-          ${issueLinks(issue).map(l=>{
-        const qr = linkStatus(l, issue.key, 'qa'); const pr = linkStatus(l, issue.key, 'prod');
-        const yes = '<span class="dot-yes">●</span>', no = '<span class="dot-no">○</span>';
-        return `<tr>
-              <td><b>${l.component}</b></td>
-              <td class="mono">${l.flagKey}</td>
-              <td>${qr.deployed ? yes+' deployed' : no+' not found'}</td>
-              <td>${qr.flagOn ? yes+' ON' : no+' OFF'}</td>
-              <td>${pr.deployed ? yes+' deployed' : no+' not found'}</td>
-              <td>${pr.flagOn ? yes+' ON' : no+' OFF'}</td>
-            </tr>`;
-      }).join('')}
-          </tbody>
-        </table>
-        <div class="breakdown-hint">"Not found" means no successful deployment of that component carried a commit referencing ${issue.key} yet.</div>
-        ` : `<div class="breakdown-row"><span>No flag linked to ${issue.key}</span><span>check flags-meta.json (jiraKeys)</span></div>`}
-        ${issue.dependencyBlocked ? `<div class="breakdown-row"><span>Blocking dependency</span><span style="color:var(--blocked)">${issue.dependencyNote||'unresolved'}</span></div>` : ''}
-    </div></td></tr>` : ''}
-    `;
-    }).join('');
-
-    tbody.querySelectorAll('.issue-row').forEach(row=>{
-      row.onclick = ()=>{ const key = row.dataset.key; expandedIssue = expandedIssue===key ? null : key; renderIssues(); };
-    });
-  }
-
-  function initProductView(){
-    const piSel = document.getElementById('filterPi');
-    const pis = [...new Set(state.jiraIssues.map(i=>i.pi))].sort();
-    pis.forEach(pi=>{ const o=document.createElement('option'); o.value=pi; o.textContent=pi; piSel.appendChild(o); });
-    ['filterPi','filterType','filterFrom','filterTo'].forEach(id=> document.getElementById(id).addEventListener('input', renderIssues));
-    document.getElementById('btnClearFilters').onclick = ()=>{
-      piSel.value=''; document.getElementById('filterType').value=''; document.getElementById('filterFrom').value=''; document.getElementById('filterTo').value='';
-      renderIssues();
-    };
-  }
-
-  /* ---------- Rendering: technical view ---------- */
-  function renderMatrix(){
-    const m = document.getElementById('matrix');
-    const components = [...new Set(state.deployments.map(d=>d.component))].sort();
-    const flagEntries = Object.entries(state.flagsMeta);
-    m.innerHTML = '';
-    ENVIRONMENTS.forEach(env=>{
-      const card = document.createElement('div');
-      card.className = 'env-card';
-      card.innerHTML = `<div class="env-title env-${env}"><span class="dot"></span>${env}</div>`;
-
-      const deployedLabel = document.createElement('div');
-      deployedLabel.className = 'snapshot-section-label';
-      deployedLabel.textContent = 'Deployed';
-      card.appendChild(deployedLabel);
-
-      let anyDeployed = false;
-      components.forEach(comp=>{
-        const d = currentVersion(comp, env);
-        if (!d) return;
-        anyDeployed = true;
-        const row = document.createElement('div');
-        row.className = 'comp-row';
-        row.innerHTML = `
-        <div class="comp-name">${comp}</div>
-        <div class="comp-meta">
-          <div class="version"><span class="status-dot status-${d.status}"></span>${d.version}</div>
-          <div class="rel-time">${relTime(d.deployedAt)}</div>
-        </div>`;
-        row.onclick = ()=>{ document.getElementById('filterEnv').value = env; renderTimeline(); };
-        card.appendChild(row);
-      });
-      if (!anyDeployed) {
-        const empty = document.createElement('div');
-        empty.className = 'rel-time';
-        empty.style.padding = '9px 0';
-        empty.textContent = 'no deployments';
-        card.appendChild(empty);
-      }
-
-      const flagsLabel = document.createElement('div');
-      flagsLabel.className = 'snapshot-section-label snapshot-flags-label';
-      flagsLabel.textContent = 'Flags';
-      card.appendChild(flagsLabel);
-
-      flagEntries.forEach(([key, f])=>{
-        const fs = state.flagStates[key] ? state.flagStates[key][env] : null;
-        const on = fs ? !!fs.enabled : false;
-        const row = document.createElement('div');
-        row.className = 'flag-row';
-        row.title = fs ? `changed ${relTime(fs.changedAt)} by ${fs.changedBy}` : '';
-        row.innerHTML = `<span class="flag-row-name">${key}</span><span class="flag-row-state ${on?'flag-on-text':'flag-off-text'}">${on?'ON':'OFF'}</span>`;
-        card.appendChild(row);
-      });
-
-      m.appendChild(card);
-    });
-  }
-
-  function deployStatusLabel(s){ return {success:'success', failed:'failed', rolled_back:'rolled back'}[s] || s; }
-
-  function renderTimeline(){
-    const filter = document.getElementById('filterEnv').value;
-    const box = document.getElementById('timeline');
-    const list = state.deployments.filter(d=> !filter || d.environment===filter)
-            .sort((a,b)=> new Date(b.deployedAt)-new Date(a.deployedAt)).slice(0,40);
-    if (!list.length){ box.innerHTML = '<div class="empty">No deployments to show</div>'; return; }
-    box.innerHTML = list.map(d=>`
-    <div class="deploy-item">
-      <div class="deploy-top">
-        <span><span class="status-dot status-${d.status}"></span><span class="deploy-comp">${d.component}</span> → <span class="version">${d.version}</span></span>
-        <span>
-          <span class="deploy-env-tag">${d.environment}</span>
-          ${d.manual ? `<span class="manual-badge">manual</span>` : ''}
-        </span>
-      </div>
-      <div class="deploy-meta">${fmtDate(d.deployedAt)} · deployed by ${d.deployedBy} · status: ${deployStatusLabel(d.status)}</div>
-      <div>
-        ${(d.relatedIssues||[]).map(k=>`<span class="issue-badge">${k}</span>`).join('')}
-        ${d.resolvedFlags ? Object.entries(d.resolvedFlags).map(([k,v])=>`<span class="resolved-flag-badge" style="background:${v?'rgba(63,185,80,0.15)':'rgba(72,79,88,0.2)'}; color:${v?'var(--ok)':'var(--muted)'}">${k}: ${v?'ON':'OFF'}</span>`).join('') : ''}
-      </div>
-    </div>
-  `).join('');
-  }
-
-  function renderFlags(){
-    const box = document.getElementById('flags');
-    const entries = Object.entries(state.flagsMeta);
-    if (!entries.length){ box.innerHTML = '<div class="empty">No flags defined</div>'; return; }
-    box.innerHTML = entries.map(([key, f])=>{
-      const isBuild = f.source === 'build';
-      return `
-    <div class="flag-item">
-      <div class="flag-name">${key}<span class="flag-source ${isBuild?'src-build':'src-runtime'}">${isBuild?'build-time':'runtime · BE'}</span></div>
-      <div class="flag-desc">${f.description} · issue: ${(f.jiraKeys||[]).join(', ')||'—'} · components: ${(f.components||[]).join(', ')||'—'}</div>
-      <div class="flag-envs">
-        ${ENVIRONMENTS.map(env=>{
-        const fs = state.flagStates[key] ? state.flagStates[key][env] : null;
-        const on = fs ? !!fs.enabled : false;
-        const changedInfo = fs ? `title="changed ${relTime(fs.changedAt)} by ${fs.changedBy}"` : '';
-        return `<div class="flag-pill ${on?'flag-on':'flag-off'}" ${changedInfo}>${env}: ${on?'ON':'OFF'}</div>`;
-      }).join('')}
-      </div>
-    </div>`;
-    }).join('');
-  }
-
-  function initTabs(){
-    document.querySelectorAll('.tab').forEach(tab=>{
-      tab.onclick = ()=>{
-        document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
-        document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
-        tab.classList.add('active');
-        document.getElementById('view-'+tab.dataset.view).classList.add('active');
-      };
-    });
-  }
-
-  async function init(){
-    initTabs();
-    state = await loadData();
-    initProductView();
-
-    const sel = document.getElementById('filterEnv');
-    ENVIRONMENTS.forEach(env=>{ const o=document.createElement('option'); o.value=env; o.textContent=env; sel.appendChild(o); });
-    sel.onchange = renderTimeline;
-
-    renderMatrix();
-    renderTimeline();
-    renderFlags();
-    renderIssues();
-  }
-  init();
-</script>
+<script src="app.js"></script>
 </body>
 </html>

@@ -1,0 +1,12 @@
+{
+  "spaces": [
+    {
+      "name": "eMobility Sparks",
+      "boards": ["Sparks"]
+    },
+    {
+      "name": "eMobility - EV Product",
+      "boards": []
+    }
+  ]
+}

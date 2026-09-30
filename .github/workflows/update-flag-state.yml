@@ -3,13 +3,13 @@ on:
   workflow_dispatch:
     inputs:
       flagKey:
-        description: 'Flag key (e.g. changeCpmsAllowed)'
+        description: 'Flag key'
         required: true
       environment:
         description: 'Environment'
         required: true
         type: choice
-        options: [dev, qa, prod]
+        options: [test, qa, prod]
       enabled:
         description: 'New state'
         required: true
@@ -29,7 +29,9 @@ jobs:
   update:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
+        with:
+          ref: live
 
       - name: Update flag-states.json
         env:
@@ -37,11 +39,9 @@ jobs:
           ENVIRONMENT: ${{ github.event.inputs.environment || github.event.client_payload.environment }}
           ENABLED: ${{ github.event.inputs.enabled || github.event.client_payload.enabled }}
           CHANGED_BY: ${{ github.event.inputs.changedBy || github.event.client_payload.changedBy }}
-        run: node scripts/update-flag-state.js
-
-      - name: Commit and push if changed
-        run: |
-          git config user.name "flag-sync-bot"
-          git config user.email "bot@users.noreply.github.com"
-          git add docs/data/flag-states.json
-          git diff --staged --quiet || (git commit -m "chore: update flag state" && git push)
+        uses: ./.github/actions/sync-with-retry
+        with:
+          run: node scripts/update-flag-state.js
+          paths: docs/data/flag-states.json docs/data/flag-state-history.json
+          message: "chore: update flag state"
+          bot-name: flag-sync-bot
