@@ -27,7 +27,9 @@ jobs:
   fill:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
+        with:
+          ref: live
 
       - name: Fill in flag metadata
         env:
@@ -36,11 +38,9 @@ jobs:
           SOURCE: ${{ github.event.inputs.source }}
           JIRA_KEYS: ${{ github.event.inputs.jiraKeys }}
           COMPONENTS: ${{ github.event.inputs.components }}
-        run: node scripts/fill-flag-metadata.js
-
-      - name: Commit and push
-        run: |
-          git config user.name "flags-meta-bot"
-          git config user.email "bot@users.noreply.github.com"
-          git add docs/data/flags-meta.json
-          git diff --staged --quiet && echo "No changes" || (git commit -m "chore: fill metadata for ${{ github.event.inputs.flagKey }}" && git push)
+        uses: ./.github/actions/sync-with-retry
+        with:
+          run: node scripts/fill-flag-metadata.js
+          paths: docs/data/flags-meta.json
+          message: "chore: fill metadata for ${{ github.event.inputs.flagKey }}"
+          bot-name: flags-meta-bot

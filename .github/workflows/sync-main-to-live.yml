@@ -1,0 +1,46 @@
+name: Sync main into live
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/**'
+      - 'docs/**'
+      - '.github/workflows/**'
+      - '.github/actions/**'
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: live
+          fetch-depth: 0
+
+      # Retries by re-fetching + re-merging (not by reusing an already-computed merge commit) if the push
+      # loses a race to another workflow also writing to `live` — `git merge` is idempotent against an
+      # already-merged `main`, so redoing it against the latest `live` is always safe.
+      - name: Merge main into live
+        run: |
+          git config user.name "sync-bot"
+          git config user.email "bot@users.noreply.github.com"
+
+          for attempt in $(seq 1 5); do
+            git fetch origin main live
+            git merge origin/main --no-edit
+
+            if git push origin live; then
+              echo "Pushed on attempt $attempt."
+              exit 0
+            fi
+
+            echo "::warning::Push to live rejected (another run pushed first) — re-merging and retrying (attempt $attempt/5)."
+            git reset --hard origin/live
+            sleep $((RANDOM % 5 + 1))
+          done
+
+          echo "::error::Giving up after 5 attempts to push merged live."
+          exit 1
