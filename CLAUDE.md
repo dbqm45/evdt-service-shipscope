@@ -62,44 +62,6 @@ To preview the dashboard, just open `docs/index.html` in a browser, or serve `do
 server. If `docs/data/*.json` can't be fetched (e.g. opened via `file://`), `docs/app.js` falls back to an
 embedded `FALLBACK` sample dataset and tags the UI with "built-in fallback data".
 
-## Type discipline (no TypeScript in this repo)
-
-This codebase is intentionally plain JavaScript with no build step. Compensate for the lack of static types
-with explicit discipline, especially in any new backend/API code written for the SaaS-pivot work (see
-`context/foundation/prd.md`):
-
-- Every exported function gets a one-line JSDoc `@param`/`@returns` block stating the shape of its
-  arguments and return value — not prose, the shape (e.g. `@param {{ tenantId: string, repoFullName: string }} input`).
-- Any boundary that receives external input (HTTP request bodies, OAuth callback payloads, GitHub/Jira
-  webhook or API responses) validates that input against an explicit schema before using it — do not trust
-  shape from a third-party API response without checking the fields you read exist and are the expected type.
-- Prefer `node:assert`'s type-checking helpers or a small runtime schema check over trusting an untyped
-  object straight through to a database write.
-
-## Test runner — node:test, not Jest
-
-Tests use Node's built-in `node:test` + `node:assert`, not Jest/Mocha/Vitest. Do not use `jest.fn()`,
-`jest.mock()`, or `expect(...).toHaveBeenCalledWith(...)` — none of that API exists here. Use `t.mock.fn()` /
-`t.mock.method()` from the `node:test` context, and plain `assert.strictEqual` / `assert.deepStrictEqual` /
-`assert.rejects` from `node:assert`. See any existing `test/*.test.js` file for the pattern before writing a
-new one.
-
-## Backend (`server/`)
-
-`server/` is the SaaS-pivot backend scoped by `context/foundation/prd.md`, deployed to Render per
-`context/foundation/infrastructure.md` (`render.yaml` at the repo root, `rootDir: server` for both the Web
-Service and the Background Worker). It is a separate dependency boundary from the repo root: its own
-`package.json`, its own `node_modules/` (gitignored), its own `test/` directory — nothing at the root changes
-because of it, and root `npm test` still only ever runs the top-level `test/*.test.js` scripts.
-
-Today it is a **walking skeleton only** — `GET /health` and `GET /health/db` on the Web Service, a heartbeat
-loop on the Background Worker — proving the deploy pipeline works, not implementing any PRD feature yet. It
-introduces **this repo's first-ever third-party dependency**, `pg` (node-postgres), scoped only to
-`server/package.json`; the rest of the repo remains dependency-free. Run `npm install && npm test` inside
-`server/` to work on it; see `@server/README.md` for the full local-dev and deploy workflow. No web framework
-has been chosen yet for real feature work (OAuth, webhook handling) — that decision is deliberately deferred,
-not made by default while building the skeleton.
-
 ## Branch model: `main` vs `live`
 
 This is the most important structural thing to understand:

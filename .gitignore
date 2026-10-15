@@ -3,4 +3,3 @@ tmp
 *.sh
 .env.local
 test/.tmp-*
-server/node_modules/
