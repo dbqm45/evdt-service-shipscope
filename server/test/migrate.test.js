@@ -1,0 +1,35 @@
+const { test } = require('node:test');
+const assert = require('node:assert');
+const path = require('path');
+const { createTestDb } = require('./helpers/test-db');
+const { runMigrations } = require('../lib/migrate');
+
+if (!process.env.TEST_DATABASE_URL) {
+    test('real-Postgres tests skipped (TEST_DATABASE_URL not set)', { skip: true }, () => {});
+    return;
+}
+
+test('runMigrations: applies cleanly from empty and creates the expected tables', async (t) => {
+    const { pool, teardown } = await createTestDb();
+    t.after(teardown);
+
+    const { rows } = await pool.query(
+        "SELECT table_name FROM information_schema.tables WHERE table_schema = current_schema() ORDER BY table_name"
+    );
+    const tableNames = rows.map((row) => row.table_name);
+    assert.ok(tableNames.includes('tenants'));
+    assert.ok(tableNames.includes('users'));
+    assert.ok(tableNames.includes('memberships'));
+    assert.ok(tableNames.includes('schema_migrations'));
+
+    const { rows: migrationRows } = await pool.query('SELECT filename FROM schema_migrations');
+    assert.deepStrictEqual(migrationRows.map((r) => r.filename), ['001_create_tenants_users_memberships.sql']);
+});
+
+test('runMigrations: re-running is a no-op', async (t) => {
+    const { pool, teardown } = await createTestDb();
+    t.after(teardown);
+
+    const appliedAgain = await runMigrations(pool, path.join(__dirname, '..', 'migrations'));
+    assert.deepStrictEqual(appliedAgain, []);
+});
