@@ -9,6 +9,12 @@ calculated.
 
 ## 2026-10-15
 
+- **Added: `server/`, a walking-skeleton backend deployed to Render.** Introduces this repo's first-ever
+  third-party dependency (`pg`, the Postgres client), scoped only to `server/package.json` — the rest of the
+  repo stays dependency-free. Proves the deploy pipeline only (`GET /health`, `GET /health/db`, a Postgres
+  heartbeat worker); no SaaS-pivot PRD features (OAuth, GitHub App, Jira integration) are implemented yet.
+  Declared in `render.yaml` at the repo root. See `context/foundation/infrastructure.md` for the platform
+  decision and `context/foundation/prd.md` for what this backend will eventually implement.
 - **Internal: `ENVIRONMENT` / `SERVICE_TYPE` enums replace the `'test'`/`'qa'`/`'prod'` and `'FE'`/`'BE'` string literals in `docs/app-*.js`, no behavior change.** Frozen objects in `app-core.js` with values identical to the JSON data (`ENVIRONMENT.PROD === 'prod'`); `ENVIRONMENTS` is built from them.
 - **Internal: presentational markup extracted into `docs/app-components.js`, no behavior change.** The inline HTML
   that used to sit in every view (summary cards, tags, status pills, Epic/issue rows, deploy cards, flag rows, bar
