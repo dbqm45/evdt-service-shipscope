@@ -37,4 +37,23 @@ async function resolveDisplayName(login, token, cache) {
     return name;
 }
 
-module.exports = { resolveDisplayName };
+// A GitHub login: alphanumerics and single hyphens, max 39 chars. Anything else (a bot like
+// "dependabot[bot]", an already-human string such as "m.nowak (BE)") is not looked up and is kept as-is — this
+// also keeps free-form input (e.g. a repository_dispatch `changedBy`) out of the request URL.
+const GITHUB_LOGIN = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/;
+
+/**
+ * Display name ("Imię Nazwisko") for the person behind a flag change, falling back to `actor` unchanged —
+ * same login → name → login chain the Deployment History's `deployedBy` uses. Returns `actor` as-is when
+ * there is no token (an unauthenticated /users call would burn the shared runner IP's tiny rate limit), when
+ * it doesn't look like a login, or when the lookup finds no public name.
+ */
+async function resolveActorName(actor, token) {
+    if (!actor || !token || !GITHUB_LOGIN.test(actor)) {
+        return actor;
+    }
+
+    return (await resolveDisplayName(actor, token, new Map())) || actor;
+}
+
+module.exports = { resolveDisplayName, resolveActorName };

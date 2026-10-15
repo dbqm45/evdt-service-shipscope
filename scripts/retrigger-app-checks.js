@@ -1,11 +1,9 @@
+const { githubApiRequest } = require('./lib/github-api');
+const { fail } = require('./lib/cli');
 const APP_REPO = process.env.APP_REPO;
 const APP_REPO_TOKEN = process.env.APP_REPO_RERUN_TOKEN;
 const WORKFLOW_FILE = process.env.WORKFLOW_FILE || 'check-flags-trigger.yml';
 
-function fail(message) {
-    console.error(`Error: ${message}`);
-    process.exit(1);
-}
 
 function selectRunsToRerun(runs) {
     return runs.filter(run =>
@@ -18,20 +16,7 @@ function selectRunsToRerun(runs) {
 }
 
 async function githubApi(path, token, options = {}) {
-    const res = await fetch(`https://api.github.com${path}`, {
-        ...options,
-        headers: {
-            Authorization: `Bearer ${token}`,
-            Accept: 'application/vnd.github+json',
-            ...(options.headers || {}),
-        },
-    });
-
-    if (!res.ok) {
-        throw new Error(`GitHub API error on ${path}: ${res.status} ${await res.text()}`);
-    }
-
-    return res.status === 204 ? null : res.json();
+    return githubApiRequest(`https://api.github.com${path}`, token, options);
 }
 
 async function main() {

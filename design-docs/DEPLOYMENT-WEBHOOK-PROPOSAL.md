@@ -169,3 +169,48 @@ dispatch: a per-service workflow step is replaced by GitHub itself, via webhook.
 5. The exact scope of data exposed by an App-level webhook should be confirmed with the security team —
    the App already has access to these repositories; this introduces a new delivery channel for already
    accessible information, not a new data scope.
+## Alternative without a server: `workflow_run` on the default branch
+
+If changing each service repository is acceptable after all (a one-time change, on the default branch
+only), the same problem can be solved without any listener. A workflow on the service repo's default
+branch triggered by `workflow_run` fires when the named deployment workflows complete, **regardless of the
+branch they ran on**, because GitHub only runs `workflow_run` workflows from the default branch's YAML.
+A deploy from `deployment/qa` (a `trigger.properties` bump) is therefore signalled even though that
+branch's own copy of the deployment workflow has no `notify_shipscope` step.
+
+```yaml
+name: Notify ShipScope
+
+on:
+  workflow_run:
+    # must equal the `name:` of the deployment workflows exactly
+    workflows: ["QA on-demand deployment", "PROD on-demand deployment", "TEST auto deployment"]
+    types: [completed]
+
+permissions: {}
+
+jobs:
+  notify:
+    # failures are not skipped: ShipScope shows failed attempts in the history
+    if: github.event.workflow_run.conclusion != 'skipped' && github.event.workflow_run.conclusion != 'cancelled'
+    uses: circlek-global/evdt-service-shipscope/.github/workflows/notify-deployment.yml@main
+    with:
+      component: ${{ github.event.repository.name }}
+    secrets:
+      SHIPSCOPE_APP_ID: ${{ secrets.SHIPSCOPE_APP_ID }}
+      SHIPSCOPE_APP_PRIVATE_KEY: ${{ secrets.SHIPSCOPE_APP_PRIVATE_KEY }}
+```
+
+Notes:
+
+- `notify-deployment.yml`'s identity check still passes (`github.repository` is the service repo).
+- No checkout, so no code from a deployment branch runs with access to the secrets.
+- If a workflow is renamed, the trigger silently stops matching; verify with one QA deploy after rollout.
+- `completed` fires after the whole workflow, so the GitHub Deployment must already have a terminal
+  status; a deploy that finishes its workflow before posting `success` waits for the next signal.
+- For TEST/PROD the old in-workflow step may still fire too; a duplicated dispatch is safe (idempotent
+  sync). The daily cron stays as the last safety net.
+- Cost: one small job per deployment, versus a polling schedule that runs whether or not anything shipped.
+
+Compared with the webhook above it needs a change in every service repository (an approval process), but
+no infrastructure, secrets custody or on-call ownership, which keeps ShipScope serverless.

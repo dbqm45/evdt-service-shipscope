@@ -83,6 +83,8 @@ zespołów, ponieważ ShipScope nigdy nie przechowuje odpowiednich sekretów. Ad
 jako wygoda dla zespołów niemogących lub niechcących utrzymywać nawet niewielkiego relaya i powinny być
 rozpatrywane indywidualnie, nie jako domyślna ścieżka.
 
+Droga push/hybrid jest teraz zaprojektowana w [FLAG-INGEST.pl.md](FLAG-INGEST.pl.md): wspólny rdzeń ingestu, zwalidowany adapter `payload` i opcjonalna composite action.
+
 **To, gdzie zadeklarować źródło, nie jest trudną częścią tego problemu.** Można by bez trudu zapisać per
 komponent — np. w `docs/components.json`, obok wpisów dodawanych przy onboardingu nowego komponentu
 (patrz `ONBOARDING.pl.md`) — jaki mechanizm flag dany komponent wykorzystuje (`build`, `runtime-be`, a w

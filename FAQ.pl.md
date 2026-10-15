@@ -92,6 +92,173 @@ jednorazowym skryptem `backfill-deployment-metadata.js`. Przetwarza on tylko rek
 przypomina surowe SHA, i próbuje bezkosztowych sprawdzeń Release/tag, zanim wykona zapytanie API odczytujące
 treść commita.
 
+### Co znaczy „Diff to TEST” i kiedy się pojawia?
+
+Karta środowiska pokazuje **„Diff to TEST”** (środowisko, z którym jest porównywane — poprzedni etap łańcucha
+promocji `test` → `qa` → `prod`) tylko wtedy, gdy *kod* jego aktualnego deploymentu różni się od kodu tamtego
+środowiska. Karta nie pokazuje nic więcej; szczegóły są w modalu otwieranym kliknięciem.
+(Skrypt: `sync-github-deployments.js`, funkcje `computeEnvDrift()`/`compareTrees()`; zapis w `driftBehind`.)
+
+Jak to jest rozstrzygane dla każdej pary środowisk:
+
+1. Porównywane są **drzewa gita** obu wdrożonych commitów. Identyczne drzewo = identyczne pliki = brak
+   znacznika, niezależnie od liczby commitów między nimi (merge, squash i osobne branche wdrożeniowe tworzą
+   nowe commity dla identycznego kodu).
+2. W przeciwnym razie rekurencyjne listingi drzew (`GET /git/trees/{sha}?recursive=1`) są porównywane po
+   ścieżce i SHA bloba. Ścieżki pasujące do `driftIgnorePaths` komponentu (`docs/components.json` — „plumbing”
+   wdrożeniowy, np. `.github/`, `README.md`, `CODEOWNERS`; `dir/` = prefiks od korzenia repo, wzorzec z `/` =
+   dokładna ścieżka, sama nazwa = plik o tej nazwie na dowolnej głębokości, `*` = dowolne znaki poza `/`) nie
+   są liczone. Brak pozostałych różniących się plików = brak znacznika.
+3. Jeśli porównania nie da się uznać za wiarygodne — błąd API GitHuba albo zbyt duże repozytorium na jeden
+   listing (GitHub obcina przy 100 000 wpisów / 7 MB) — rekord dostaje `diff: { unknown: true }`, a modal
+   pokazuje **Unknown**; nigdy nie jest to po cichu traktowane jako „brak różnic”.
+
+Modal pokazuje po kolei: **różnicę plików** (liczba różniących się plików — zmiana nazwy to dwa pliki —
+pierwsze 20 ścieżek oraz ile pominięto przez `driftIgnorePaths`); surową **historię Gita** z zapytania
+compare (`commitCount`: commity, które ma tamto środowisko, a to nie; `untestedCommitCount`: kierunek
+odwrotny — np. hotfix omijający wcześniejsze środowisko). Liczby z historii mierzą commity, nie kod, więc duża
+wartość, np. „786 behind TEST”, nie oznacza dużej różnicy; zostają tylko jako kontekst. Pochodzą z tego samego
+zapytania compare, które i tak liczy `commitUrl`/`relatedIssues`, więc nic nie kosztują; porównanie drzew dodaje
+do czterech zapytań do API na parę, gdy drzewa commitów się różnią.
+
+**Czego to nie pokazuje:** porównanie drzew obejmuje wyłącznie pliki repozytorium. Nie potwierdza, że
+wdrożenia są poza tym identyczne (konfiguracja, zmienne środowiskowe, obrazy, feature flagi).
+
+**Starsze rekordy:** rekordy zsynchronizowane przed wprowadzeniem tego porównania nie mają `diff`; ich modal
+nie ma sekcji różnicy plików, tylko historię Gita, dopóki następna synchronizacja usługi nie
+zastąpi rekordu.
+
+**Komponenty wdrażane z branchy-wyzwalaczy `deployment/*`:** ustaw `versionFile` w `docs/components.json`, aby
+porównywane ref-y pochodziły z taga wskazanego w pliku (patrz `design-docs/DRIFT-SAME-VERSION-DIFFERENT-SHA.pl.md`),
+i dodaj `trigger.properties` do `driftIgnorePaths`.
+
+**Przykład na realnych danych** (`evapl-service-frontend`, 2026-10-06): TEST wdrożył `v1.0.0` o 14:44 (commit
+`42e7ce8`, z zadaniami EBO-16806/ECST-9871/…). Dwie minuty później QA wdrożyło commit również *wyświetlany*
+jako `v1.0.0` — ale faktycznie inny (`cfd213e`), z zupełnie innym, nieprzecinającym się zestawem zadań
+(ARP-4953/EBO-8399/EBO-13020). Kolejne wdrożenia TEST (`v1.1.0`, `v1.2.0`) też nigdy nie zawierały `cfd213e`
+ani jego zadań — co potwierdza, że ten commit faktycznie nigdy nie przeszedł przez TEST. Komunikat
+„233 commit(s) skipped TEST” (dawne brzmienie, sprzed „Diff to”) pokazany przy tym rekordzie QA był więc trafny, nie był fałszywym alarmem:
+
+| Env | Czas wdrożenia | Wyświetlana wersja | Rzeczywisty commit | Zadania Jira |
+|---|---|---|---|---|
+| TEST | 14:44 | `v1.0.0` (zweryfikowany tag) | `42e7ce8` | EBO-16806, ECST-9871, … |
+| QA | 14:46 | `v1.0.0` (niezweryfikowana — dopasowanie z treści commita) | `cfd213e` | ARP-4953, EBO-8399, EBO-13020 |
+
+Aby sprawdzić, czy konkretne ostrzeżenie „skipped” ma taki sam charakter, porównaj powiązane zadania Jira
+(albo zakres commitów pod linkiem `commitUrl` tego deploymentu) między aktualnymi rekordami obu środowisk w
+Deployment history — brak jakiegokolwiek pokrycia znaczy, że te dwa środowiska faktycznie uruchamiają inny,
+niezwiązany kod, a nie ten sam release w innym tempie.
+
+### Czy `deployments.json` jest podzielony per komponent albo per PI, i kiedy nowy deployment faktycznie staje się widoczny?
+
+Nie ma podziału per komponent czy per PI — to jeden wspólny plik, `docs/data/deployments.json`, zawierający
+rekordy wszystkich śledzonych komponentów naraz (każdy rekord ma własne pole `component`). Drugi, maleńki,
+nigdy nieprzycinany plik, `docs/data/deployments-cursor.json`, śledzi najwyższe ID deploymentu z GitHuba,
+jakie kiedykolwiek zsynchronizowano, per komponent — dzięki temu już przetworzony deployment można rozpoznać
+jako taki nawet po tym, jak jego faktyczny rekord wypadnie już ze starości z głównego pliku.
+
+Rekordy starsze niż 90 dni są fizycznie usuwane z `deployments.json` przy każdej synchronizacji
+(`RETENTION_DAYS`), oprócz jednego najnowszego rekordu i jednego najnowszego **udanego** rekordu per
+komponent/środowisko, które zostają niezależnie od wieku — na nich oparta jest logika „aktualnej
+wersji”/drift/rollback dashboardu, więc nie mogą zostać przycięte.
+
+Skrypt synchronizujący odpala się raz per komponent: czyta cały istniejący plik, zostawia rekordy
+wszystkich innych komponentów nietknięte, scala świeże rekordy tylko dla tego jednego komponentu, dla
+którego został wywołany, przycina, i zapisuje cały plik z powrotem.
+
+Dzieje się to w jobie `sync_deployments` w `orchestrate-full-sync.yml`. `repository_dispatch` wystrzelony
+zaraz po deploymencie — przez krok `notify_shipscope` w workflow tego repozytorium aplikacji — synchronizuje
+tylko ten jeden komponent; dzienny cron o 3:00 i ręczne uruchomienie synchronizują wszystkie śledzone
+komponenty.
+
+W praktyce: nowy deployment danego komponentu staje się widoczny w ciągu kilku minut od jego zakończenia,
+bo sam ten deployment wywołuje synchronizację dla tego komponentu. Jedyny sposób, w jaki to się opóźnia, to
+sytuacja, gdy workflow deployującego repozytorium nigdy nie wywołuje `notify_shipscope` wcale — wtedy ten
+deployment czeka na najbliższy przebieg bezpieczeństwa o 3:00 (o ile wciąż mieści się w oknie retencji).
+
+Typowa przyczyna: deployment uruchomiony z długo żyjącego brancha, np. `deployment/qa` (commit podbijający
+`version` w `trigger.properties`). GitHub czyta plik workflow z brancha, na który wykonano push, więc kopia
+workflow na tym branchu nie ma kroku `notify_shipscope` dodanego wyłącznie na `main`. Rozwiązanie bez
+serwera i bez utrzymywania kroku per branch to mały workflow na **domyślnym branchu** repozytorium serwisu,
+wyzwalany przez `workflow_run` (który odpala się tylko z YAML-a domyślnego brancha, niezależnie od brancha,
+z którego poszedł deploy) i wywołujący `notify-deployment.yml` — zob. „Alternatywa bez serwera” w
+`design-docs/DEPLOYMENT-WEBHOOK-PROPOSAL.pl.md`.
+
+(Skrypt: `sync-github-deployments.js`, funkcje `trimOldRecords`, `main`. Workflow: `orchestrate-full-sync.yml`,
+job `sync_deployments`. Trigger: krok `notify_shipscope` w `notify-deployment.yml`.)
+
+### Co to jest `docs/data/summary.json` i dlaczego istnieje obok `deployments.json`?
+
+To mały, **wstępnie wyliczony** plik: dla każdego komponentu i środowiska zawiera tylko jeden rekord
+aktualnego (ostatniego udanego) deploymentu i jeden rekord ostatniego deploymentu w ogóle, niezależnie od
+tego, czy się powiódł. Istnieje wyłącznie dla szybkości renderowania, nie dlatego, że dashboard potrzebuje
+jakichś danych, których nie ma już w `deployments.json`.
+
+Bez niego pokazanie „co aktualnie działa na produkcji dla usługi X” wymaga przeszukania *całej* tablicy
+`deployments.json` — każdego rekordu, dla każdego komponentu, w całym oknie retencji — i posortowania
+wyników, i to każdy raz, gdy to pytanie jest zadawane. Dashboard zadaje to pytanie wielokrotnie już przy
+pierwszym załadowaniu: raz dla każdego komponentu (górne karty podsumowania) i jeszcze raz dla każdej pary
+komponent×środowisko (matryca). Dla dużej, śledzonej floty z miesiącami przechowywanej historii, powtarzanie
+tego pełnego przeszukania dziesiątki razy, zanim strona nawet skończy się renderować, jest zmarnowaną pracą
+— bo odpowiedź praktycznie nigdy nie zmienia się między synchronizacjami.
+
+`summary.json` wylicza tę odpowiedź raz, po stronie serwera, w dokładnie tym momencie, w którym skrypt
+synchronizujący już ma te dane pod ręką — zbudowanie go nie kosztuje nic dodatkowego: `trimOldRecords()`
+i tak już musi ustalić „jaki jest najnowszy rekord, i najnowszy *udany* rekord, dla każdego
+komponentu/środowiska”, żeby zdecydować, co bezpiecznie zachować przy przycinaniu starej historii — zapisanie
+tych samych dwóch wartości do osobnego, małego pliku to więc powtórne wykorzystanie już wykonanej pracy, nie
+nowa praca. Dashboard czyta potem bezpośredni odczyt z tego pliku, zamiast liczyć to na nowo w przeglądarce,
+i wraca do starego, pełnego przeszukania tylko wtedy, gdy danego komponentu lub środowiska w tym pliku nie
+ma (np. komponent dołączony po tym, jak ten plik już istniał, potrzebuje jeszcze jednej synchronizacji, żeby
+się w nim pojawić).
+
+Ponieważ plik jest wstępnie wyliczony, a nie prowadzony niezależnie, nie może nigdy w istotny sposób
+rozminąć się z `deployments.json` — oba są zapisywane z tych samych danych w tym samym przebiegu
+synchronizacji. Jedyna zaakceptowana szczelina: jednorazowy, ręcznie wyzwalany skrypt
+`backfill-deployment-metadata.js` edytuje starsze rekordy deploymentów bezpośrednio i nie aktualizuje tego
+pliku — więc poprawka wprowadzona backfillem do rekordu, który akurat jest „aktualnym” rekordem komponentu,
+nie będzie tu widoczna do najbliższej regularnej synchronizacji tego komponentu. To nieaktualny cache na
+najwyżej kilka minut, nie błędny dashboard — mechanizm pełnego przeszukania jako fallback jest zawsze
+dostępny, gdyby ten plik był nieobecny albo nieaktualny.
+
+(Skrypt: `sync-github-deployments.js`, funkcje `trimOldRecords`, `buildSummary`. Plik: `docs/app.js`,
+funkcja `currentVersion`.)
+
+### Dlaczego niektóre zapytania do API GitHuba korzystają z zapytań warunkowych (ETag), a inne nie?
+
+REST API GitHuba wspiera standardowy mechanizm HTTP zwany zapytaniami warunkowymi: odpowiedź niesie
+nagłówek `ETag` (odcisk palca tej konkretnej odpowiedzi), a kolejne zapytanie o ten sam URL może przekazać
+ten odcisk jako `If-None-Match`. Jeśli nic się nie zmieniło, GitHub odpowiada `304 Not Modified` bez treści,
+zamiast wysyłać te same dane jeszcze raz jako prawdziwe `200`. Konkretna korzyść dla ShipScope: odpowiedź
+`304` **nie** liczy się do limitu zapytań API GitHuba, podczas gdy zwykłe `200` się liczy.
+
+ShipScope korzysta z tego dla dokładnie trzech endpointów: pierwszej strony deploymentów komponentu, jego
+tagów i jego release'ów — trzech zapytań listujących, odpytywanych przy *każdym pojedynczym* przebiegu
+synchronizacji, niezależnie od tego, czy po stronie GitHuba cokolwiek faktycznie się zmieniło od ostatniego
+razu. W typowym przypadku — przebieg crona w stanie ustabilizowanym, dla wielu komponentów, z których
+większość nie ma nic nowego — te zapytania teraz najczęściej wracają jako darmowe `304`, a nie zużywają
+realnego budżetu limitu zapytań na dane, które i tak okazały się identyczne z już znanymi.
+
+Celowo **nie** jest to zastosowane do wielu innych zapytań do GitHuba wykonywanych per deployment w ramach
+jednego przebiegu (pobranie commita, porównanie dwóch commitów, odczyt statusów deploymentu, rozwiązanie
+przebiegu workflow) — nie z braku starań, ale dlatego, że żadne z nich faktycznie by na tym nie zyskało:
+każdy z tych URL-i jest pobierany, maksymalnie, raz w całym cyklu życia tego skryptu (kursor synchronizacji
+gwarantuje, że dany deployment jest przetwarzany tylko raz) — nie ma więc nic do zweryfikowania przy drugim
+zapytaniu, które nigdy nie nastąpi. Cache'owanie ETag opłaca się tylko dla URL-a, który zostanie odpytany
+ponownie później, z szansą, że odpowiedź się nie zmieniła — to prawda dla trzech endpointów listujących
+powyżej, nieprawda dla jednorazowego odpytania per deployment.
+
+Żeby cache faktycznie pomagał, musi przetrwać *między* osobnymi przebiegami workflow, nie tylko w ramach
+jednego — cache żyjący tylko na czas jednego joba resetowałby się do pustego (a więc nigdy nie dawałby
+`304`) przy każdym zaplanowanym przebiegu. Job `sync_deployments` w `orchestrate-full-sync.yml` dołącza
+krok `actions/cache` wokół katalogu, do którego skrypt synchronizujący zapisuje swój plik cache ETag per
+komponent, kluczowany tak, żeby świeży przebieg mógł odtworzyć cache z poprzedniego przebiegu, zanim
+zdecyduje, co pobrać na nowo.
+
+(Skrypt: `scripts/lib/github-api.js`, funkcje `githubApiRequest`/`githubApiGet`, parametr `etagCache`;
+`sync-github-deployments.js`, konstanta `ETAG_CACHE_PATH`. Workflow: `orchestrate-full-sync.yml`, job
+`sync_deployments`, krok „Cache GitHub API ETags”.)
+
 ## Feature flagi
 
 ### Jak liczona jest notka „flaga jest nieaktywna zbyt długo” (🧹 stale flag)?
@@ -212,6 +379,40 @@ do tego, aby dashboard pokazywał coś, a nie nic.
 (Skrypty: `sync-github-deployments.js` wyciąga klucze z komunikatów commitów; `sync-jira.js` wykonuje
 faktyczny fetch z Jiry oraz fallback na wypadek jej braku.)
 
+### Jak podzielone są pliki z danymi Jiry, i kiedy coś nowego w sprincie faktycznie staje się widoczne?
+
+Dane z Jiry nie są w jednym pliku. Jest jeden plik JSON per PI (np. `docs/data/jira-issues/PI-27.3.json`),
+plus `index.json` z listą wszystkich PI, dla których ShipScope ma dane — razem z nazwami i datami sprintów
+każdego PI — oraz osobny `status-index.json`, płaska mapa `klucz → {pi, statusCategory}` obejmująca
+wszystkie PI naraz, używana tylko przez panel Flags w Technical View, bo ten panel nie ma własnego
+selectora PI, którym mógłby wybrać shard. Dashboard wczytuje z góry `index.json`, a potem tylko plik
+dokładnie jednego, aktualnie wybranego PI — nigdy nie trzyma w pamięci issue z więcej niż jednego PI naraz.
+
+Automatycznie odświeżany jest tylko bieżący PI — ten, który `sync-jira.js` wyznacza z aktywnego sprintu
+skonfigurowanego boarda — i robi to pełnym nadpisaniem przy każdej synchronizacji, nie mergem: to, co
+zwróci najnowszy fetch, staje się **całą** nową treścią pliku tego PI. Issue, które wypadło z PI, po prostu
+nie jest w nowej wersji, bez osobnego kroku czyszczącego.
+
+Plik każdego innego PI jest snapshotem z momentu, gdy ktoś ostatnio ręcznie odpalił workflow
+`backfill-jira-issues.yml` dla niego, i nigdy automatycznie nie jest dotykany ponownie. Jeśli sprint należy
+do PI innego niż bieżący, nic nowego w nim się nie pojawi, dopóki ten backfill nie zostanie ponownie
+odpalony ręcznie.
+
+Synchronizacja Jiry to job `sync_jira` w `orchestrate-full-sync.yml`, odpalany po każdym deploymencie
+jakiegokolwiek śledzonego komponentu (przez `repository_dispatch`), na dziennym harmonogramie
+bezpieczeństwa o 3:00, albo ręcznie — i biegnie przy każdej z tych okazji, nie tylko przy „sync wszystkiego”,
+bo job ma `if: always()`, żeby porażka synchronizacji deploymentów jednego komponentu nie mogła go pominąć.
+
+W praktyce: nowy item dodany do bieżącego sprintu bieżącego PI staje się widoczny po najbliższej
+synchronizacji Jiry — co w rozsądnie aktywnej organizacji oznacza w ciągu minut od *czyjegokolwiek*
+kolejnego deploymentu, bo to samo wystarczy, aby ponownie odpalić cały workflow. Jeśli nic się tego dnia nie
+deployuje, i tak pojawi się najpóźniej przy najbliższym przebiegu crona o 3:00. Ręczne odpalenie workflowa
+sprawia, że pojawia się natychmiast. Item dodany do PI, który nie jest bieżący, nie pojawi się wcale, dopóki
+ktoś nie odpali dla niego backfillu.
+
+(Skrypt: `sync-jira.js`, funkcje `resolveCurrentPiForSpaces`, `runCurrentPiMode`, `writePiShards`. Workflow:
+`orchestrate-full-sync.yml`, job `sync_jira`. Ścieżka ręcznego snapshotu: `backfill-jira-issues.yml`.)
+
 ## Zakładka Release Notes (podgląd)
 
 ### Jak w ogóle zobaczyć tę zakładkę?
@@ -329,3 +530,49 @@ renderowany do elementu `#statusBadgeTime` wewnątrz plakietki statusu w nagłó
 - **`backfill-deployment-metadata.yml`** i **`backfill-flag-state-history.yml`** — jednorazowe narzędzia
   serwisowe, nigdy nie uruchamiane automatycznie. Istnieją, aby zostać wywołane ręcznie, gdy starsze, już
   zapisane dane wymagają doprowadzenia do zgodności z nowszą wersją logiki synchronizacji.
+
+## Sekrety i tokeny — które poświadczenie do czego służy?
+
+### Czy `create-github-app-token` nadal jest potrzebny, skoro `JIRA_API_TOKEN` jest już w Repository Secrets?
+
+Tak — oba służą do zupełnie różnych systemów i żaden nie zastępuje drugiego.
+
+- **`JIRA_BASE_URL` / `JIRA_EMAIL` / `JIRA_API_TOKEN`** (Repository Secrets) dają dostęp **wyłącznie do Jiry** —
+  `scripts/sync-jira.js` wysyła je jako HTTP Basic przy każdym wywołaniu API Jiry. GitHub nic o nich nie wie.
+- **`actions/create-github-app-token`** wymienia klucz prywatny GitHub App (`SHIPSCOPE_APP_PRIVATE_KEY` albo
+  `CIRCLEK_GLOBAL_GITHUB_EVDT_APP_PRIVATE_KEY`) na krótkotrwały token (ok. godziny), ograniczony do wskazanych
+  repozytoriów. Służy **wyłącznie do operacji na GitHubie**.
+
+Token App jest używany w siedmiu miejscach, zawsze z tego samego powodu — domyślny `GITHUB_TOKEN` nie da rady:
+
+| Workflow | Do czego służy token App |
+|---|---|
+| `orchestrate-full-sync.yml`, `backfill-deployment-metadata.yml` | Odczyt Deployments, commitów i compare z repozytorium aplikacji (`repositories: ${{ matrix.repo }}`). |
+| `retrigger-app-checks.yml` | Ponowne uruchamianie nieudanych przebiegów `check-flags` w repozytoriach aplikacji (`actions: write` tam). |
+| `check-flags.yml`, `notify-deployment.yml` | Działają w workflowie repozytorium aplikacji, ale zapisują do / wysyłają zdarzenia do `evdt-service-shipscope`. |
+| `fill-flag-metadata.yml`, `sync-runtime-be-flags.yml` | Wysyłają zdarzenie `repository_dispatch` `flags-meta-changed`. |
+
+`GITHUB_TOKEN` nie jest zamiennikiem z dwóch powodów: obejmuje tylko repozytorium, w którym działa workflow (nie
+dosięgnie repozytorium aplikacji ani ShipScope z jego poziomu), a tworzone nim zdarzenia i pushe celowo nie
+uruchamiają kolejnych workflowów (więc nie wyśle `repository_dispatch`, który ma wystartować inny workflow).
+
+### Czy job `sync_jira` używa tokenu GitHub App?
+
+Nie. `sync_jira` w `orchestrate-full-sync.yml` potrzebuje tylko sekretów Jiry i zwykłego `GITHUB_TOKEN`. Widać to
+w logu przebiegu: dwa kroki `actions/checkout` (`main` w katalogu głównym — skrypty, `live` do `data/` — pliki
+JSON), a potem composite action `sync-with-retry` — w tym jobie nie ma kroku `create-github-app-token`. Sekrety
+Jiry są przekazywane jako `env:` tylko do tego jednego kroku, a commit na `live` wykonywany jest domyślnymi
+poświadczeniami `GITHUB_TOKEN` z checkoutu, co wystarcza, bo job zapisuje tylko do tego samego repozytorium, w
+którym działa. Token App widoczny wcześniej w tym samym workflowie należy do jobu `sync_deployments` (czyta
+repozytorium *aplikacji*), a nie do `sync_jira`.
+
+Skutek uboczny wart zapamiętania: ponieważ ten push jest wykonany `GITHUB_TOKEN`-em, sam nie uruchamia innych
+workflowów. Nic dalej nie ma reagować na commit z danymi Jiry, więc to w porządku — ale to dlatego wszystko, co
+*powinno* się rozchodzić dalej (jak `flags-meta-changed`), używa tokenu App.
+
+### Które z tych poświadczeń jest długowieczne i najbardziej warte ochrony?
+
+**Klucz prywatny** App. Tokeny, które wydaje, wygasają po ok. godzinie, ale sam klucz nie, a może wydawać tokeny z
+zapisem do `live` i do repozytoriów aplikacji. Dlatego warto: przypiąć do SHA akcje firm trzecich, które go
+obsługują (`create-github-app-token`), ograniczyć `permission-*` każdego tokenu do minimum potrzebnego w danym
+kroku oraz śledzić właściciela i datę rotacji klucza — patrz `design-docs/TODO.md`.

@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="pl">
+<html lang="pl" data-theme="dark">
 <head>
     <meta charset="UTF-8">
     <title>ShipScope — Deployment Tracker</title>
@@ -7,6 +7,29 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="style.css">
+
+    <!-- Preload the JSON data app.js's loadData() fetches on startup, so the browser starts
+         downloading them during HTML parsing instead of waiting for app.js to load and run first.
+         `as="fetch" crossorigin` is required for a preload to actually be reused by a later fetch()
+         call (fetch()'s default request mode is "cors"); without it the browser fetches each file
+         twice and logs an unused-preload warning. jira-issues/{pi}.json is deliberately not preloaded
+         here — which shard to load is only known after index.json itself comes back. -->
+    <link rel="preload" href="data/deployments.json" as="fetch" crossorigin>
+    <link rel="preload" href="data/flags-meta.json" as="fetch" crossorigin>
+    <link rel="preload" href="data/flag-states.json" as="fetch" crossorigin>
+    <link rel="preload" href="data/jira-issues/index.json" as="fetch" crossorigin>
+    <link rel="preload" href="data/flag-state-history.json" as="fetch" crossorigin>
+    <link rel="preload" href="components.json" as="fetch" crossorigin>
+    <link rel="preload" href="data/jira-issues/status-index.json" as="fetch" crossorigin>
+    <link rel="preload" href="data/issue-deployments.json" as="fetch" crossorigin>
+    <link rel="preload" href="data/sync-meta.json" as="fetch" crossorigin>
+    <link rel="preload" href="data/summary.json" as="fetch" crossorigin>
+
+    <script>
+        try {
+            if (localStorage.getItem('shipscope-theme') === 'light') document.documentElement.setAttribute('data-theme', 'light');
+        } catch (e) {}
+    </script>
 </head>
 <body>
 <div class="wrap">
@@ -21,23 +44,47 @@
                 <span class="brand-page">Deployment Tracker</span>
             </div>
         </div>
-        <div class="status-badge" id="statusBadge">
-            <span class="status-badge-dot"></span>
-            <span id="statusBadgeLabel">Loading…</span>
-            <span class="status-badge-time" id="statusBadgeTime"></span>
+        <div class="header-right">
+            <div class="status-badge" id="statusBadge">
+                <svg class="status-badge-dot" width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><circle cx="7" cy="7" r="7" fill="currentColor" fill-opacity="0.18"/><circle cx="7" cy="7" r="4" fill="currentColor"/></svg>
+                <span id="statusBadgeLabel">Loading…</span>
+                <span class="status-badge-time" id="statusBadgeTime"></span>
+            </div>
+            <button class="theme-toggle" id="themeToggle" type="button" title="Switch to light theme" aria-label="Switch to light theme">
+                <svg class="theme-toggle-icon icon-moon" viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M13.5 9.3A5.8 5.8 0 0 1 6.7 2.5 5.8 5.8 0 1 0 13.5 9.3Z" fill="currentColor"/></svg>
+                <svg class="theme-toggle-icon icon-sun" viewBox="0 0 16 16" width="14" height="14" fill="none" aria-hidden="true"><circle cx="8" cy="8" r="3.2" fill="currentColor"/><path d="M8 1.3v2M8 12.7v2M1.3 8h2M12.7 8h2M3.3 3.3l1.4 1.4M11.3 11.3l1.4 1.4M3.3 12.7l1.4-1.4M11.3 4.7l1.4-1.4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
+            </button>
         </div>
     </header>
 
     <div class="tabs-row">
-        <div class="tabs">
-            <div class="tab active" data-view="product">Product view (PI)</div>
-            <div class="tab" data-view="tech">Technical view</div>
-            <div class="tab" data-view="notes">Release Notes</div>
-            <div class="tab" data-view="insights" style="display:none">Insights</div>
+        <div class="tabs" role="tablist">
+            <button type="button" role="tab" class="tab active" data-view="product">
+                <svg class="tab-icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m12 2 9 5-9 5-9-5 9-5z"/><path d="m3 12 9 5 9-5"/><path d="m3 17 9 5 9-5"/></svg>
+                <span>Product view</span><span class="tab-badge">PI</span>
+            </button>
+            <button type="button" role="tab" class="tab" data-view="tech">
+                <svg class="tab-icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="7" rx="2"/><rect x="3" y="14" width="18" height="7" rx="2"/><path d="M7 6.5h.01M7 17.5h.01"/></svg>
+                <span>Technical view</span>
+            </button>
+            <button type="button" role="tab" class="tab" data-view="notes">
+                <svg class="tab-icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H7a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7z"/><path d="M14 2v5h5"/><path d="M9 13h6M9 17h6"/></svg>
+                <span>Release notes</span>
+            </button>
+            <button type="button" role="tab" class="tab" data-view="insights" style="display:none">
+                <svg class="tab-icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 20v-6M12 20V6M18 20v-10"/></svg>
+                <span>Insights</span>
+            </button>
         </div>
-        <div class="ctrl-select" id="globalPiSelectWrap">
-            <label for="globalPiSelect">PI</label>
-            <select id="globalPiSelect"></select>
+        <div class="tabs-row-right">
+            <div class="ctrl-select" id="globalPiSelectWrap">
+                <label for="globalPiSelect">PI</label>
+                <select id="globalPiSelect"></select>
+            </div>
+            <div class="ctrl-select" id="sprintSelectWrap">
+                <label for="filterSprint">Sprint</label>
+                <select id="filterSprint"></select>
+            </div>
         </div>
     </div>
 
@@ -49,6 +96,9 @@
                 <button type="button" class="segmented-btn active" data-value="">All</button>
             </div>
             <input type="hidden" id="filterType" value="" />
+            <label class="ctrl-checkbox" for="filterHideTasks" title="Hide Task-type work items — the type product people care about least">
+                <input type="checkbox" id="filterHideTasks" /> Hide Tasks
+            </label>
             <div class="ctrl-select">
                 <label for="filterPriority">Priority</label>
                 <select id="filterPriority">
@@ -67,21 +117,21 @@
             <span class="pv-count" id="issueCount" style="margin-left:auto;"></span>
         </div>
 
-        <div class="table-legend">
-            <span><span class="legend-dot st-released"></span>Released</span>
-            <span><span class="legend-dot st-deployed"></span>Code deployed</span>
-            <span><span class="legend-dot st-partial"></span>Partial</span>
-            <span><span class="legend-dot st-dependency"></span>Dependency</span>
-            <span><span class="legend-dot st-none"></span>Not deployed</span>
+        <div class="table-legend" title="Status shows whether the feature is actually visible to users — not just whether the code was deployed">
+            <span title="The feature is visible to users"><span class="legend-dot st-released"></span>Released</span>
+            <span title="Code is deployed, but the feature is not yet visible to users"><span class="legend-dot st-deployed"></span>Code deployed</span>
+            <span title="Partially visible — some components or environments already show it, others don’t yet"><span class="legend-dot st-partial"></span>Partial</span>
+            <span title="Feature held back — waiting on another, unfinished dependency"><span class="legend-dot st-dependency"></span>Dependency</span>
+            <span title="Not deployed to this environment yet"><span class="legend-dot st-none"></span>Not deployed</span>
         </div>
 
         <div class="wi-table">
-            <div class="wi-body" id="productPanelBody" style="max-height:calc(100vh - 230px); min-height:300px;">
+            <div class="wi-body" id="productPanelBody" style="max-height:calc(100vh - 230px);">
                 <div class="wi-row wi-head">
                     <div>Work item</div>
-                    <div><svg class="th-icon" viewBox="0 0 16 16" width="10" height="10" aria-hidden="true"><rect x="1" y="9" width="3" height="6" rx="1" fill="#ECEEF1"/><rect x="6.5" y="5" width="3" height="10" rx="1" fill="#33373D"/><rect x="12" y="1" width="3" height="14" rx="1" fill="#33373D"/></svg>TEST</div>
-                    <div><svg class="th-icon" viewBox="0 0 16 16" width="10" height="10" aria-hidden="true"><rect x="1" y="9" width="3" height="6" rx="1" fill="#ECEEF1"/><rect x="6.5" y="5" width="3" height="10" rx="1" fill="#ECEEF1"/><rect x="12" y="1" width="3" height="14" rx="1" fill="#33373D"/></svg>QA</div>
-                    <div><svg class="th-icon" viewBox="0 0 16 16" width="10" height="10" aria-hidden="true"><rect x="1" y="9" width="3" height="6" rx="1" fill="#ECEEF1"/><rect x="6.5" y="5" width="3" height="10" rx="1" fill="#ECEEF1"/><rect x="12" y="1" width="3" height="14" rx="1" fill="#ECEEF1"/></svg>PROD</div>
+                    <div><svg class="th-icon" viewBox="0 0 18 16" width="12" height="11" aria-hidden="true"><rect x="0" y="8" width="4" height="8" rx="2" fill="#ECEEF1"/><rect x="7" y="4" width="4" height="12" rx="2" fill="#33373D"/><rect x="14" y="0" width="4" height="16" rx="2" fill="#33373D"/></svg>TEST</div>
+                    <div><svg class="th-icon" viewBox="0 0 18 16" width="12" height="11" aria-hidden="true"><rect x="0" y="8" width="4" height="8" rx="2" fill="#ECEEF1"/><rect x="7" y="4" width="4" height="12" rx="2" fill="#ECEEF1"/><rect x="14" y="0" width="4" height="16" rx="2" fill="#33373D"/></svg>QA</div>
+                    <div><svg class="th-icon" viewBox="0 0 18 16" width="12" height="11" aria-hidden="true"><rect x="0" y="8" width="4" height="8" rx="2" fill="#ECEEF1"/><rect x="7" y="4" width="4" height="12" rx="2" fill="#ECEEF1"/><rect x="14" y="0" width="4" height="16" rx="2" fill="#ECEEF1"/></svg>PROD</div>
                 </div>
                 <div id="issueBody"></div>
             </div>
@@ -90,13 +140,15 @@
 
     <div class="view" id="view-tech">
         <div class="summary-grid" id="summaryGrid"></div>
+        <div class="drift-legend">
+            <span title="The files of this environment's deployed commit differ from the earlier environment's (compared as git trees, minus the component's ignorable paths). Click for details."><svg viewBox="0 0 16 16" width="12" height="12" fill="none" aria-hidden="true"><path d="M8 2.3 14.3 13a1 1 0 0 1-.87 1.5H2.57A1 1 0 0 1 1.7 13L8 2.3Z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/><path d="M8 6.5v3.2" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/><circle cx="8" cy="11.8" r="0.9" fill="currentColor"/></svg>"Diff to ENV" — files differ</span>
+        </div>
         <div class="matrix" id="matrix"></div>
         <div class="cols">
             <div class="dh-panel">
                 <div class="dh-head">
                     <div class="dh-title-wrap">
                         <h2 class="dh-title">Deployment history</h2>
-                        <span class="dh-sub" id="dhSub"></span>
                     </div>
                     <div class="dh-controls">
                         <div class="ctrl-select">
@@ -114,7 +166,7 @@
                                 <option value="">All time</option>
                                 <option value="30">Last 30 days</option>
                                 <option value="60">Last 60 days</option>
-                                <option value="90">Last 90 days</option>
+                                <option value="90" selected>Last 90 days</option>
                             </select>
                         </div>
                         <button class="pv-clear" id="btnClearDeployFilters">Clear</button>
@@ -186,6 +238,17 @@
     </div>
 </div>
 
-<script src="app.js"></script>
+<!-- Classic scripts, not ES modules: they share one global scope and still load over file:// (ES modules don't).
+     Order matters — together they are the former single app.js, split on line boundaries; app-main.js calls init() last. -->
+<script src="app-html.js"></script>
+<script src="app-core.js"></script>
+<script src="app-components.js"></script>
+<script src="app-data.js"></script>
+<script src="app-model.js"></script>
+<script src="app-product.js"></script>
+<script src="app-technical.js"></script>
+<script src="app-release-notes.js"></script>
+<script src="app-insights.js"></script>
+<script src="app-main.js"></script>
 </body>
 </html>

@@ -1,17 +1,8 @@
 const fs = require('fs');
 const path = require('path');
+const { safeRelativePath } = require('./lib/cli');
+const { readJson, writeJson } = require('./lib/json-file');
 const { discoverAllFlags } = require('./lib/extract-flags');
-
-function safeRelativePath(inputPath, label) {
-    const normalized = path.normalize(inputPath);
-
-    if (path.isAbsolute(normalized) || normalized.split(path.sep).includes('..')) {
-        console.error(`Error: ${label} "${inputPath}" is not a safe relative path — refusing to use it.`);
-        process.exit(1);
-    }
-
-    return normalized;
-}
 
 const FLAGS_META_PATH = safeRelativePath(
     process.env.FLAGS_META_PATH || 'status-repo/docs/data/flags-meta.json',
@@ -28,9 +19,7 @@ function main() {
         return;
     }
 
-    const flagsMeta = fs.existsSync(FLAGS_META_PATH)
-        ? JSON.parse(fs.readFileSync(FLAGS_META_PATH, 'utf8'))
-        : {};
+    const flagsMeta = readJson(FLAGS_META_PATH, {});
 
     const added = [];
 
@@ -52,7 +41,7 @@ function main() {
         return;
     }
 
-    fs.writeFileSync(FLAGS_META_PATH, JSON.stringify(flagsMeta, null, 2) + '\n');
+    writeJson(FLAGS_META_PATH, flagsMeta);
     console.log(`Scaffolded ${added.length} new flag(s): ${added.join(', ')}`);
     console.log('These need jiraKeys/components filled in by a human before the metadata check will pass.');
 }
