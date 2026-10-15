@@ -1,2 +1,5 @@
 .claude
 tmp
+*.sh
+.env.local
+test/.tmp-*

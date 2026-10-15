@@ -1,22 +1,11 @@
 const fs = require('fs');
 const path = require('path');
+const { fail, safeRelativePath } = require('./lib/cli');
+const { readJson, writeJson } = require('./lib/json-file');
 const { appendFlagHistoryEntries } = require('./lib/flag-history');
+const { applyObservations } = require('./lib/flag-ingest');
+const { resolveActorName } = require('./lib/github-users');
 const ENVIRONMENTS = ['test', 'qa', 'prod'];
-
-function fail(message) {
-    console.error(`Error: ${message}`);
-    process.exit(1);
-}
-
-function safeRelativePath(inputPath, label) {
-    const normalized = path.normalize(inputPath);
-
-    if (path.isAbsolute(normalized) || normalized.split(path.sep).includes('..')) {
-        fail(`${label} "${inputPath}" is not a safe relative path — refusing to use it.`);
-    }
-
-    return normalized;
-}
 
 const SEARCH_ROOT = safeRelativePath(process.env.FLAGS_SEARCH_ROOT || 'domains', 'FLAGS_SEARCH_ROOT');
 const FLAG_STATES_PATH = safeRelativePath(process.env.FLAG_STATES_PATH || 'status-repo/docs/data/flag-states.json', 'FLAG_STATES_PATH');
@@ -29,7 +18,11 @@ const FLAGS_META_PATH = safeRelativePath(
     'FLAGS_META_PATH'
 );
 const CHANGED_BY = process.env.CHANGED_BY || 'resolve-all-flag-states-bot';
-const COMPONENT = process.env.COMPONENT || '';
+const COMPONENT = process.env.COMPONENT;
+
+if (!COMPONENT) {
+    fail('Missing COMPONENT');
+}
 
 function findFlagPartsDirs(dir) {
     let results = [];
@@ -100,7 +93,7 @@ function resolveAllDomains(flagPartsDirs, readFlagParts) {
     return resolved;
 }
 
-function main() {
+function main(changedBy = CHANGED_BY) {
     const flagPartsDirs = findFlagPartsDirs(SEARCH_ROOT);
 
     if (!flagPartsDirs.length) {
@@ -111,55 +104,29 @@ function main() {
     console.log(`Found ${flagPartsDirs.length} flag-parts director${flagPartsDirs.length === 1 ? 'y' : 'ies'}.`);
 
     const resolved = resolveAllDomains(flagPartsDirs, extractFlagParts);
-    const flagStates = fs.existsSync(FLAG_STATES_PATH) ? JSON.parse(fs.readFileSync(FLAG_STATES_PATH, 'utf8')) : {};
+    const flagStates = readJson(FLAG_STATES_PATH, {});
     // scaffold-flags-meta.js discovers flags via a different extractor (discoverAllFlags, over
     // *.generated.ts files) than this script (extractFlagParts, over flag-parts/ dirs) — a flag found
     // by only one of the two would otherwise end up with state/history but no metadata, invisible
     // anywhere that reads flagsMeta. Same idempotent-stub pattern sync-runtime-be-flags.js already uses.
-    const flagsMeta = fs.existsSync(FLAGS_META_PATH) ? JSON.parse(fs.readFileSync(FLAGS_META_PATH, 'utf8')) : {};
+    const flagsMeta = readJson(FLAGS_META_PATH, {});
     const now = new Date().toISOString();
-    let changedCount = 0;
-    const scaffolded = [];
-    const historyEntries = [];
 
-    for (const [key, envValues] of Object.entries(resolved)) {
-        if (!flagsMeta[key]) {
-            flagsMeta[key] = {
-                description: 'TODO — describe this flag',
-                source: 'build',
-                jiraKeys: [],
-                components: COMPONENT ? [COMPONENT] : [],
-                createdAt: now,
-            };
-            scaffolded.push(key);
-        }
+    const { changedCount, metaChanged, scaffolded, historyEntries } = applyObservations({
+        flagStates,
+        flagsMeta,
+        valuesByKey: resolved,
+        component: COMPONENT,
+        source: 'build',
+        changedBy,
+        now,
+    });
 
-        if (!flagStates[key]) {
-            flagStates[key] = {};
-        }
-
-        for (const env of ENVIRONMENTS) {
-            if (!(env in envValues)) continue;
-
-            const newValue = envValues[env];
-
-            if (!flagStates[key][env]) flagStates[key][env] = {};
-
-            const existing = flagStates[key][env].build;
-
-            if (!existing || existing.enabled !== newValue) {
-                flagStates[key][env].build = { enabled: newValue, changedAt: now, changedBy: CHANGED_BY };
-                historyEntries.push({ key, env, source: 'build', enabled: newValue, changedAt: now, changedBy: CHANGED_BY });
-                changedCount++;
-            }
-        }
+    if (metaChanged) {
+        writeJson(FLAGS_META_PATH, flagsMeta);
     }
 
-    if (scaffolded.length) {
-        fs.writeFileSync(FLAGS_META_PATH, JSON.stringify(flagsMeta, null, 2) + '\n');
-    }
-
-    fs.writeFileSync(FLAG_STATES_PATH, JSON.stringify(flagStates, null, 2) + '\n');
+    writeJson(FLAG_STATES_PATH, flagStates);
     appendFlagHistoryEntries(FLAG_STATE_HISTORY_PATH, historyEntries);
     console.log(
         `Resolved ${Object.keys(resolved).length} build-time flag(s); ${changedCount} state(s) changed` +
@@ -170,5 +137,9 @@ function main() {
 module.exports = { findFlagPartsDirs, extractFlagParts, resolveAllDomains };
 
 if (require.main === module) {
-    main();
+    // CHANGED_BY is the GitHub login of whoever triggered the run; store their display name instead when
+    // they have one (as the Deployment History does), else the login.
+    resolveActorName(process.env.CHANGED_BY, process.env.GITHUB_TOKEN)
+        .then(name => main(name || CHANGED_BY))
+        .catch(e => { console.error(e); process.exit(1); });
 }

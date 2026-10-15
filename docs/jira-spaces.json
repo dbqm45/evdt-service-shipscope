@@ -6,7 +6,8 @@
     },
     {
       "name": "eMobility - EV Product",
-      "boards": []
+      "boards": [],
+      "teams": ["Sparks"]
     }
   ]
 }

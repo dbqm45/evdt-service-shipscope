@@ -1,4 +1,5 @@
 const fs = require('fs');
+const { readJson, writeJson } = require('./json-file');
 
 /** Appends to the flag-state-history.json audit log — one entry per actual flag/env/source flip. */
 function appendFlagHistoryEntries(historyPath, entries) {
@@ -6,11 +7,11 @@ function appendFlagHistoryEntries(historyPath, entries) {
         return;
     }
 
-    const history = fs.existsSync(historyPath) ? JSON.parse(fs.readFileSync(historyPath, 'utf8')) : [];
+    const history = readJson(historyPath, []);
 
     history.push(...entries);
 
-    fs.writeFileSync(historyPath, JSON.stringify(history, null, 2) + '\n');
+    writeJson(historyPath, history);
 }
 
 module.exports = { appendFlagHistoryEntries };

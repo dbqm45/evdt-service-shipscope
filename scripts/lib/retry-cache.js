@@ -20,8 +20,16 @@ async function loadOrCompute(key, computeFn) {
     const cachePath = cachePathFor(key);
 
     if (fs.existsSync(cachePath)) {
-        console.log(`Reusing cached result from an earlier attempt in this run (${cachePath}) instead of re-fetching.`);
-        return JSON.parse(fs.readFileSync(cachePath, 'utf8'));
+        try {
+            const cached = JSON.parse(fs.readFileSync(cachePath, 'utf8'));
+
+            console.log(`Reusing cached result from an earlier attempt in this run (${cachePath}) instead of re-fetching.`);
+
+            return cached;
+        } catch (e) {
+            // Truncated by a killed write — same as no cache, rather than failing every retry on JSON.parse.
+            console.warn(`Warning: ignoring unreadable retry cache ${cachePath}: ${e.message}`);
+        }
     }
 
     const result = await computeFn();

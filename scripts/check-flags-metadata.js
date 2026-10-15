@@ -1,15 +1,8 @@
 const fs = require('fs');
 const path = require('path');
+const { safeRelativePath } = require('./lib/cli');
+const { readJson } = require('./lib/json-file');
 const { discoverAllFlags } = require('./lib/extract-flags');
-
-function safeRelativePath(inputPath, label) {
-    const normalized = path.normalize(inputPath);
-    if (path.isAbsolute(normalized) || normalized.split(path.sep).includes('..')) {
-        console.error(`Error: ${label} "${inputPath}" is not a safe relative path — refusing to use it.`);
-        process.exit(1);
-    }
-    return normalized;
-}
 
 const FLAGS_META_PATH = safeRelativePath(
     process.env.FLAGS_META_PATH || 'status-repo/docs/data/flags-meta.json',
@@ -17,6 +10,11 @@ const FLAGS_META_PATH = safeRelativePath(
 );
 const SEARCH_ROOT = safeRelativePath(process.env.FLAGS_SEARCH_ROOT || 'domains', 'FLAGS_SEARCH_ROOT');
 const STATUS_REPO_URL = process.env.STATUS_REPO_EDIT_URL || 'https://github.com/YOUR_ORG/shipscope-test/edit/main/docs/data/flags-meta.json';
+// Opt-in, same spirit as sync-jira.js's JIRA_BOARD_LOOKUP_STRICT but inverted: this check's default
+// behavior is already "fail the build", so WARN_ONLY is the opt-in that softens it, not the opt-in that
+// hardens it. Meant for a caller repo onboarding its first flags, where every flag is incomplete by
+// construction and a hard CI failure would block merging anything until metadata catches up.
+const WARN_ONLY = process.env.WARN_ONLY === 'true';
 
 function main() {
     const flags = discoverAllFlags(SEARCH_ROOT);
@@ -31,7 +29,7 @@ function main() {
         process.exit(1);
     }
 
-    const flagsMeta = JSON.parse(fs.readFileSync(FLAGS_META_PATH, 'utf8'));
+    const flagsMeta = readJson(FLAGS_META_PATH);
     const problems = [];
 
     for (const { key, file } of flags) {
@@ -49,15 +47,23 @@ function main() {
     }
 
     if (problems.length) {
-        console.error('\n❌ Flag metadata check failed:\n');
-        problems.forEach(p => console.error('  - ' + p));
+        if (WARN_ONLY) {
+            console.warn(`\n::warning::Flag metadata check found ${problems.length} problem(s) (WARN_ONLY — not failing the build):`);
+            problems.forEach(p => console.warn('::warning::  - ' + p));
+        } else {
+            console.error('\n❌ Flag metadata check failed:\n');
+            problems.forEach(p => console.error('  - ' + p));
+        }
         console.error(
             `\nEvery flag must have a complete entry in flags-meta.json ` +
-            `(source, jiraKeys, components) before merging.\n` +
+            `(source, jiraKeys, components)${WARN_ONLY ? '' : ' before merging'}.\n` +
             `Fill it in here: ${STATUS_REPO_URL}\n` +
             `(if this is a brand-new flag, a stub entry should already have been scaffolded for you — see "Scaffold flags-meta" step)\n`
         );
-        process.exit(1);
+        if (!WARN_ONLY) {
+            process.exit(1);
+        }
+        return;
     }
 
     console.log(`✅ All ${flags.length} flags have complete metadata.`);

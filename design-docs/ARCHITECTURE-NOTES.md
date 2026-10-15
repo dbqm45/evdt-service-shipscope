@@ -80,6 +80,8 @@ independence, since ShipScope never holds the relevant secrets. Pull adapters ma
 convenience for teams unable or unwilling to maintain even a small relay, and should be evaluated case by
 case rather than treated as the default path.
 
+The push/hybrid route is now designed in [FLAG-INGEST.md](FLAG-INGEST.md): a shared ingest core plus a validated `payload` adapter and an opt-in composite action.
+
 **Where to declare the source is not the hard part.** It would be easy enough to record, per component —
 e.g. in `docs/components.json`, alongside the entries added when onboarding a new component (see
 `ONBOARDING.md`) — which flag mechanism that component uses (`build`, `runtime-be`, or eventually a named

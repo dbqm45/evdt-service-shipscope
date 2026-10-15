@@ -189,3 +189,49 @@ GitHub, za pośrednictwem webhooka.
 5. Zakres danych udostępnianych przez webhook na poziomie aplikacji GitHub należy potwierdzić z zespołem
    bezpieczeństwa — aplikacja posiada już dostęp do tych repozytoriów; rozwiązanie wprowadza nowy kanał
    dostarczania już dostępnych informacji, nie nowy zakres danych.
+## Alternatywa bez serwera: `workflow_run` na domyślnym branchu
+
+Jeżeli zmiana w każdym repozytorium serwisu jest jednak akceptowalna (jednorazowa, tylko na domyślnym
+branchu), ten sam problem można rozwiązać bez żadnego komponentu nasłuchującego. Workflow na domyślnym
+branchu repozytorium serwisu, wyzwalany przez `workflow_run`, odpala się po zakończeniu wskazanych
+workflow deploymentowych **niezależnie od brancha, na którym one działały**, bo GitHub uruchamia workflow
+`workflow_run` wyłącznie z YAML-a domyślnego brancha. Deploy z `deployment/qa` (podbicie
+`trigger.properties`) jest więc sygnalizowany, mimo że kopia workflow deploymentowego na tym branchu nie ma
+kroku `notify_shipscope`.
+
+```yaml
+name: Notify ShipScope
+
+on:
+  workflow_run:
+    # wartości muszą być dokładnie równe polu `name:` workflow deploymentowych
+    workflows: ["QA on-demand deployment", "PROD on-demand deployment", "TEST auto deployment"]
+    types: [completed]
+
+permissions: {}
+
+jobs:
+  notify:
+    # porażek nie pomijamy: ShipScope pokazuje nieudane próby w historii
+    if: github.event.workflow_run.conclusion != 'skipped' && github.event.workflow_run.conclusion != 'cancelled'
+    uses: circlek-global/evdt-service-shipscope/.github/workflows/notify-deployment.yml@main
+    with:
+      component: ${{ github.event.repository.name }}
+    secrets:
+      SHIPSCOPE_APP_ID: ${{ secrets.SHIPSCOPE_APP_ID }}
+      SHIPSCOPE_APP_PRIVATE_KEY: ${{ secrets.SHIPSCOPE_APP_PRIVATE_KEY }}
+```
+
+Uwagi:
+
+- Sprawdzenie tożsamości w `notify-deployment.yml` nadal przechodzi (`github.repository` to repo serwisu).
+- Brak checkoutu, więc kod z brancha deploymentowego nie wykonuje się z dostępem do sekretów.
+- Po zmianie nazwy workflow wyzwalacz po cichu przestaje pasować; po wdrożeniu zweryfikuj jednym deployem na QA.
+- `completed` odpala się po zakończeniu całego workflow, więc GitHub Deployment musi mieć już terminalny
+  status; deploy, którego workflow kończy się przed zapisaniem `success`, czeka na kolejny sygnał.
+- Dla TEST/PROD stary krok w workflow może nadal strzelać; zdublowany dispatch jest bezpieczny
+  (synchronizacja jest idempotentna). Dzienny cron zostaje jako ostatnia siatka bezpieczeństwa.
+- Koszt: jeden mały job na deployment, zamiast harmonogramu odpalanego niezależnie od tego, czy coś wyszło.
+
+W porównaniu z webhookiem powyżej wymaga zmiany w każdym repozytorium serwisu (proces zatwierdzeń), ale
+nie wymaga infrastruktury, przechowywania sekretów ani dyżurów, więc ShipScope pozostaje bezserwerowy.

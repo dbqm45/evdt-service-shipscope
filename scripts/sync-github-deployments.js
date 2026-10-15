@@ -1,26 +1,127 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { fail, safeRelativePath } = require('./lib/cli');
+const { readJson, writeJson } = require('./lib/json-file');
 const { resolveDisplayName } = require('./lib/github-users');
 const { loadOrCompute } = require('./lib/retry-cache');
+const { githubApiGet } = require('./lib/github-api');
+const { parseIgnorePaths, diffTrees } = require('./lib/tree-diff');
+const {
+    STATE_MAP,
+    ENV_ORDER,
+    mapEnvironment,
+    extractIssueKeys,
+    extractCommitType,
+    extractPromotedVersion,
+    extractRunId,
+    latestSuccessfulByEnv,
+    trimOldRecords: trimOldRecordsPure,
+    buildSummary,
+    mergeIssueDeploymentHistory,
+    computeDeployDurationMs,
+    buildDeploymentPlan: buildDeploymentPlanPure,
+    buildRecord,
+    seedLastResolvedRefByEnv,
+    seedLastResolvedRangeByEnv,
+    pickLatestStatus,
+    computeNextCursor,
+    applyDrift,
+} = require('./lib/deployment-records');
 const { GITHUB_TOKEN, APP_REPO, COMPONENT } = process.env;
-
-function fail(message) {
-    console.error(`Error: ${message}`);
-    process.exit(1);
-}
-
-function safeRelativePath(inputPath, label) {
-    const normalized = path.normalize(inputPath);
-
-    if (path.isAbsolute(normalized) || normalized.split(path.sep).includes('..')) {
-        fail(`${label} "${inputPath}" is not a safe relative path — refusing to use it.`);
+// Optional (docs/components.json `versionFile`): for a component whose QA/PROD deployments are *trigger commits*
+// on a deployment branch (e.g. `deployment/qa` holding only `trigger.properties` with `version=v0.0.702`, which the
+// workflow then checks out and builds), the deployment's own SHA is not the code that shipped — the ref named in
+// that file is. Unset = every deployment SHA is the shipped code (the default for all other components).
+const VERSION_FILE = process.env.VERSION_FILE ? safeRelativePath(process.env.VERSION_FILE, 'VERSION_FILE') : '';
+// Optional (docs/components.json `driftIgnorePaths`, passed as a JSON array string): paths whose differences
+// between two environments don't count as drift — deployment-branch plumbing (CODEOWNERS, workflows, READMEs,
+// the version file) rather than shipped code. Unset/empty = every changed file counts. See lib/tree-diff.js.
+const DRIFT_IGNORE_PATHS = (() => {
+    try {
+        return parseIgnorePaths(process.env.DRIFT_IGNORE_PATHS);
+    } catch (e) {
+        return fail(`Invalid DRIFT_IGNORE_PATHS: ${e.message}`);
     }
-
-    return normalized;
-}
+})();
 
 const DATA_PATH = safeRelativePath(process.env.DATA_PATH || 'docs/data/deployments.json', 'DATA_PATH');
+// Tiny, never-trimmed companion to DATA_PATH: `{ [component]: highestDeploymentIdEverSynced }`. GitHub
+// deployment IDs are monotonically increasing per repo, so this is enough to know "have we already
+// processed this one" without needing the full historical record to still be present in DATA_PATH —
+// which, since RETENTION_DAYS physically removes old records (see trimOldRecords), it increasingly won't
+// be. Without this, a trimmed-away deployment would look "new" again on the next run and pay the full
+// per-deployment API cost (statuses, compare, display-name resolution) to re-process it, forever.
+const CURSOR_PATH = safeRelativePath(process.env.CURSOR_PATH || 'docs/data/deployments-cursor.json', 'CURSOR_PATH');
+// Tiny, never-trimmed companion to DATA_PATH, same spirit as CURSOR_PATH above but for a different gap:
+// `{ [issueKey]: { [env]: { [component]: { deployedAt, commitUrl } } } }`, recording the *first* time an
+// issue key was ever seen on a successful deployment, per env/component. Found and fixed as a real bug —
+// `docs/app.js`'s release-status/Release Notes/lead-time joins all scan `deployments.json` directly for a
+// record whose `relatedIssues` includes a given issue key; once RETENTION_DAYS trims that record away (and
+// it isn't the one latest/latest-successful record `trimOldRecords()` always keeps), the issue silently
+// reverts to looking "not deployed" even though it genuinely shipped once. This file is never trimmed, so
+// that join can fall back to it once the live record is gone.
+const ISSUE_DEPLOYMENTS_PATH = safeRelativePath(
+    process.env.ISSUE_DEPLOYMENTS_PATH || 'docs/data/issue-deployments.json',
+    'ISSUE_DEPLOYMENTS_PATH'
+);
+// Tiny, fully-recomputed-every-run companion to DATA_PATH: `{ [component]: { [env]: { current,
+// latestOverall } } }`, where both are either a full deployment record (same shape as DATA_PATH's own
+// entries — driftBehind/rollback/version included) or null. docs/app.js's currentVersion()/
+// componentDeployments() repeat an O(n) filter+sort over the *entire* state.deployments array once per
+// component and once per component×environment on every single first render (the Technical view's
+// summary cards and component×env matrix) — for a tracked fleet with many components and up to
+// RETENTION_DAYS of history each, that's real, repeated work blocking first paint. `current`/
+// `latestOverall` here are exactly the two records trimOldRecords() already computes below (and always
+// keeps, regardless of age) for that same purpose — writing them out separately costs nothing extra (no
+// new API calls, no new computation, just reusing those two already-built maps) and lets the frontend do
+// an O(1) lookup instead of re-deriving it from the full array. It's a fast-path cache, not a new source
+// of truth — docs/app.js still falls back to deriving from the full deployments.json whenever a
+// component/env is missing here (e.g. this file predates a component's onboarding) — and it only ever
+// reflects whatever this component's own last *regular* sync wrote: a change made by the one-off,
+// manually-triggered backfill-deployment-metadata.js (which doesn't go through trimOldRecords) won't be
+// visible here until this component's next regular sync, acceptable since nothing depends on this file
+// for correctness, only for render speed.
+const SUMMARY_PATH = safeRelativePath(process.env.SUMMARY_PATH || 'docs/data/summary.json', 'SUMMARY_PATH');
+const RETENTION_DAYS = Number(process.env.RETENTION_DAYS || 90);
+
+// A deployment can be fetched by `/deployments` before GitHub ever posts a terminal status for it at all
+// (buildDeploymentPlan's `blockedIds`) — expected to resolve shortly. One that's still unresolved after
+// this long never will (an abandoned/misconfigured deploy pipeline that posted `queued`/`in_progress` and
+// nothing else, or whose only terminal status fell past the `?per_page=10` statuses page) — found and
+// fixed as a real bug: an indefinitely-stuck deployment used to cap the sync cursor at `(its id) - 1`
+// forever, forcing every higher-id deployment to be re-fetched and fully re-processed (statuses, compare,
+// display-name resolution — real API cost) on every single future run, even though those deployments
+// already have records in `deployments.json` and were just getting silently deduped at write time.
+const STUCK_DEPLOYMENT_MAX_AGE_HOURS = Number(process.env.STUCK_DEPLOYMENT_MAX_AGE_HOURS || 48);
+
+// Persists ETags for the few GitHub list endpoints fetched on *every single run* regardless of whether
+// anything actually changed (`/deployments` page 1, `/tags`, `/releases` — see their githubApiAllPages
+// call sites below) so a run where nothing changed on GitHub's side gets a free `304` instead of a real,
+// rate-limit-counting `200` fetch. Unlike retry-cache.js's per-job cache, this is meant to survive *across*
+// separate workflow runs — on its own, defaulting under RUNNER_TEMP, it only ever helps within one job
+// attempt's own retries (same as the page cache), same safe no-op-if-missing behavior either way; the real
+// cross-run win needs the caller to point GITHUB_API_ETAG_CACHE_DIR at a directory actually persisted
+// between runs, which orchestrate-full-sync.yml does via an `actions/cache` step keyed by component.
+const ETAG_CACHE_PATH = path.join(
+    process.env.GITHUB_API_ETAG_CACHE_DIR || process.env.RUNNER_TEMP || os.tmpdir(),
+    `shipscope-etags-${COMPONENT}.json`
+);
+
+function loadEtagCache() {
+    try {
+        return readJson(ETAG_CACHE_PATH, {});
+    } catch (e) {
+        console.warn(`Warning: could not read ETag cache at ${ETAG_CACHE_PATH}, starting fresh: ${e.message}`);
+
+        return {};
+    }
+}
+
+function saveEtagCache(etagCache) {
+    fs.mkdirSync(path.dirname(ETAG_CACHE_PATH), { recursive: true });
+    fs.writeFileSync(ETAG_CACHE_PATH, JSON.stringify(etagCache));
+}
 
 if (!GITHUB_TOKEN) {
     fail('Missing GITHUB_TOKEN');
@@ -32,216 +133,54 @@ if (!COMPONENT) {
     fail('Missing COMPONENT (e.g. "evapl-service-frontend")');
 }
 
-function mapEnvironment(rawEnv) {
-    const e = (rawEnv || '').toLowerCase();
+// Thin bindings of the pure lib/deployment-records.js functions to this run's env-derived settings.
+const trimOldRecords = records => trimOldRecordsPure(records, { retentionDays: RETENTION_DAYS });
+const buildDeploymentPlan = (deployments, latestStatusById, statusesById, now = Date.now()) =>
+    buildDeploymentPlanPure(deployments, latestStatusById, statusesById, { now, stuckMaxAgeHours: STUCK_DEPLOYMENT_MAX_AGE_HOURS });
 
-    if (e.includes('prod')) {
-        return 'prod';
+function updateIssueDeploymentHistory(allRecords) {
+    const history = readJson(ISSUE_DEPLOYMENTS_PATH, {});
+
+    if (mergeIssueDeploymentHistory(history, allRecords)) {
+        writeJson(ISSUE_DEPLOYMENTS_PATH, history);
     }
-    if (e.includes('qa')) {
-        return 'qa';
-    }
-    if (e.includes('test') || e.includes('dev')) {
-        return 'test';
-    }
-
-    return null;
 }
 
-function extractIssueKeys(text) {
-    return [...new Set(((text || '').match(/[A-Z]{2,}-[0-9]+/g)) || [])];
-}
+/** Pure: the `version` value from a `key=value` properties file body, or null. */
+function parseVersionProperty(text) {
+    const m = /^\s*version\s*[=:]\s*(\S+)\s*$/m.exec(text || '');
 
-function extractCommitType(commitMessage) {
-    const match = (commitMessage || '').match(/^(feat|fix|chore)(\([^)]*\))?!?:/);
-
-    return match ? match[1] : null;
-}
-
-function extractPromotedVersion(commitMessage) {
-    const match = (commitMessage || '').match(/\bv?\d+\.\d+\.\d+\b/);
-
-    return match ? match[0] : null;
-}
-
-const STATE_MAP = { success: 'success', failure: 'failed', error: 'failed' };
-const ENV_ORDER = ['test', 'qa', 'prod'];
-
-function extractRunId(logUrl) {
-    const match = (logUrl || '').match(/\/actions\/runs\/(\d+)/);
-
-    return match ? match[1] : null;
-}
-
-function latestSuccessfulByEnv(componentRecords) {
-    const latest = {};
-
-    for (const rec of componentRecords) {
-        if (rec.status !== 'success') continue;
-
-        if (!latest[rec.environment] || new Date(rec.deployedAt) > new Date(latest[rec.environment].deployedAt)) {
-            latest[rec.environment] = rec;
-        }
-    }
-
-    return latest;
-}
-
-function computeDeployDurationMs(statuses) {
-    if (!statuses || statuses.length < 2) return null;
-
-    const times = statuses.map(s => new Date(s.created_at).getTime());
-
-    return Math.max(...times) - Math.min(...times);
-}
-
-function buildDeploymentPlan(deployments, latestStatusById, statusesById) {
-    const withEnv = [];
-
-    for (const dep of deployments) {
-        const environment = mapEnvironment(dep.environment);
-
-        if (!environment) continue;
-
-        const latest = latestStatusById[dep.id];
-
-        if (!latest) continue;
-
-        const status = STATE_MAP[latest.state];
-
-        if (!status) continue;
-
-        withEnv.push({
-            dep,
-            environment,
-            status,
-            statusCreatedAt: latest.created_at,
-            workflowRunUrl: latest.log_url || null,
-            durationMs: computeDeployDurationMs(statusesById[dep.id]),
-        });
-    }
-
-    withEnv.sort((a, b) => new Date(a.statusCreatedAt) - new Date(b.statusCreatedAt));
-
-    const lastSuccessfulShaByEnv = {};
-    const plan = withEnv.map(entry => {
-        const previousSha = lastSuccessfulShaByEnv[entry.environment] || null;
-
-        if (entry.status === 'success') {
-            lastSuccessfulShaByEnv[entry.environment] = entry.dep.sha;
-        }
-
-        return { ...entry, previousSha };
-    });
-
-    return plan;
-}
-
-function buildRecord(entry, component, relatedIssues, appRepo, promotedVersion, issueCommitTypes, resolvedRef) {
-    const { dep, environment, status, statusCreatedAt, workflowRunUrl, durationMs, manual, compareUrl, rollback, deployedByLogin, deployedByName } = entry;
-
-    return {
-        id: `gh-${dep.id}`,
-        component,
-        environment,
-        version: promotedVersion || (dep.sha || dep.ref || '').toString().slice(0, 12),
-        commitUrl: compareUrl || (dep.sha && appRepo ? `https://github.com/${appRepo}/commit/${dep.sha}` : null),
-        workflowRunUrl: workflowRunUrl || null,
-        durationMs: durationMs || null,
-        manual: manual === true,
-        rollback: rollback || null,
-        deployedAt: statusCreatedAt,
-        deployedBy: deployedByName || deployedByLogin || 'unknown',
-        deployedByLogin: deployedByLogin || null,
-        status,
-        relatedIssues,
-        issueCommitTypes: issueCommitTypes || {},
-        resolvedRef: resolvedRef || null,
-    };
-}
-
-function seedLastResolvedRefByEnv(existingForComponent) {
-    const lastResolvedRefByEnv = {};
-    const lastDeployedAtByEnv = {};
-
-    for (const rec of existingForComponent) {
-        if (rec.status !== 'success') continue;
-
-        const isNewer = !lastDeployedAtByEnv[rec.environment] || new Date(rec.deployedAt) > new Date(lastDeployedAtByEnv[rec.environment]);
-
-        if (isNewer) {
-            lastDeployedAtByEnv[rec.environment] = rec.deployedAt;
-            lastResolvedRefByEnv[rec.environment] = rec.resolvedRef || rec.version;
-        }
-    }
-
-    return lastResolvedRefByEnv;
+    return m ? m[1] : null;
 }
 
 /**
- * Companion to seedLastResolvedRefByEnv: seeds the *result* already computed for that same latest-per-env
- * record (its compare URL, relatedIssues, issueCommitTypes, rollback) — see the matching cache built up in
- * main() below for why. `commitUrl` only came from a real `/compare/...` range (as opposed to the
- * single-commit fallback) when it actually contains `/compare/`, which is the only signal available once
- * a record is already written to disk (the intermediate `compareUrl` variable itself isn't persisted).
+ * For VERSION_FILE components: reads the version file at the deployment's commit and resolves the ref it names.
+ * `ref` is a git tag name when one exists, else the commit SHA the name resolves to (immutable, safe for
+ * /compare); `label` is the version as written. Null (caller falls back to the deployment SHA) when the
+ * file/ref is missing — never throws, a lookup problem must not fail the sync.
  */
-function seedLastResolvedRangeByEnv(existingForComponent) {
-    const lastResolvedRangeByEnv = {};
-    const lastDeployedAtByEnv = {};
+async function resolveVersionFileRef(sha, tagNames) {
+    if (!VERSION_FILE) return null;
 
-    for (const rec of existingForComponent) {
-        if (rec.status !== 'success') continue;
+    try {
+        const file = await githubApi(`/contents/${VERSION_FILE.split('/').map(encodeURIComponent).join('/')}?ref=${sha}`);
+        const label = parseVersionProperty(Buffer.from(file.content || '', 'base64').toString('utf8'));
 
-        const isNewer = !lastDeployedAtByEnv[rec.environment] || new Date(rec.deployedAt) > new Date(lastDeployedAtByEnv[rec.environment]);
+        if (!label) return null;
+        if (tagNames.has(label)) return { ref: label, label };
 
-        if (isNewer) {
-            lastDeployedAtByEnv[rec.environment] = rec.deployedAt;
-            lastResolvedRangeByEnv[rec.environment] = {
-                ref: rec.resolvedRef || rec.version,
-                compareUrl: rec.commitUrl && rec.commitUrl.includes('/compare/') ? rec.commitUrl : null,
-                relatedIssues: rec.relatedIssues || [],
-                issueCommitTypes: rec.issueCommitTypes || {},
-                rollback: rec.rollback || null,
-            };
-        }
+        const commit = await githubApi(`/commits/${encodeURIComponent(label)}`);
+
+        return commit.sha ? { ref: commit.sha, label } : null;
+    } catch (e) {
+        console.warn(`Warning: could not resolve ${VERSION_FILE} version for ${sha}: ${e.message}`);
+
+        return null;
     }
-
-    return lastResolvedRangeByEnv;
 }
 
-const RATE_LIMIT_MAX_ATTEMPTS = 4;
-const RATE_LIMIT_MAX_DELAY_MS = 10 * 60_000;
-
-async function githubApi(pathSuffix) {
-    for (let attempt = 1; attempt <= RATE_LIMIT_MAX_ATTEMPTS; attempt++) {
-        const res = await fetch(`https://api.github.com/repos/${APP_REPO}${pathSuffix}`, {
-            headers: {
-                Authorization: `Bearer ${GITHUB_TOKEN}`,
-                Accept: 'application/vnd.github+json',
-            },
-        });
-
-        if (res.ok) {
-            return res.json();
-        }
-
-        const body = await res.text();
-        const isRateLimited = res.status === 429 || (res.status === 403 && res.headers.get('x-ratelimit-remaining') === '0');
-
-        if (!isRateLimited || attempt === RATE_LIMIT_MAX_ATTEMPTS) {
-            throw new Error(`GitHub API error on ${pathSuffix}: ${res.status} ${body}`);
-        }
-
-        const resetAtMs = Number(res.headers.get('x-ratelimit-reset')) * 1000;
-        const delayMs = Number.isFinite(resetAtMs) && resetAtMs > 0
-            ? Math.min(Math.max(resetAtMs - Date.now(), 1000), RATE_LIMIT_MAX_DELAY_MS)
-            : 30_000;
-
-        console.warn(
-            `Rate limited on ${pathSuffix}; waiting ${Math.ceil(delayMs / 1000)}s before retry ${attempt + 1}/${RATE_LIMIT_MAX_ATTEMPTS}.`
-        );
-        await new Promise(resolve => setTimeout(resolve, delayMs));
-    }
+async function githubApi(pathSuffix, etagCache = null) {
+    return githubApiGet(`https://api.github.com/repos/${APP_REPO}${pathSuffix}`, GITHUB_TOKEN, etagCache);
 }
 
 function pageCachePathFor(key) {
@@ -250,13 +189,41 @@ function pageCachePathFor(key) {
     return path.join(process.env.RUNNER_TEMP || os.tmpdir(), `shipscope-pages-${safeKey}.json`);
 }
 
+// A truncated/corrupt cache file (e.g. the job was killed mid-write) is treated as "no cache" — otherwise it
+// would make every retry of this job throw on JSON.parse forever instead of simply re-fetching.
+function readPageCache(cachePath) {
+    if (!cachePath || !fs.existsSync(cachePath)) return [];
+
+    try {
+        const cached = JSON.parse(fs.readFileSync(cachePath, 'utf8'));
+
+        return Array.isArray(cached) ? cached : [];
+    } catch (e) {
+        console.warn(`Warning: ignoring unreadable page cache ${cachePath}: ${e.message}`);
+
+        return [];
+    }
+}
+
 // Optional cacheKey persists pages to disk as they're fetched, so a failure partway through (e.g. rate
 // limiting on a later page, even after githubApi's own retries are exhausted) doesn't force the *next*
 // job attempt to re-fetch pages already fetched successfully in an earlier attempt of this same job.
-async function githubApiAllPages(basePathWithQuery, cacheKey) {
+//
+// Optional `stopWhen(record)` lets a caller that knows the list is sorted newest-first (GitHub's
+// `/deployments` is — reverse creation order, which tracks descending ID) stop paginating as soon as it
+// sees a record it already has, instead of always walking every page back to the very first deployment.
+// Found and fixed as a real bug: under a large backlog that already has thousands of synced deployments,
+// every run used to re-paginate the *entire* list just to find the handful newer than the cursor — this
+// is the dominant cost of a "does nothing new" run once a repo has enough history. Only ever applied to
+// `/deployments` below, not `/tags`/`/releases` — those have no cursor-like "already seen" concept to stop
+// at, and are small enough that paginating in full is cheap anyway.
+async function githubApiAllPages(basePathWithQuery, cacheKey, stopWhen, etagCache = null) {
     const sep = basePathWithQuery.includes('?') ? '&' : '?';
     const cachePath = cacheKey ? pageCachePathFor(cacheKey) : null;
-    let all = cachePath && fs.existsSync(cachePath) ? JSON.parse(fs.readFileSync(cachePath, 'utf8')) : [];
+    const all = readPageCache(cachePath);
+    const dedupeKey = r => (r.id != null ? r.id : r.name);
+    // Built once and extended per page — rebuilding it from `all` on every page made this O(pages × records).
+    const seenKeys = new Set(all.map(dedupeKey));
     let page = Math.floor(all.length / 100) + 1;
 
     if (all.length) {
@@ -264,17 +231,34 @@ async function githubApiAllPages(basePathWithQuery, cacheKey) {
     }
 
     while (true) {
-        const pageResults = await githubApi(`${basePathWithQuery}${sep}page=${page}`);
+        const pageResults = await githubApi(`${basePathWithQuery}${sep}page=${page}`, etagCache);
 
         if (!pageResults.length) break;
 
-        all = all.concat(pageResults);
+        // Deduped by a unique identifier — found and fixed as a real bug: resuming from a cached partial
+        // fetch (above) picks up at a page number computed from how many records are already cached,
+        // which assumes the underlying list hasn't shifted since. If a new item landed on an earlier page
+        // between the original fetch and the resumed one (a real deployment firing mid-pagination, most
+        // likely during a large first-sync backlog — exactly when this caching exists at all), the same
+        // item can appear on two different fetched pages and get appended twice. This helper is also used
+        // for `/tags` and `/releases`, which don't carry an `id` field the same way deployments do (a tag
+        // is identified by its unique `name` instead) — `id ?? name` covers both shapes correctly, and
+        // since each call only ever fetches one endpoint, there's no cross-endpoint key collision risk.
+        for (const r of pageResults) {
+            const k = dedupeKey(r);
+
+            if (!seenKeys.has(k)) {
+                seenKeys.add(k);
+                all.push(r);
+            }
+        }
 
         if (cachePath) {
             fs.writeFileSync(cachePath, JSON.stringify(all));
         }
 
         if (pageResults.length < 100) break;
+        if (stopWhen && pageResults.some(stopWhen)) break;
 
         page += 1;
     }
@@ -283,6 +267,16 @@ async function githubApiAllPages(basePathWithQuery, cacheKey) {
 }
 
 const MAX_MANUAL_LOOKUPS_PER_RUN = 30;
+
+// Caps how many new deployments a single run resolves (statuses + commit + compare + display-name — the
+// expensive per-deployment work in main()'s loop below). Found and fixed as a real bug: with no cap, a
+// large first-sync backlog (or one that's fallen behind for a while) processes every new deployment in one
+// run, which can exhaust the GitHub API rate limit mid-run (see CLAUDE.md) and, since the cursor was only
+// ever written after the *entire* loop finished, loses all of that run's progress on any failure instead
+// of keeping whatever it already resolved. Oldest-first (ascending by id) so a capped run always makes
+// forward progress from the front of the backlog rather than resolving an arbitrary subset; whatever
+// doesn't fit this run is simply newer than the new cursor and picked up by the very next run.
+const MAX_NEW_DEPLOYMENTS_PER_RUN = Number(process.env.MAX_NEW_DEPLOYMENTS_PER_RUN || 200);
 
 async function resolveManualFlag(logUrl, runEventCache) {
     const runId = extractRunId(logUrl);
@@ -309,12 +303,49 @@ async function resolveManualFlag(logUrl, runEventCache) {
     } catch (e) {
         console.warn(`Warning: could not determine trigger type for run ${runId}: ${e.message}`);
 
+        // Cached as a failure too: otherwise a persistent error (e.g. a 403 from a missing `actions: read`
+        // permission, which isn't retried) never counts toward MAX_MANUAL_LOOKUPS_PER_RUN and re-fetches the
+        // same run for every deployment sharing it. The returned value is unchanged (`null`).
+        runEventCache.set(runId, null);
+
+        return null;
+    }
+}
+
+/**
+ * Compares the repository content of two refs. Resolves to `{ same: true }` when both commits share a git tree,
+ * `{ same: false, diff }` when they differ (`diff` = diffTrees() result: changed paths after DRIFT_IGNORE_PATHS, or
+ * null when the recursive listing was truncated/unavailable), and `null` when the comparison could not be made
+ * at all (API error) — unknown is never reported as "same".
+ */
+async function compareTrees(refA, refB) {
+    try {
+        const [a, b] = await Promise.all([githubApi(`/commits/${refA}`), githubApi(`/commits/${refB}`)]);
+        const shaA = a.commit?.tree?.sha;
+        const shaB = b.commit?.tree?.sha;
+
+        if (!shaA || !shaB) return null;
+        if (shaA === shaB) return { same: true };
+
+        const [treeA, treeB] = await Promise.all([
+            githubApi(`/git/trees/${shaA}?recursive=1`),
+            githubApi(`/git/trees/${shaB}?recursive=1`),
+        ]);
+
+        return { same: false, diff: diffTrees(treeA, treeB, DRIFT_IGNORE_PATHS) };
+    } catch (e) {
+        console.warn(`Warning: could not compare trees for ${refA} and ${refB}: ${e.message}`);
+
         return null;
     }
 }
 
 async function computeEnvDrift(latestByEnv) {
     const drift = {};
+    // Envs for which the compare call itself failed (transient error) — distinct from "compare
+    // succeeded and found no drift." The caller must never treat a failed check as a confirmed
+    // "no drift" result, since that would wipe out a previously-detected, still-real driftBehind.
+    const failed = new Set();
 
     for (let i = 1; i < ENV_ORDER.length; i++) {
         const laterEnv = ENV_ORDER[i];
@@ -341,14 +372,42 @@ async function computeEnvDrift(latestByEnv) {
             }
 
             if (Object.keys(entry).length) {
+                // The commit counts measure diverged *history*, not code: with separate per-env deployment branches,
+                // every merge/squash creates a new SHA there, so two envs running byte-identical code can still report
+                // hundreds of commits each way. The git trees are the authoritative "same code" signal: identical
+                // trees — or trees differing only in DRIFT_IGNORE_PATHS — mean no drift. Otherwise `diff` carries the
+                // changed paths, and the commit counts stay as raw history. A comparison that could not be made
+                // (API error, truncated listing) is `diff: { unknown: true }`, never "identical".
+                const trees = await compareTrees(laterRef, earlierRef);
+
+                if (trees && trees.same) continue;
+
+                if (trees && trees.diff) {
+                    if (trees.diff.files === 0) continue;
+
+                    entry.diff = trees.diff;
+                } else {
+                    entry.diff = { unknown: true };
+                }
+
+                // Same displayed version label but a different commit: the label is display-only (often
+                // regex-matched from a commit message, no tag/Release behind it), so "N behind" would read as
+                // ordinary promotion lag when it's really two builds of the "same" version — flag it for the UI.
+                const laterVersion = latestByEnv[laterEnv].version;
+
+                if (laterVersion && laterVersion === latestByEnv[earlierEnv].version) {
+                    entry.sameVersion = true;
+                }
+
                 drift[laterEnv] = entry;
             }
         } catch (e) {
             console.warn(`Warning: could not compute drift for ${laterEnv} vs ${earlierEnv}: ${e.message}`);
+            failed.add(laterEnv);
         }
     }
 
-    return drift;
+    return { drift, failed };
 }
 
 async function issuesInRange(previousRef, currentRef, currentCommitMessage) {
@@ -368,6 +427,21 @@ async function issuesInRange(previousRef, currentRef, currentCommitMessage) {
     }
 
     const comparison = await githubApi(`/compare/${previousRef}...${currentRef}`);
+
+    // GitHub's compare endpoint caps `commits` at 250 regardless of `total_commits` — a release spanning
+    // more than that (e.g. a long-overdue promotion, or the very first sync after onboarding a component)
+    // silently loses `relatedIssues`/`issueCommitTypes` for whatever's missing, which then shows up as
+    // "Not deployed" on prod for issues that genuinely are there. No cheap full fix (the only way to get
+    // the rest is walking /commits page by page until previousRef is reached), so at minimum this makes
+    // the gap loud instead of silent.
+    if (comparison.total_commits > (comparison.commits || []).length) {
+        console.warn(
+            `::warning::Compare ${previousRef}...${currentRef} has ${comparison.total_commits} commits but ` +
+            `GitHub only returned ${(comparison.commits || []).length} — relatedIssues for this deployment may ` +
+            'be incomplete (issues from the missing commits won\'t show as deployed).'
+        );
+    }
+
     const keySet = new Set();
     const typesByKey = {};
 
@@ -390,19 +464,48 @@ async function issuesInRange(previousRef, currentRef, currentCommitMessage) {
 }
 
 async function main() {
-    const existing = fs.existsSync(DATA_PATH) ? JSON.parse(fs.readFileSync(DATA_PATH, 'utf8')) : [];
+    const existing = readJson(DATA_PATH, []);
     const existingForComponent = existing.filter(d => d.component === COMPONENT);
     const otherComponents = existing.filter(d => d.component !== COMPONENT);
-    const knownIds = new Set(existingForComponent.map(d => String(d.id).replace(/^gh-/, '')));
+
+    const cursor = readJson(CURSOR_PATH, {});
+    const lastSyncedId = cursor[COMPONENT] || 0;
+
+    // Mutated in place by githubApi()/githubApiAllPages() for the three list endpoints below that get
+    // fetched on every run regardless of whether anything changed — see ETAG_CACHE_PATH's own comment.
+    const etagCache = loadEtagCache();
 
     // Fetching and resolving from GitHub is expensive (one API call per new deployment, plus more per
     // entry below) and its result doesn't depend on which run wins the push race on `live` — so it's
     // cached per job and only actually redone once, even if this script gets re-invoked by
     // sync-with-retry after a losing push. Redoing it on every retry is what exhausted the GitHub API
     // rate limit for a large, first-time backlog in practice.
-    const records = await loadOrCompute(`deployments-${COMPONENT}`, async () => {
-        const deployments = await githubApiAllPages('/deployments?per_page=100', `deployments-${COMPONENT}`);
-        const newDeployments = deployments.filter(dep => !knownIds.has(String(dep.id)));
+    const { resolvedRecords: records, maxDeploymentId } = await loadOrCompute(`deployments-${COMPONENT}`, async () => {
+        // GitHub returns `/deployments` newest-first (reverse creation order, which tracks descending ID)
+        // — so once a page turns up an ID already at or below the cursor, every remaining page can only
+        // contain IDs we've already synced. `stopWhen` short-circuits pagination there instead of always
+        // walking all the way back to the repo's very first deployment on every single run.
+        const deployments = await githubApiAllPages(
+            '/deployments?per_page=100',
+            `deployments-${COMPONENT}`,
+            dep => dep.id <= lastSyncedId,
+            etagCache
+        );
+        saveEtagCache(etagCache);
+        // Compared against the cursor (highest deployment ID ever synced for this component), not against
+        // which records are currently present in DATA_PATH — those get physically trimmed by RETENTION_DAYS
+        // (see trimOldRecords), so a deployment this old would otherwise look "new" again forever.
+        const allNewDeployments = deployments.filter(dep => dep.id > lastSyncedId).sort((a, b) => a.id - b.id);
+        const newDeployments = allNewDeployments.slice(0, MAX_NEW_DEPLOYMENTS_PER_RUN);
+
+        if (allNewDeployments.length > newDeployments.length) {
+            console.warn(
+                `::warning::${allNewDeployments.length} new deployment(s) found for "${COMPONENT}" — only ` +
+                `processing the oldest ${newDeployments.length} this run (MAX_NEW_DEPLOYMENTS_PER_RUN); the ` +
+                'rest will be picked up on a future run.'
+            );
+        }
+
         const latestStatusById = {};
         const statusesById = {};
 
@@ -412,10 +515,11 @@ async function main() {
         // Release is the most deliberate/curated signal, a plain tag is still structured but less so, and
         // free-text commit-message parsing is the least reliable of the three (it can match an unrelated
         // version-like substring) — hence that priority order below.
-        const tags = newDeployments.length ? await githubApiAllPages('/tags?per_page=100') : [];
+        const tags = newDeployments.length ? await githubApiAllPages('/tags?per_page=100', null, null, etagCache) : [];
         const shaToTag = new Map(tags.map(t => [t.commit.sha, t.name]));
 
-        const releases = newDeployments.length ? await githubApiAllPages('/releases?per_page=100') : [];
+        const releases = newDeployments.length ? await githubApiAllPages('/releases?per_page=100', null, null, etagCache) : [];
+        if (newDeployments.length) saveEtagCache(etagCache);
         const tagNameToSha = new Map(tags.map(t => [t.name, t.commit.sha]));
         const shaToRelease = new Map(
             releases
@@ -426,13 +530,36 @@ async function main() {
         for (const dep of newDeployments) {
             const statuses = await githubApi(`/deployments/${dep.id}/statuses?per_page=10`);
 
+            // The newest entry isn't necessarily the one that matters: GitHub appends `inactive` to a
+            // deployment's own status history whenever a *later* deployment on the same environment
+            // succeeds (`auto_inactive`, on by default outside an environment literally named
+            // `production` — see computeDeployDurationMs's comment). If both deployments end up fetched
+            // as "new" in the same sync run (e.g. a missed notify-deployment dispatch let two pile up
+            // between syncs — a known gap, see CLAUDE.md/DEPLOYMENT-WEBHOOK-PROPOSAL.md), the earlier
+            // one's newest status by the time this runs is that `inactive` marker, not its real outcome
+            // — blindly taking `statuses[0]` would make `STATE_MAP` below find nothing and silently drop
+            // this deployment from `withEnv` entirely, even though it genuinely succeeded or failed.
+            // Skipping past non-terminal entries (currently just `inactive`; STATE_MAP already ignores
+            // anything else it doesn't recognize) to find the most recent real outcome fixes that.
             if (statuses.length) {
-                latestStatusById[dep.id] = statuses[0];
+                latestStatusById[dep.id] = pickLatestStatus(statuses);
                 statusesById[dep.id] = statuses;
             }
         }
 
-        const plan = buildDeploymentPlan(newDeployments, latestStatusById, statusesById);
+        const { plan, blockedIds } = buildDeploymentPlan(newDeployments, latestStatusById, statusesById);
+        // The cursor must never advance past a deployment that doesn't have a terminal status yet — doing
+        // so would permanently exclude it from every future `newDeployments` filter (which only compares
+        // IDs against the cursor) even after it later resolves to a real success/failure. So the new
+        // cursor only ever advances up to just below the lowest still-blocked ID in this batch; with none
+        // blocked, it's free to advance to the highest ID seen at all (an unrecognized-environment
+        // deployment is a permanent, not temporary, skip — see buildDeploymentPlan — so it's fine to
+        // advance past those). Based on `newDeployments` (the capped, actually-processed batch), not the
+        // full fetched `deployments` list — found and fixed as a real bug risk: with MAX_NEW_DEPLOYMENTS_PER_RUN
+        // truncating the batch, advancing the cursor using the untruncated list's max ID would skip past
+        // whatever didn't fit in this run, permanently excluding it the same way an unbounded blocked ID
+        // used to (see H3's fix above).
+        const maxDeploymentId = computeNextCursor(newDeployments, blockedIds, lastSyncedId);
         const lastResolvedRefByEnv = seedLastResolvedRefByEnv(existingForComponent);
         const lastResolvedRangeByEnv = seedLastResolvedRangeByEnv(existingForComponent);
         const runEventCache = new Map();
@@ -444,16 +571,30 @@ async function main() {
             let issueCommitTypes = {};
             let promotedVersion = null;
             let currentRef = null;
+            let fromVersionFile = false;
 
             try {
                 const commit = await githubApi(`/commits/${entry.dep.sha}`);
                 const message = commit.commit?.message || '';
 
-                promotedVersion = shaToRelease.get(entry.dep.sha)
-                    || shaToTag.get(entry.dep.sha)
-                    || extractPromotedVersion(message)
-                    || null;
-                currentRef = promotedVersion || entry.dep.sha;
+                // `promotedVersion` is purely a *display* string (the `version` field) — a free-text regex
+                // match (extractPromotedVersion) is the least reliable of the three sources, but still
+                // fine to just show. `currentRef`, below, is different: it's used as a literal git ref in
+                // the GitHub `/compare` call — a verified release/tag name is a real object GitHub already
+                // confirmed exists, but a regex match from commit-message free text has no such guarantee.
+                // Found and fixed as a real bug: using the unverified regex match directly as `currentRef`
+                // risked a 404 (no such ref), or worse, silently comparing against some unrelated existing
+                // tag/branch that happens to share that version-like substring. `currentRef` now only ever
+                // uses a verified release/tag, falling straight back to the SHA (always resolvable, same
+                // fallback `promotedVersion` itself used before this fix) when neither matched.
+                const verifiedRef = shaToRelease.get(entry.dep.sha) || shaToTag.get(entry.dep.sha) || null;
+                // VERSION_FILE components: the file names the ref that really shipped, which outranks
+                // everything derived from the (trigger) commit itself.
+                const sourceRef = await resolveVersionFileRef(entry.dep.sha, new Set(tagNameToSha.keys()));
+
+                promotedVersion = sourceRef ? sourceRef.label : (verifiedRef || extractPromotedVersion(message) || null);
+                currentRef = sourceRef ? sourceRef.ref : (verifiedRef || entry.dep.sha);
+                fromVersionFile = !!sourceRef;
 
                 const previousRef = lastResolvedRefByEnv[entry.environment] || null;
                 const cachedRange = lastResolvedRangeByEnv[entry.environment];
@@ -475,7 +616,7 @@ async function main() {
                         entry.rollback = cachedRange.rollback;
                     }
                 } else {
-                    const range = await issuesInRange(previousRef, currentRef, message);
+                    const range = await issuesInRange(previousRef, currentRef, sourceRef ? undefined : message);
 
                     relatedIssues = range.keys;
                     issueCommitTypes = range.typesByKey;
@@ -485,7 +626,7 @@ async function main() {
                     }
 
                     if (previousRef && previousRef !== currentRef && APP_REPO) {
-                        entry.compareUrl = `https://github.com/${APP_REPO}/compare/${previousRef}...${entry.dep.sha}`;
+                        entry.compareUrl = `https://github.com/${APP_REPO}/compare/${previousRef}...${sourceRef ? currentRef : entry.dep.sha}`;
                     }
                 }
 
@@ -508,15 +649,19 @@ async function main() {
             entry.deployedByLogin = entry.dep.creator ? entry.dep.creator.login : null;
             entry.deployedByName = await resolveDisplayName(entry.deployedByLogin, GITHUB_TOKEN, nameCache);
 
-            resolvedRecords.push(buildRecord(entry, COMPONENT, relatedIssues, APP_REPO, promotedVersion, issueCommitTypes, currentRef));
+            const record = buildRecord(entry, COMPONENT, relatedIssues, APP_REPO, promotedVersion, issueCommitTypes, currentRef);
+
+            if (record.resolvedRef && fromVersionFile) record.versionFromFile = true;
+            resolvedRecords.push(record);
         }
 
         console.log(
-            `Checked ${deployments.length} deployment(s) for component "${COMPONENT}" from ${APP_REPO}, ` +
-            `${newDeployments.length} new.`
+            `Fetched ${deployments.length} deployment(s) for component "${COMPONENT}" from ${APP_REPO} ` +
+            `(pagination stops once it reaches the cursor), ${allNewDeployments.length} new, ` +
+            `${newDeployments.length} processed this run.`
         );
 
-        return resolvedRecords;
+        return { resolvedRecords, maxDeploymentId };
     });
 
     // Guards the rarer case of a second, concurrent run *for this same component* already having pushed
@@ -524,28 +669,69 @@ async function main() {
     // against re-fetching, not against double-adding, so re-check against the freshly re-read `live` here.
     const existingIds = new Set(existingForComponent.map(d => d.id));
     const freshRecords = records.filter(r => !existingIds.has(r.id));
-
     const componentRecords = [...existingForComponent, ...freshRecords];
-    const latestByEnv = latestSuccessfulByEnv(componentRecords);
-    const drift = await computeEnvDrift(latestByEnv);
 
-    for (const env of Object.keys(latestByEnv)) {
-        if (drift[env]) {
-            latestByEnv[env].driftBehind = drift[env];
-        } else {
-            delete latestByEnv[env].driftBehind;
-        }
+    // Scans this component's *full current* set, not just freshRecords — a one-time, zero-API-cost
+    // backfill effect: every record already sitting in deployments.json right now (synced before this
+    // file existed, and not yet trimmed) gets captured into the never-trimmed companion on this component's
+    // very next sync, instead of needing a separate one-off backfill script. Cheap and idempotent (only
+    // first-seen entries are ever written) — safe to redo on every single run.
+    updateIssueDeploymentHistory(componentRecords);
+
+    const latestByEnv = latestSuccessfulByEnv(componentRecords);
+    // Records synced before VERSION_FILE was enabled still point at the trigger commit, so drift for them is
+    // computed from the ref the file names (looked up now, drift only ever needs each env's latest record) —
+    // no reset of old data needed for the displayed drift to match the code that actually shipped.
+    const driftInput = {};
+
+    for (const [env, rec] of Object.entries(latestByEnv)) {
+        const sourceRef = VERSION_FILE && rec.resolvedRef && !rec.versionFromFile
+            ? await resolveVersionFileRef(rec.resolvedRef, new Set())
+            : null;
+
+        driftInput[env] = sourceRef ? { ...rec, resolvedRef: sourceRef.ref, version: sourceRef.label } : rec;
     }
 
-    const merged = [...otherComponents, ...componentRecords];
+    const { drift, failed } = await computeEnvDrift(driftInput);
 
-    fs.writeFileSync(DATA_PATH, JSON.stringify(merged, null, 2) + '\n');
+    applyDrift(latestByEnv, drift, failed);
+
+    // Trimmed across *every* component, not just COMPONENT — cheap (pure local filtering, no API calls)
+    // and this run is already rewriting the whole file, so there's no reason to wait for each other
+    // component's own next sync to shrink its share of it too. `latestOverall`/`latestSuccess` already
+    // span every component for the same reason, so SUMMARY_PATH below is a full, fresh recompute each
+    // run too — same idempotent-full-rewrite shape as DATA_PATH itself (no-op write when nothing actually
+    // changed → sync-with-retry's `git diff --staged --quiet` finds nothing to commit).
+    const { records: merged, latestOverall, latestSuccess } = trimOldRecords([...otherComponents, ...componentRecords]);
+
+    writeJson(DATA_PATH, merged);
+    writeJson(SUMMARY_PATH, buildSummary(latestOverall, latestSuccess));
+
+    if (maxDeploymentId > lastSyncedId) {
+        cursor[COMPONENT] = maxDeploymentId;
+        writeJson(CURSOR_PATH, cursor);
+    }
+
     console.log(
         `Component "${COMPONENT}": ${freshRecords.length} deployment record(s) recorded this run` +
         (records.length !== freshRecords.length
             ? ` (${records.length - freshRecords.length} already present from a concurrent run, skipped).`
             : '.')
     );
+
+    // Early-warning only — even with RETENTION_DAYS trimming the bulk of history, a large enough tracked
+    // fleet could still approach GitHub's hard 100 MB per-file push rejection faster than expected. This
+    // just surfaces the trend long before that, so lowering RETENTION_DAYS (or sharding) can be a planned
+    // decision instead of a surprise failed push.
+    const sizeMb = Buffer.byteLength(JSON.stringify(merged)) / (1024 * 1024);
+    const SIZE_WARNING_THRESHOLD_MB = Number(process.env.SIZE_WARNING_THRESHOLD_MB || 20);
+
+    if (sizeMb >= SIZE_WARNING_THRESHOLD_MB) {
+        console.warn(
+            `::warning::${DATA_PATH} is now ~${sizeMb.toFixed(1)} MB (warning threshold: ${SIZE_WARNING_THRESHOLD_MB} MB, ` +
+            'GitHub hard-rejects a push over 100 MB) — consider lowering RETENTION_DAYS before it gets there.'
+        );
+    }
 }
 
 module.exports = {
@@ -557,9 +743,14 @@ module.exports = {
     extractRunId,
     latestSuccessfulByEnv,
     computeEnvDrift,
+    parseVersionProperty,
     buildDeploymentPlan,
     buildRecord,
+    githubApiAllPages,
+    updateIssueDeploymentHistory,
     seedLastResolvedRefByEnv,
+    trimOldRecords,
+    buildSummary,
 };
 
 if (require.main === module) {

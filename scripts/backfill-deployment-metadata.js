@@ -1,22 +1,10 @@
 const fs = require('fs');
 const path = require('path');
+const { fail, safeRelativePath } = require('./lib/cli');
+const { readJson, writeJson } = require('./lib/json-file');
 const { resolveDisplayName } = require('./lib/github-users');
+const { githubApiGet } = require('./lib/github-api');
 const { GITHUB_TOKEN, APP_REPO, COMPONENT } = process.env;
-
-function fail(message) {
-    console.error(`Error: ${message}`);
-    process.exit(1);
-}
-
-function safeRelativePath(inputPath, label) {
-    const normalized = path.normalize(inputPath);
-
-    if (path.isAbsolute(normalized) || normalized.split(path.sep).includes('..')) {
-        fail(`${label} "${inputPath}" is not a safe relative path — refusing to use it.`);
-    }
-
-    return normalized;
-}
 
 const DATA_PATH = safeRelativePath(process.env.DATA_PATH || 'docs/data/deployments.json', 'DATA_PATH');
 const MAX_RECORDS_PER_RUN = Number(process.env.MAX_RECORDS_PER_RUN || 500);
@@ -31,19 +19,13 @@ if (!COMPONENT) {
     fail('Missing COMPONENT (e.g. "evapl-service-frontend")');
 }
 
+// Found and fixed as a real bug: this used to be a bare fetch with no rate-limit handling at all, unlike
+// sync-github-deployments.js's own githubApi() — a backfill run (per-record /commits calls capped at
+// MAX_RECORDS_PER_RUN, on top of statuses/compare/display-name lookups) is exactly the kind of bursty,
+// high-volume caller most likely to actually hit a GitHub primary/secondary rate limit, and used to just
+// crash the whole run instead of waiting it out like the sync script already does.
 async function githubApi(pathSuffix) {
-    const res = await fetch(`https://api.github.com/repos/${APP_REPO}${pathSuffix}`, {
-        headers: {
-            Authorization: `Bearer ${GITHUB_TOKEN}`,
-            Accept: 'application/vnd.github+json',
-        },
-    });
-
-    if (!res.ok) {
-        throw new Error(`GitHub API error on ${pathSuffix}: ${res.status} ${await res.text()}`);
-    }
-
-    return res.json();
+    return githubApiGet(`https://api.github.com/repos/${APP_REPO}${pathSuffix}`, GITHUB_TOKEN);
 }
 
 async function githubApiAllPages(basePathWithQuery) {
@@ -88,10 +70,30 @@ function extractShaFromLink(url) {
     return match ? match[1] : null;
 }
 
-function computeDeployDurationMs(statuses) {
-    if (!statuses || statuses.length < 2) return null;
+const TERMINAL_STATES = new Set(['success', 'failure', 'error']);
 
-    const times = statuses.map(s => new Date(s.created_at).getTime());
+// Must stay in sync with sync-github-deployments.js's own buildDeploymentPlan: GitHub appends `inactive`
+// to a deployment's *own* status history whenever a later deployment on the same environment succeeds
+// (`auto_inactive`), so the newest entry in the list isn't necessarily this deployment's real outcome.
+// Found and fixed as a real bug: this copy used to take `statuses[0]` (whatever's newest) instead of the
+// first *terminal* entry, reintroducing the exact bug the sync script already fixed.
+function firstTerminalStatus(statuses) {
+    return (statuses || []).find(s => TERMINAL_STATES.has(s.state)) || null;
+}
+
+// Must stay in sync with sync-github-deployments.js's own computeDeployDurationMs: GitHub appends
+// `inactive` to a deployment's *own* status history whenever a *later* deployment on the same environment
+// succeeds (`auto_inactive`) — not part of this deployment's own lifecycle, so including it inflates
+// `durationMs` to "however long until some unrelated future deploy happened." Found and fixed as a real
+// bug: this copy was missing the filter the sync script already has, and since backfill specifically
+// targets *older* records (more likely to have since accumulated an `inactive` marker from a later
+// deploy), it was computing inflated durations for exactly the records most likely to need fixing.
+function computeDeployDurationMs(statuses) {
+    const lifecycle = (statuses || []).filter(s => s.state !== 'inactive');
+
+    if (lifecycle.length < 2) return null;
+
+    const times = lifecycle.map(s => new Date(s.created_at).getTime());
 
     return Math.max(...times) - Math.min(...times);
 }
@@ -267,7 +269,7 @@ async function backfillRunMetadata(componentRecords) {
 
         try {
             const statuses = await githubApi(`/deployments/${depId}/statuses?per_page=10`);
-            const latest = statuses[0] || null;
+            const latest = firstTerminalStatus(statuses);
 
             rec.workflowRunUrl = latest ? (latest.log_url || null) : null;
             rec.durationMs = computeDeployDurationMs(statuses);
@@ -317,7 +319,15 @@ async function backfillVersions(componentRecords) {
 
         if (!sha) continue;
 
-        let resolved = shaToRelease.get(sha) || shaToTag.get(sha) || null;
+        // Same split as sync-github-deployments.js's own promotedVersion/currentRef: a verified
+        // release/tag is both a safe *display* string and a safe `/compare` ref, but a free-text
+        // regex match out of the commit message is display-only — resolvedRef must fall back to the
+        // sha, not the regex match, or a later sync's seedLastResolvedRefByEnv() would compare against
+        // an unverified ref string. Found and fixed as a real bug: this used to only ever set
+        // `version`, never `resolvedRef`, so a backfilled regex-matched version silently became the
+        // next sync's compare ref — exactly the bug sync-github-deployments.js itself already fixed.
+        const verifiedRef = shaToRelease.get(sha) || shaToTag.get(sha) || null;
+        let resolved = verifiedRef;
 
         if (!resolved) {
             try {
@@ -331,6 +341,7 @@ async function backfillVersions(componentRecords) {
 
         if (resolved) {
             rec.version = resolved;
+            rec.resolvedRef = verifiedRef || sha;
             resolvedCount += 1;
         }
     }
@@ -373,7 +384,7 @@ async function main() {
         fail(`${DATA_PATH} does not exist — nothing to backfill.`);
     }
 
-    const existing = JSON.parse(fs.readFileSync(DATA_PATH, 'utf8'));
+    const existing = readJson(DATA_PATH);
     const componentRecords = existing.filter(d => d.component === COMPONENT);
 
     if (!componentRecords.length) {
@@ -404,7 +415,7 @@ async function main() {
     // Costly: one /users call per distinct login, capped per run by records (not logins).
     const { resolved: namesResolved, remaining: namesRemaining } = await backfillDeployedByNames(componentRecords);
 
-    fs.writeFileSync(DATA_PATH, JSON.stringify(existing, null, 2) + '\n');
+    writeJson(DATA_PATH, existing);
 
     console.log(
         `Component "${COMPONENT}": fixed ${duplicateReleaseGapsFixed} duplicate-release gap(s), ` +

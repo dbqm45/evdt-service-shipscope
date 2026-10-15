@@ -25,6 +25,97 @@
     /* Brand tokens (header logo tile) */
     --brand-accent: #B7AAFF; --brand-accent-hi: #D6CFFF;
     --brand-tile-bg: #1A1830; --brand-tile-border: #3A3466;
+
+    /* Tokens added during the "no hardcoded colors" refactor (see style.css header note) */
+    --status-badge-ok-border: rgba(63,185,80,0.3); --status-badge-warn-border: rgba(210,153,34,0.3);
+    --nd-bg-hover: #1D2024; --nd-avatar-bg: #23262B;
+    --nd-pi-card-bg: #16191D; --nd-pi-card-border: #3A3466;
+    --nd-pv-card-bg: #111316; --nd-pv-card-border: #1F2328;
+    --nd-pv-tile-active-bg: #16191D; --nd-pv-tile-active-border: #3A3F47;
+    --nd-row-border-soft: #16191D;
+    --nd-tag-border: #3A3E44; --nd-epic-title: #F4F5F7; --nd-child-title: #D5D8DC; --nd-tree-line: #2E333A;
+    --nd-breakdown-bg: rgba(255,255,255,0.015);
+    --nd-tag-neutral-fg: #bbb; --nd-tag-neutral-border: #555;
+    --badge-bug-border: red; --badge-bug-bg: darkred; --badge-bug-fg: white;
+    --badge-task-border: dodgerblue; --badge-task-bg: blue; --badge-task-fg: white;
+    --badge-story-border: green; --badge-story-bg: darkgreen; --badge-story-fg: white;
+    --badge-epic-border: violet; --badge-epic-bg: darkviolet; --badge-epic-fg: white;
+    --nd-summary-card-border: #23262A;
+    --nd-row-divider: #1A1D21;
+    --nd-st-none-fg: #7B828C; --nd-st-none-border: #262A30; --nd-st-none-dot-border: #4A4F57;
+    --nd-status-date: #6B727C;
+    --nd-invert-hover: #fff;
+    --nd-wi-head-border: #1A1D22; --nd-wi-epic-border-top: #2A2E34;
+
+    /* Round 2 of the "no hardcoded colors" refactor: remaining rgba() tints in legacy-section selectors
+       (Feature flags panel, status/work-item tags, rollback/issue badges). Each is recomputed per theme
+       from the same base color already used for that token elsewhere (--fail/--rollback/--nd-ok/
+       --nd-code/--nd-dependency/--nd-warn/--nd-link's light vs dark hex), at the alpha the original
+       literal used — same approach as --status-badge-ok-border/-warn-border above. The two with no
+       existing base-color match (--rollback-badge-*, a slightly different purple than --rollback; and
+       --flag-off-bg) keep an identical value in both themes, same as their original literal already did. */
+    --comp-status-failed-shadow: rgba(255,107,107,0.25); --comp-status-rollback-shadow: rgba(184,147,245,0.25);
+    --flag-on-text-bg: rgba(34,197,94,.12); --flag-on-bg: rgba(63,185,80,0.15); --flag-off-bg: rgba(72,79,88,0.2);
+    --tag-status-done-border: rgba(34,197,94,.5); --tag-status-inprogress-border: rgba(90,176,255,.5);
+    --tag-status-blocked-border: rgba(239,68,68,.5); --tag-ghost-flag-border: rgba(245,165,36,.5);
+    --st-released-bg: rgba(34,197,94,.10); --st-released-border: rgba(34,197,94,.26);
+    --st-deployed-bg: rgba(90,176,255,.10); --st-deployed-border: rgba(90,176,255,.26);
+    --st-partial-bg: rgba(245,165,36,.10); --st-partial-border: rgba(245,165,36,.28);
+    --st-dependency-bg: rgba(239,68,68,.10); --st-dependency-border: rgba(239,68,68,.30);
+    --resolved-flag-on-border: rgba(34,197,94,.25);
+    --link-tint-xs: rgba(96,165,250,.04); --link-tint-sm: rgba(96,165,250,.08); --link-tint-md: rgba(96,165,250,.12); --link-border-md: rgba(96,165,250,.4);
+    --rollback-badge-bg: rgba(163,113,247,0.15); --rollback-badge-border: rgba(163,113,247,0.3);
+}
+/* Light theme — same token names, light-palette values. Toggled via the data-theme attribute on <html>
+   (docs/app.js, persisted to localStorage; dark is the default when unset — see index.html's inline
+   head script, which sets this before first paint to avoid a flash of the wrong theme). Only overrides
+   tokens; selectors below that use hardcoded hex instead of a token (dark-mode-tuned near-black
+   backgrounds / near-white text) get their own [data-theme="light"]-scoped override next to each one. */
+html[data-theme="light"] {
+    --bg: #F5F6F8; --panel: #FFFFFF; --panel-2: #EDEEF1; --panel-3: #E3E5E9; --border: #DCDFE3;
+    --text: #16181B; --muted: #666B73;
+    --ok: #198754; --fail: #D92D2D; --run: #B9790A; --rollback: #7C4FD6; --blocked: #D92D2D;
+    --accent-blue: #2563EB;
+    --border-soft: #E8EAED;
+    --nd-fg-1: #15171A; --nd-fg-2: #3C4046; --nd-fg-3: #666B73; --nd-fg-4: #868C94;
+    --nd-bg-page: #F5F6F8; --nd-bg-card: #FFFFFF; --nd-bg-row: #FAFBFC; --nd-bg-raised: #EDEEF1; --nd-bg-sunken: #E7E9EC; --nd-badge-muted: #EEF0F2;
+    --nd-border: #E1E4E8; --nd-border-soft: #ECEEF1; --nd-border-strong: #D2D6DB; --nd-border-hi: #C2C7CD;
+    --nd-ok: #198754; --nd-released: #198754; --nd-code: #1D7FD1; --nd-code-text: #1468B3; --nd-warn: #B9790A; --nd-warn-text: #93630A; --nd-dependency: #D92D2D; --nd-dependency-text: #C21E1E; --nd-link: #2563EB; --nd-track: #D2D6DB;
+    --brand-accent: #6E5BD6; --brand-accent-hi: #4F3EC4;
+    --brand-tile-bg: #ECE9FB; --brand-tile-border: #CFC6F2;
+
+    --status-badge-ok-border: rgba(25,135,84,0.3); --status-badge-warn-border: rgba(185,121,10,0.3);
+    --nd-bg-hover: #EEF0F2; --nd-avatar-bg: #E3E5E9;
+    --nd-pi-card-bg: #F3F1FC; --nd-pi-card-border: #CFC6F2;
+    --nd-pv-card-bg: #FAFBFC; --nd-pv-card-border: #E1E4E8;
+    --nd-pv-tile-active-bg: #EFEDFB; --nd-pv-tile-active-border: #CFC6F2;
+    --nd-row-border-soft: #ECEEF1;
+    --nd-tag-border: #D2D6DB; --nd-epic-title: #15171A; --nd-child-title: #2E3238; --nd-tree-line: #D2D6DB;
+    --nd-breakdown-bg: rgba(0,0,0,0.015);
+    --nd-tag-neutral-fg: #5C6066; --nd-tag-neutral-border: #9AA0A6;
+    --badge-bug-border: darkred; --badge-bug-bg: #FFD9D9; --badge-bug-fg: darkred;
+    --badge-task-border: #1565C0; --badge-task-bg: #D6E4FF; --badge-task-fg: #0A3D91;
+    --badge-story-border: darkgreen; --badge-story-bg: #D9F2D9; --badge-story-fg: darkgreen;
+    --badge-epic-border: darkviolet; --badge-epic-bg: #EDE0FA; --badge-epic-fg: darkviolet;
+    --nd-summary-card-border: #E1E4E8;
+    --nd-row-divider: #ECEEF1;
+    --nd-st-none-fg: #767C85; --nd-st-none-border: #DCDFE3; --nd-st-none-dot-border: #AEB4BB;
+    --nd-status-date: #6B727C;
+    --nd-invert-hover: #000;
+    --nd-wi-head-border: #E1E4E8; --nd-wi-epic-border-top: #E1E4E8;
+
+    --comp-status-failed-shadow: rgba(217,45,45,0.25); --comp-status-rollback-shadow: rgba(124,79,214,0.25);
+    --flag-on-text-bg: rgba(25,135,84,.12); --flag-on-bg: rgba(25,135,84,0.15); --flag-off-bg: rgba(72,79,88,0.2);
+    --tag-status-done-border: rgba(25,135,84,.5); --tag-status-inprogress-border: rgba(29,127,209,.5);
+    --tag-status-blocked-border: rgba(217,45,45,.5); --tag-ghost-flag-border: rgba(185,121,10,.5);
+    --st-released-bg: rgba(25,135,84,.10); --st-released-border: rgba(25,135,84,.26);
+    --st-deployed-bg: rgba(29,127,209,.10); --st-deployed-border: rgba(29,127,209,.26);
+    --st-partial-bg: rgba(185,121,10,.10); --st-partial-border: rgba(185,121,10,.28);
+    --st-dependency-bg: rgba(217,45,45,.10); --st-dependency-border: rgba(217,45,45,.30);
+    --resolved-flag-on-border: rgba(25,135,84,.25);
+    --link-tint-xs: rgba(37,99,235,.04); --link-tint-sm: rgba(37,99,235,.08); --link-tint-md: rgba(37,99,235,.12); --link-border-md: rgba(37,99,235,.4);
+    --rollback-badge-bg: rgba(163,113,247,0.15); --rollback-badge-border: rgba(163,113,247,0.3);
+    color-scheme: light;
 }
 * { box-sizing: border-box; }
 /* Tells the browser to theme native form controls (select's own option list, the date input's calendar
@@ -35,7 +126,7 @@ html { font-size: 12px; }
 body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font-ui); font-size:12px; line-height:1.45; -webkit-font-smoothing:antialiased; }
 .mono { font-family:var(--font-mono); }
 .wrap { max-width:1220px; margin:0 auto; padding:28px 20px 60px; }
-header { display:flex; align-items:center; justify-content:space-between; margin-bottom:16px; flex-wrap:wrap; gap:10px; padding-bottom:16px; border-bottom:1px solid var(--border-soft); }
+header { display:flex; align-items:center; justify-content:space-between; margin-bottom:16px; flex-wrap:wrap; gap:10px; padding-bottom:16px; border-bottom:1px solid transparent; }
 .brand { display:flex; align-items:center; gap:11px; }
 .mark { width:36px; height:36px; box-sizing:border-box; border-radius:10px; flex:none; background:var(--brand-tile-bg); border:1px solid var(--brand-tile-border); color:var(--brand-accent); display:flex; align-items:center; justify-content:center; }
 .mark svg { width:18px; height:18px; display:block; }
@@ -44,22 +135,44 @@ header { display:flex; align-items:center; justify-content:space-between; margin
 .brand-sep { color:var(--nd-fg-3); font-size:13px; }
 .brand-page { color:var(--nd-fg-3); font-size:13px; font-weight:500; }
 .sub { color:var(--muted); font-size:12.5px; margin-top:3px; }
-.status-badge { display:inline-flex; align-items:center; gap:7px; padding:6px 12px; border-radius:20px; border:1px solid rgba(63,185,80,0.3); background:var(--panel-2); color:var(--muted); white-space:nowrap; }
-.status-badge-dot { width:7px; height:7px; border-radius:50%; background:var(--ok); flex:none; }
-.status-badge #statusBadgeLabel { color:var(--ok); font-weight:600; font-size:11px; }
-.status-badge.fallback { border-color:rgba(210,153,34,0.3); }
-.status-badge.fallback .status-badge-dot { background:var(--run); }
+.header-right { display:flex; align-items:center; justify-content:flex-end; gap:10px; }
+.status-badge { height:34px; box-sizing:border-box; display:inline-flex; align-items:center; gap:8px; padding:0 14px; border-radius:999px; border:1px solid var(--status-badge-ok-border); background:color-mix(in srgb, var(--ok) 8%, var(--panel-2)); color:var(--muted); white-space:nowrap; }
+/* Dot is two currentColor circles (soft halo + core); color comes from .status-badge-dot so Live (--ok) and Fallback (--run) share the markup. */
+.status-badge-dot { display:block; flex:none; color:var(--ok); }
+.status-badge-dot circle:first-child { transform-origin:7px 7px; animation:status-badge-pulse 2s ease-in-out infinite; }
+@keyframes status-badge-pulse { 0%,100% { opacity:1; transform:scale(1); } 50% { opacity:.4; transform:scale(.8); } }
+@media (prefers-reduced-motion:reduce) { .status-badge-dot circle:first-child { animation:none; } }
+.status-badge #statusBadgeLabel { color:var(--ok); font-weight:500; font-size:11px; }
+.status-badge.fallback { border-color:var(--status-badge-warn-border); background:color-mix(in srgb, var(--run) 8%, var(--panel-2)); }
+.status-badge.fallback .status-badge-dot { color:var(--run); }
 .status-badge.fallback #statusBadgeLabel { color:var(--run); }
 .status-badge-time { color:var(--nd-fg-3); font-size:10px; font-family:var(--font-mono); }
+/* Hidden for now (not ready to expose light/dark switching to users yet) — kept in markup/JS so it's a
+   one-line revert to re-enable, not a feature re-build. */
+.theme-toggle { display:none; }
+.theme-toggle:hover { color:var(--text); border-color:var(--nd-border-strong); }
+.theme-toggle-icon.icon-sun { display:none; }
+html[data-theme="light"] .theme-toggle-icon.icon-moon { display:none; }
+html[data-theme="light"] .theme-toggle-icon.icon-sun { display:inline-flex; }
 
-.tabs-row { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:20px; flex-wrap:wrap; }
-.tabs { display:inline-flex; gap:2px; padding:4px; background:var(--panel-2); border:1px solid var(--border); border-radius:999px; }
+/* Underlined tabs: the row carries a hairline bottom border, and the active tab draws a 2px accent bar
+   over it (margin-bottom:-1px so the bar replaces the border instead of stacking on it). */
+.tabs-row { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:40px; flex-wrap:wrap; border-bottom:1px solid var(--border); }
+.tabs { display:inline-flex; gap:24px; }
+/* Groups the PI and Sprint scope controls together on the right of the tabs row — both narrow "what
+   data is loaded" top-down (PI, then Sprint within it), so they read as one cascading control, not two
+   unrelated ones; the Sprint control immediately affects the summary tiles/table rendered below, which is
+   easier to read when it sits above them instead of buried in the ordinary Type/Priority/date filter row. */
+.tabs-row-right { display:flex; align-items:center; gap:10px; }
 /* Only font-size changes here (12px) — font-family stays pinned to the pre-migration stack so the
    rest of the tabs' look doesn't shift just because body's font-family changed. */
-.tab { padding:8px 18px; font-size:12px; font-family:-apple-system,"Inter","Segoe UI",sans-serif; font-weight:600; color:var(--muted); cursor:pointer; border-radius:999px; transition:color 0.15s ease; }
-.tab.active { color:var(--bg); background:var(--text); }
+.tab { display:inline-flex; align-items:center; gap:8px; padding:12px 2px; margin-bottom:-1px; background:none; border:0; border-bottom:2px solid transparent; font-size:14px; font-family:-apple-system,"Inter","Segoe UI",sans-serif; font-weight:400; color:var(--muted); cursor:pointer; transition:color 0.15s ease, border-color 0.15s ease; }
+.tab-icon { flex:none; }
+.tab-badge { padding:1px 6px; font-size:10px; font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace; color:var(--muted); background:var(--panel-2); border:1px solid var(--border); border-radius:5px; }
+.tab.active { color:var(--text); border-bottom-color:var(--brand-accent); }
+.tab:focus-visible { outline:2px solid var(--brand-accent); outline-offset:-2px; border-radius:4px; }
 .tab.tab-disabled { opacity:0.4; cursor:not-allowed; pointer-events:none; }
-.tab:not(.active):not(.tab-disabled):hover { color:#fff; }
+.tab:not(.active):not(.tab-disabled):hover { color:var(--text); }
 .view { display:none; } .view.active { display:block; }
 
 /* =========================================================================================
@@ -70,7 +183,11 @@ header { display:flex; align-items:center; justify-content:space-between; margin
 @media (max-width:520px) { .summary-grid { grid-template-columns:1fr; } }
 .rn-summary-grid { grid-template-columns:repeat(2,1fr); }
 @media (max-width:520px) { .rn-summary-grid { grid-template-columns:1fr; } }
-.summary-card { background:var(--nd-bg-card); border:1px solid #23262A; border-radius:14px; padding:1rem 1.25rem; display:flex; flex-direction:column; gap:1rem; justify-content:space-between; }
+/* Technical view has five cards (incl. Stale flags), unlike the four-card default above. */
+#summaryGrid { grid-template-columns:repeat(5,1fr); }
+@media (max-width:1100px) { #summaryGrid { grid-template-columns:repeat(2,1fr); } }
+@media (max-width:520px) { #summaryGrid { grid-template-columns:1fr; } }
+.summary-card { background:var(--nd-bg-card); border:1px solid var(--nd-summary-card-border); border-radius:14px; padding:1rem 1.25rem; display:flex; flex-direction:column; gap:1rem; justify-content:space-between; }
 .summary-label { font-size:var(--text-xs); font-weight:600; text-transform:uppercase; letter-spacing:.08em; color:var(--nd-fg-4); }
 .summary-value { font-size:24px; font-weight:600; line-height:1; letter-spacing:-.02em; font-family:var(--font-ui); font-variant-numeric:tabular-nums; color:var(--nd-fg-1); display:flex; align-items:baseline; gap:8px; flex-wrap:wrap; }
 .summary-note { font-size:var(--text-base); font-weight:400; color:var(--nd-fg-3); font-family:var(--font-ui); letter-spacing:.03em; }
@@ -94,14 +211,19 @@ header { display:flex; align-items:center; justify-content:space-between; margin
 .deployed-content { display:flex; flex-direction:column; gap:4px; padding:0 8px; }
 .deployed-content.deployed-empty { display:flex; align-items:center; min-height:48px; padding:0 20px; }
 .deployed-content.deployed-empty .rel-time { padding:0; }
-.comp-row { display:flex; align-items:center; justify-content:space-between; height:70px; padding:0 12px; gap:10px; background:var(--nd-bg-row); border-radius:10px; cursor:pointer; }
-.comp-row[data-status="failed"] { box-shadow:inset 0 0 0 1px rgba(255,107,107,0.25); }
-.comp-row[data-status="rolled_back"] { box-shadow:inset 0 0 0 1px rgba(184,147,245,0.25); }
-.comp-row:hover { background:#1D2024; }
+.comp-row { display:flex; align-items:center; justify-content:space-between; min-height:70px; padding:10px 12px; gap:10px; background:var(--nd-bg-row); border-radius:10px; cursor:pointer; }
+.comp-row[data-status="failed"] { box-shadow:inset 0 0 0 1px var(--comp-status-failed-shadow); }
+.comp-row[data-status="rolled_back"] { box-shadow:inset 0 0 0 1px var(--comp-status-rollback-shadow); }
+.comp-row:hover { background:var(--nd-bg-hover); }
 .comp-name { font-weight:500; display:flex; align-items:center; min-width:0; gap:10px; }
-.comp-name-stack { display:block; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:var(--text-title); font-weight:500; color:var(--nd-fg-1); }
-.comp-avatar { width:26px; height:26px; border-radius:7px; background:#23262B; color:var(--nd-fg-3); font-size:var(--text-xs); font-weight:700; display:inline-flex; align-items:center; justify-content:center; font-family:var(--font-mono); flex:none; }
-.flags-not-tracked-icon { display:inline-flex; align-items:center; gap:1px; color:var(--nd-warn); cursor:help; margin-left:6px; }
+.comp-name-stack { display:block; min-width:0; font-size:var(--text-title); font-weight:500; color:var(--nd-fg-1); }
+/* The name's own line within the stack — a flex row so the name text can shrink/truncate (.comp-name-text)
+   while the "flags not tracked" icon next to it (flex:none) never gets squeezed out, since it's an
+   important warning that has to stay visible regardless of how long the component name is. */
+.comp-name-line { display:flex; align-items:center; min-width:0; }
+.comp-name-text { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0; }
+.comp-avatar { width:26px; height:26px; border-radius:7px; background:var(--nd-avatar-bg); color:var(--nd-fg-3); font-size:var(--text-xs); font-weight:700; display:inline-flex; align-items:center; justify-content:center; font-family:var(--font-mono); flex:none; }
+.flags-not-tracked-icon { display:inline-flex; align-items:center; gap:1px; color:var(--nd-warn); cursor:help; margin-left:6px; flex:none; }
 .flags-not-tracked-icon svg { flex:none; }
 /* Hidden for now — kept in the markup (see app.js) so re-enabling is just removing this one line. */
 .flags-not-tracked-mark { display:none; font-size:11px; font-weight:normal; }
@@ -113,6 +235,28 @@ header { display:flex; align-items:center; justify-content:space-between; margin
 .status-success{background:var(--nd-ok)} .status-failed{background:var(--fail)} .status-rolled_back{background:var(--rollback)}
 .rel-time { color:var(--nd-fg-3); font-size:var(--text-base); }
 .drift-note { color:var(--nd-warn); font-size:var(--text-base); margin-top:5px; display:flex; align-items:center; gap:4px; }
+.drift-info-btn { color:var(--nd-warn); background:none; border:0; padding:2px; margin-top:3px; cursor:pointer; display:inline-flex; border-radius:4px; }
+.drift-info-btn:hover, .drift-info-btn:focus-visible { background:var(--nd-border); }
+.drift-info-btn.drift-note { display:flex; margin-top:5px; padding:2px 4px; font:inherit; font-size:var(--text-base); line-height:1; }
+.drift-info-btn.drift-note svg { display:block; flex:none; }
+.drift-modal-section + .drift-modal-section { margin-top:14px; padding-top:12px; border-top:1px solid var(--nd-border); }
+.drift-modal-section h4 { margin:12px 0 0; font-size:var(--text-md); color:var(--nd-fg-1); }
+.drift-modal { max-width:600px; padding:16px 20px; border:1px solid var(--nd-border-strong); border-radius:12px; background:var(--nd-bg-card); color:var(--nd-fg-1); font-family:var(--font-ui); }
+.drift-modal p { color:var(--nd-fg-2); line-height:1.5; }
+.drift-modal-close:hover { color:var(--nd-fg-1); }
+.app-tooltip { position:fixed; z-index:1000; max-width:320px; padding:8px 12px; border:1px solid var(--nd-border-strong); border-radius:8px; background:var(--nd-bg-card); color:var(--nd-fg-2); font-family:var(--font-ui); font-size:var(--text-base); line-height:1.5; white-space:pre-line; box-shadow:0 6px 20px rgba(0,0,0,.35); pointer-events:none; opacity:0; visibility:hidden; transition:opacity .12s; }
+.app-tooltip.show { opacity:1; visibility:visible; }
+.drift-modal::backdrop { background:rgba(0,0,0,.6); }
+.drift-modal-head { display:flex; align-items:center; justify-content:space-between; gap:12px; }
+.drift-modal-head h3 svg { width:16px; height:16px; }
+.drift-modal-head h3 { margin:0 0 2rem; font-size:var(--text-title); color:var(--nd-warn); display:flex; align-items:center; gap:6px; }
+.drift-modal-head .drift-modal-service { font-weight:400; color:#fff; margin-left:0.5rem; }
+.drift-modal-close { background:none; border:0; font-size:20px; line-height:1; cursor:pointer; color:var(--nd-fg-3); }
+.drift-modal-text { white-space:pre-line; }
+.drift-modal-paths { margin:6px 0; padding-left:18px; font-family:var(--font-mono); font-size:var(--text-base); color:var(--nd-fg-2); overflow-wrap:anywhere; max-height:200px; overflow:auto; }
+.drift-modal-section.drift-modal-scope { margin-top:30px; padding:1rem; border-top:0; background:#222; font-size:10px; }
+.drift-modal-scope h4, .drift-modal-scope p { margin:0; font-size:inherit; }
+.drift-modal-counts { font-family:var(--font-mono); font-size:var(--text-base); color:var(--nd-fg-2); }
 
 .snapshot-flags-label { padding:10px 20px 0; border-top:1px solid var(--nd-border); margin:0; }
 .snapshot-section-label {
@@ -129,18 +273,18 @@ header { display:flex; align-items:center; justify-content:space-between; margin
     margin-bottom: 7px;
 }
 .info-tip { cursor:help; color:var(--nd-fg-4); display:inline-flex; align-items:center; }
-.env-flags-scroll { height:216px; overflow-y:auto; padding:0 12px; scrollbar-width:thin; scrollbar-color:#33373D transparent; }
+.env-flags-scroll { height:216px; overflow-y:auto; padding:0 12px; scrollbar-width:thin; scrollbar-color:var(--nd-border-hi) transparent; }
 .env-flags-scroll::-webkit-scrollbar { width:6px; }
-.env-flags-scroll::-webkit-scrollbar-thumb { background:#33373D; border-radius:3px; }
-.flag-row { display:flex; justify-content:space-between; align-items:center; height:36px; padding:0 8px; border-bottom:1px solid #1A1D21; cursor:default; border-radius:0; transition:background 0.1s; }
+.env-flags-scroll::-webkit-scrollbar-thumb { background:var(--nd-border-hi); border-radius:3px; }
+.flag-row { display:flex; justify-content:space-between; align-items:center; height:36px; padding:0 8px; border-bottom:1px solid var(--nd-row-divider); cursor:default; border-radius:0; transition:background 0.1s; }
 .flag-row:last-child { border-bottom:none; }
 .flag-row-name { font-family:var(--font-mono); color:var(--nd-fg-2); font-size:var(--text-md); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 /* Same ON/OFF pill look as the Feature flags panel's own .flag-on/.flag-off (§3.2) — filled bg, no dot. */
 .flag-row-state { font-size:var(--text-sm); font-weight:600; font-family:var(--font-mono); display:inline-flex; align-items:center; padding:2px 8px; border-radius:999px; flex:none; }
-.flag-on-text { color:var(--nd-ok); background:rgba(34,197,94,.12); }
+.flag-on-text { color:var(--nd-ok); background:var(--flag-on-text-bg); }
 .flag-off-text { color:var(--nd-fg-3); background:var(--nd-badge-muted); }
 .flag-missing-text { color:var(--nd-fg-4); background:transparent; }
-.flag-row-highlight { background:#1D2024; }
+.flag-row-highlight { background:var(--nd-bg-hover); }
 
 /* =========================================================================================
    Shared: 3-bar environment "stage" icon. Filled bars are always literal white (#ECEEF1), empty
@@ -167,15 +311,21 @@ header { display:flex; align-items:center; justify-content:space-between; margin
 .ctrl-select input[type="date"] { font-family:var(--font-mono); }
 .ctrl-select select:focus, .ctrl-select input[type="date"]:focus { outline:none; }
 .ctrl-select select option { background:var(--nd-bg-card); color:var(--nd-fg-1); padding:6px 12px; }
-.ctrl-select select option:hover, .ctrl-select select option:checked { background:#1D2024; color:var(--nd-fg-1); }
+.ctrl-select select option:hover, .ctrl-select select option:checked { background:var(--nd-bg-hover); color:var(--nd-fg-1); }
+
+/* Gap E's "hide Tasks" toggle — same height/border language as .ctrl-select/.segmented so it reads as
+   one more filter-row control, not a visually distinct checkbox. */
+.ctrl-checkbox { display:flex; align-items:center; gap:6px; height:34px; background:var(--nd-bg-card); border:1px solid var(--nd-border-strong); border-radius:8px; padding:0 10px; font-size:var(--text-md); color:var(--nd-fg-3); cursor:pointer; white-space:nowrap; }
+.ctrl-checkbox:hover { border-color:var(--nd-border-hi); color:var(--nd-fg-1); }
+.ctrl-checkbox input[type="checkbox"] { accent-color:var(--text); cursor:pointer; }
 
 .segmented { display:inline-flex; background:var(--nd-bg-card); border:1px solid var(--nd-border-strong); border-radius:8px; padding:3px; gap:2px; }
 .segmented-btn { background:transparent; border:1px solid transparent; color:var(--nd-fg-3); font-size:var(--text-md); font-weight:500; font-family:var(--font-ui); padding:4px 10px; border-radius:6px; cursor:pointer; }
 .segmented-btn.active { background:var(--text); color:var(--bg); border-color:var(--text); }
 .segmented-btn:not(.active):hover { color:var(--nd-fg-1); }
 
-.tag, .pi-tag { display:inline-block; font-size:var(--text-sm); font-family:var(--font-ui); color:var(--nd-fg-3); border:1px solid var(--nd-border-hi); border-radius:5px; padding:1px 8px; background:transparent; white-space:nowrap; text-decoration:none; }
-.pi-tag { font-family:var(--font-mono); }
+.tag, .sprint-tag { display:inline-block; font-size:var(--text-sm); font-family:var(--font-ui); color:var(--nd-fg-3); border:1px solid var(--nd-border-hi); border-radius:5px; padding:1px 8px; background:transparent; white-space:nowrap; text-decoration:none; }
+.sprint-tag { font-family:var(--font-mono); }
 /* Overrides .tag's plain inline-block layout only when it's carrying an icon (the Jira "Flagged" marker) —
    a flex row with a small gap so the flag SVG doesn't sit flush against the label. */
 .tag-flagged { display:inline-flex; align-items:center; gap:4px; }
@@ -186,11 +336,23 @@ header { display:flex; align-items:center; justify-content:space-between; margin
    chips. Matched by the raw Jira status text (see jiraStatusTagClass() in app.js) since Jira workflow
    status names are project-specific free text, not a fixed enum — anything unrecognized just keeps the
    default neutral tag border. */
-.tag-status-done { border-color: rgba(34,197,94,.5); }
-.tag-status-inprogress { border-color: rgba(90,176,255,.5); }
-.tag-status-blocked { border-color: rgba(239,68,68,.5); }
+.tag-status-done { border-color: var(--tag-status-done-border); }
+.tag-status-inprogress { border-color: var(--tag-status-inprogress-border); }
+.tag-status-blocked { border-color: var(--tag-status-blocked-border); }
 
-.wi-type { font-size:var(--text-xs); font-weight:600; letter-spacing:.06em; text-transform:uppercase; color:var(--nd-fg-2); border:1px solid #3A3E44; border-radius:5px; padding:1px 6px; font-family:var(--font-ui); }
+/* Gap A's "ghost flag" aging warning (docs/app.js: ghostFlagAge()) — same warning hue as
+   .flags-not-tracked-icon/.drift-note, so every "something needs a human look" signal in this app shares
+   one color language instead of inventing a new one per feature. Pure color modifier, same as
+   .tag-status-*; pairs with .tag-flagged for the icon+text flex layout, same convention as those. */
+.tag-ghost-flag { color:var(--nd-warn-text); border-color: var(--tag-ghost-flag-border); }
+
+/* "Continued in PI-X" badge (docs/app.js: piContinuationBadge()) — flags a row whose status may be
+   stale because status-index.json says the issue has since moved to a different PI than the one
+   currently loaded. Same neutral-info hue family as .tag-status-inprogress, not a warning color — this
+   is informational ("look elsewhere for the current state"), not itself a problem to fix. */
+.tag-pi-continued { color:var(--nd-fg-2); border-color: var(--tag-status-inprogress-border); }
+
+.wi-type { font-size:var(--text-xs); font-weight:600; letter-spacing:.06em; text-transform:uppercase; color:var(--nd-fg-2); border:1px solid var(--nd-tag-border); border-radius:5px; padding:1px 6px; font-family:var(--font-ui); }
 
 /* No filled background any more — just a coloured dot + neutral label (§2 "Status chip"). */
 .status-pill { display:inline-flex; align-items:center; gap:6px; padding:5px 9px; box-sizing:border-box; border-radius:999px; border:1px solid transparent; font:500 10px/1 var(--font-ui); white-space:nowrap; }
@@ -199,31 +361,39 @@ header { display:flex; align-items:center; justify-content:space-between; margin
    Technical view's success indicators) rather than the lighter #3DD68C some other mockups show —
    the two greens were unified on request, so the bg/border rgba below are re-derived from --nd-ok's
    own rgb(34,197,94) instead of 61,214,140 to stay consistent with it. */
-.st-released { color:var(--nd-released); background:rgba(34,197,94,.10); border-color:rgba(34,197,94,.26); }
-.st-deployed { color:var(--nd-code-text); background:rgba(90,176,255,.10); border-color:rgba(90,176,255,.26); }
+.st-released { color:var(--nd-released); background:var(--st-released-bg); border-color:var(--st-released-border); }
+.st-deployed { color:var(--nd-code-text); background:var(--st-deployed-bg); border-color:var(--st-deployed-border); }
 .st-deployed::before { background:var(--nd-code); border-color:var(--nd-code); }
-.st-partial { color:var(--nd-warn-text); background:rgba(245,165,36,.10); border-color:rgba(245,165,36,.28); }
+.st-partial { color:var(--nd-warn-text); background:var(--st-partial-bg); border-color:var(--st-partial-border); }
 .st-partial::before { background:var(--nd-warn); border-color:var(--nd-warn); }
-.st-dependency { color:var(--nd-dependency-text); background:rgba(239,68,68,.10); border-color:rgba(239,68,68,.30); }
+.st-dependency { color:var(--nd-dependency-text); background:var(--st-dependency-bg); border-color:var(--st-dependency-border); }
 .st-dependency::before { background:var(--nd-dependency); border-color:var(--nd-dependency); }
-.st-none { color:#7B828C; background:transparent; border-color:#262A30; }
-.st-none::before { background:transparent; border-color:#4A4F57; }
-.status-date { color:#6B727C; font-size:var(--text-sm); margin-top:3px; padding-left:2px; }
+.st-none { color:var(--nd-st-none-fg); background:transparent; border-color:var(--nd-st-none-border); }
+.st-none::before { background:transparent; border-color:var(--nd-st-none-dot-border); }
+.status-date { color:var(--nd-status-date); font-size:var(--text-sm); margin-top:3px; padding-left:2px; }
 
-.table-legend { display:none; gap:16px; flex-wrap:wrap; justify-content:flex-end; font-size:var(--text-sm); color:var(--nd-fg-3); font-family:var(--font-ui); margin:0; padding:0 0 1rem 0; }
+.table-legend { display:flex; gap:16px; flex-wrap:wrap; justify-content:flex-start; font-size:var(--text-sm); color:var(--nd-fg-3); font-family:var(--font-ui); margin:0; padding:0 0 1rem 0; }
+
+/* Technical view's own legend, next to the matrix — explains the two `.drift-note` variants in general
+   terms (not tied to one past deployment, since deployments.json is trimmed and that specific record
+   won't live forever). Deliberately a separate block from .table-legend above, which lives in Product
+   view and is about status-pill meanings, not drift. */
+.drift-legend { display:none; /* hidden — the drift modal explains each note; restore with display:flex */ gap:16px; flex-wrap:wrap; align-items:center; font-size:var(--text-sm); color:var(--nd-fg-3); font-family:var(--font-ui); margin:0; padding:0 0 10px 0; }
+.drift-legend span { display:inline-flex; align-items:center; gap:4px; cursor:help; }
+.drift-legend svg { color:var(--nd-warn); flex:none; }
 .legend-dot { display:inline-block; width:8px; height:8px; border-radius:2px; margin-right:5px; vertical-align:middle; }
-.legend-dot.st-none { background:#2E333A; opacity:1; border:none; }
+.legend-dot.st-none { background:var(--nd-tree-line); opacity:1; border:none; }
 .legend-dot.st-deployed { background:var(--nd-code); border:none; }
 .legend-dot.st-released { background:var(--nd-released); border:none; }
 .legend-dot.st-partial { background:var(--nd-warn); border:none; }
 .legend-dot.st-dependency { background:var(--nd-dependency); border:none; }
 
-.cols { display:grid; grid-template-columns:1.4fr 1fr; gap:16px; }
+.cols { display:grid; grid-template-columns:1.6fr 1fr; gap:16px; }
 @media (max-width:860px) { .cols { grid-template-columns:1fr; } }
 .cols .panel { display:flex; flex-direction:column; }
 .cols .panel-body { flex:1; }
 
-/* Insights tab only — two equal-width chart panels side by side (unlike .cols' 1.4fr/1fr split, tailored
+/* Insights tab only — two equal-width chart panels side by side (unlike .cols' 1.6fr/1fr split, tailored
    for the Technical view's deploy-history/flags pairing). */
 .insights-cols { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
 @media (max-width:860px) { .insights-cols { grid-template-columns:1fr; } }
@@ -264,7 +434,6 @@ select option { background:var(--panel-2); color:var(--text); padding:6px 12px; 
 .dh-head { padding:16px 20px; border-bottom:1px solid var(--nd-border); display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; }
 .dh-title-wrap { display:flex; align-items:baseline; gap:8px; }
 .dh-title { font-size:var(--text-lg); font-weight:700; margin:0; color:var(--nd-fg-1); }
-.dh-sub { display:none; font-size:var(--text-base); color:var(--nd-fg-4); }
 .dh-controls { display:flex; align-items:center; gap:8px; }
 .dh-body { flex:1; overflow-y:auto; max-height:480px; }
 /* position:sticky (not fixed/JS) — a plain block sibling of the .deploy-item/.flag-added-item rows it
@@ -274,10 +443,10 @@ select option { background:var(--panel-2); color:var(--text); padding:6px 12px; 
 .dh-day-head { padding:14px 20px 10px; font-size:var(--text-xs); font-weight:600; text-transform:uppercase; letter-spacing:.08em; color:var(--nd-fg-4); border-bottom:1px solid var(--nd-border-soft); position:sticky; top:0; background:var(--nd-bg-card); z-index:1; }
 
 .deploy-item, .flag-added-item { padding:16px 20px; border-bottom:1px solid var(--nd-border-soft); display:flex; flex-direction:column; gap:4px; font-family:var(--font-ui); }
-.deploy-item:hover, .flag-added-item:hover { background-color:#1D2024; }
+.deploy-item:hover, .flag-added-item:hover, .ff-row:hover { background-color:var(--nd-bg-hover); }
 .deploy-item:last-child, .flag-added-item:last-child { border-bottom:none; }
-.flag-added-item { background:rgba(96,165,250,.04); }
-.flag-event-icon { width:26px; height:26px; border-radius:7px; background:rgba(96,165,250,.12); color:var(--nd-link); display:inline-flex; align-items:center; justify-content:center; flex:none; margin-right:8px; }
+.flag-added-item { background:var(--link-tint-xs); }
+.flag-event-icon { width:26px; height:26px; border-radius:7px; background:var(--link-tint-md); color:var(--nd-link); display:inline-flex; align-items:center; justify-content:center; flex:none; margin-right:8px; }
 .deploy-top { display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap; }
 /* No flex `gap` here on purpose: .status-dot already carries its own margin-right:6px (same as the
    dot-to-version gap in the env panels above), and stacking a flex gap on top of that would double
@@ -288,26 +457,32 @@ select option { background:var(--panel-2); color:var(--text); padding:6px 12px; 
 /* Deployment History reuses the shared .version look but with fg-2 instead of the env-panel's fg-1. */
 .deploy-left .version { color:var(--nd-fg-2); }
 .deploy-right { display:flex; align-items:center; gap:8px; flex:none; }
-.version-arrow { color:var(--nd-fg-3); margin:0 8px; }
+.version-arrow { color:#6b727c; margin:0 8px; display:inline-flex; align-items:center; vertical-align:middle; }
 /* Environment names stay UPPERCASE deliberately, even though the shared "muted pill" look is
    otherwise Title case (Manual, Build-time (FE), ...) — env abbreviations read as labels, not words. */
-.deploy-env-tag, .manual-badge { display:inline-flex; align-items:center; gap:5px; font-family:var(--font-ui); font-size:var(--text-sm); font-weight:500; color:var(--nd-fg-3); background:var(--nd-badge-muted); border:1px solid var(--nd-border); border-radius:5px; padding:1px 7px; }
-.deploy-env-tag { text-transform:uppercase; letter-spacing:.02em; }
-.rollback-badge { display:inline-flex; align-items:center; gap:4px; font-size:var(--text-sm); padding:1px 9px; border-radius:999px; background:rgba(163,113,247,0.15); color:var(--rollback); border:1px solid rgba(163,113,247,0.3); }
-.rollback-badge svg { flex:none; }
+.manual-badge { display:inline-flex; align-items:center; gap:5px; font-family:var(--font-ui); font-size:var(--text-sm); font-weight:500; color:var(--nd-fg-3); background:var(--nd-badge-muted); border:1px solid var(--nd-border); border-radius:5px; height:24px; padding:0 9px; box-sizing:border-box; }
+.env-badge {
+  display:inline-flex; align-items:center; gap:6px;
+  height:24px; padding:0 9px; box-sizing:border-box;
+  background:#1A1D21; border:1px solid #33373D; border-radius:5px;
+  color:#FFFFFF; font-family:var(--font-ui); font-size:var(--text-sm); font-weight:500; letter-spacing:.04em;
+}
+.env-badge svg { display:block; flex-shrink:0; width:10px; height:9px; }
+.rollback-badge { display:inline-flex; align-items:center; gap:4px; font-size:var(--text-sm); height:24px; padding:0 9px; box-sizing:border-box; border-radius:5px; background:var(--rollback-badge-bg); color:var(--rollback); border:1px solid var(--rollback-badge-border); }
+.rollback-badge svg { flex:none; width:13px; height:13px; }
 .run-badge { color:var(--nd-fg-3); text-decoration:none; display:inline-flex; align-items:center; justify-content:center; flex:none; }
-.run-badge:hover { color:#fff; }
+.run-badge:hover { color:var(--nd-invert-hover); }
 .run-badge svg { display:block; width:14px; height:14px; }
 .deploy-meta { padding-left:35px; color:var(--nd-fg-3); font-size:var(--text-md); font-family:var(--font-ui); display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
 /* 25% bigger than .status-dot (7px) — used to separate time/author/duration/"N deploys" in the meta
    line, instead of a plain "·" text character. */
-.deploy-meta-dot { display:inline-block; width:4px; height:4px; border-radius:50%; background:var(--nd-fg-4); flex:none; vertical-align:middle; }
+.deploy-meta-dot { display:inline-block; width:2px; height:2px; border-radius:50%; background:var(--nd-fg-4); flex:none; vertical-align:middle; }
 .deploy-chips { padding-left:35px; display:flex; flex-wrap:wrap; align-items:flex-start; gap:6px; }
-.issue-badge { display:inline-block; white-space:nowrap; font-family:var(--font-mono); font-size:var(--text-sm); background:transparent; border:1px solid rgba(96,165,250,.4); padding:1px 8px; border-radius:5px; color:var(--nd-link); text-decoration:none; }
-.issue-badge:hover { background:rgba(96,165,250,.08); }
+.issue-badge { display:inline-block; white-space:nowrap; font-family:var(--font-mono); font-size:var(--text-sm); background:transparent; border:1px solid var(--link-border-md); padding:1px 8px; border-radius:5px; color:var(--nd-link); text-decoration:none; }
+.issue-badge:hover { background:var(--link-tint-sm); }
 .resolved-flag-badge { display:inline-flex; align-items:center; gap:5px; font-family:var(--font-mono); font-size:var(--text-sm); padding:2px 9px; border-radius:999px; }
 .resolved-flag-badge::before { content:''; width:6px; height:6px; border-radius:50%; flex:none; }
-.resolved-flag-badge.rf-on { color:var(--nd-ok); background:rgba(34,197,94,.10); border:1px solid rgba(34,197,94,.25); }
+.resolved-flag-badge.rf-on { color:var(--nd-ok); background:var(--st-released-bg); border:1px solid var(--resolved-flag-on-border); }
 .resolved-flag-badge.rf-on::before { background:var(--nd-ok); }
 .resolved-flag-badge.rf-off { color:var(--nd-fg-3); background:var(--nd-badge-muted); border:1px solid transparent; }
 .resolved-flag-badge.rf-off::before { width:4px; height:4px; background:transparent; border:1.5px solid var(--nd-fg-4); }
@@ -320,19 +495,30 @@ select option { background:var(--panel-2); color:var(--text); padding:6px 12px; 
 .deploy-group-item .manual-badge { height:20px; font-size:var(--text-xs); padding:0 7px; }
 
 .flag-new-name { font-family:var(--font-mono); font-size:var(--text-title); font-weight:600; color:var(--nd-fg-1); }
-.flag-new-pill { height:22px; padding:0 9px; border-radius:999px; background:rgba(96,165,250,.12); color:var(--nd-link); font-size:var(--text-sm); font-weight:500; display:inline-flex; align-items:center; margin-left:8px; }
+.flag-new-pill { height:22px; padding:0 9px; border-radius:999px; background:var(--link-tint-md); color:var(--nd-link); font-size:var(--text-sm); font-weight:500; display:inline-flex; align-items:center; margin-left:8px; }
 
-.flag-item { padding:12px 16px; border-bottom:1px solid var(--border); }
-.flag-item:last-child { border-bottom:none; }
-.flag-name {
-    font-family: var(--mono), sans-serif; font-weight:600; font-size:var(--text-title); }
-.flag-desc { color:var(--muted); font-size:11.5px; margin:3px 0 8px; }
-.flag-source { display:inline-block; font-size:10px; padding:1px 7px; border-radius:20px; margin-left:7px; text-transform:uppercase; letter-spacing:.03em; vertical-align:middle; }
-.src-build, .src-runtime { background:var(--panel-2); color:var(--muted); border:1px solid var(--border); }
-.flag-envs { display:flex; gap:6px; }
-.flag-pill { flex:1; text-align:center; padding:6px 4px; border-radius:6px; font-size:10.5px; text-transform:uppercase; letter-spacing:.03em; border:1px solid transparent; }
-.flag-on { background:rgba(63,185,80,0.15); color:var(--ok); border-color:rgba(63,185,80,0.3); }
-.flag-off { background:rgba(72,79,88,0.2); color:var(--muted); border-color:var(--border); }
+/* Feature flags panel body: a Flag | TEST | QA | PROD grid. Each row's state cells reuse the env cards' own
+   .flag-row-state pills (filled bg, no dot) so ON/OFF reads identically in both places; the description and
+   Issue/Components/Added metadata live in a collapsible .ff-details drawer (same left rule as the expanded
+   deploy group list). Warnings (stale / diverges / shared with unfinished work) stay visible under the name. */
+.ff-cols, .ff-row { display:grid; grid-template-columns:minmax(0,1fr) 64px 64px 64px; gap:8px; font-family:var(--font-ui); }
+.ff-cols { position:sticky; top:0; z-index:2; background:var(--panel); border-bottom:1px solid var(--nd-row-divider); padding:10px 16px; font-size:var(--text-base); font-weight:600; letter-spacing:.08em; text-transform:uppercase; color:var(--nd-fg-4); }
+.ff-cols span:not(:first-child) { text-align:center; }
+.ff-row { align-items:center; padding:11px 16px; border-top:1px solid var(--nd-row-divider); }
+.ff-name-stack { display:flex; flex-direction:column; gap:3px; min-width:0; }
+.ff-name { font-family:var(--font-mono); font-size:var(--text-title); font-weight:600; color:var(--nd-fg-1); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.ff-meta { display:flex; align-items:center; flex-wrap:wrap; gap:8px; font-size:var(--text-md); color:var(--nd-fg-4); }
+.ff-name-stack .drift-note { margin-top:0; }
+.ff-name-stack .blast-radius-warning { margin:0; }
+.ff-state { justify-self:center; min-width:34px; justify-content:center; }
+.ff-details { grid-column:1 / -1; margin:6px 0 2px; padding:2px 0 2px 14px; display:flex; flex-direction:column; gap:2px; border-left:1px solid var(--nd-border-strong); font-size:var(--text-md); line-height:1.45; color:var(--nd-fg-3); }
+.ff-details[hidden] { display:none; }
+.ff-desc { color:var(--nd-fg-2); margin-bottom:2px; }
+.ff-desc--empty { color:var(--nd-fg-4); font-style:italic; }
+.ff-detail { display:grid; grid-template-columns:84px minmax(0,1fr); align-items:center; column-gap:8px; min-height:22px; }
+.ff-detail-value { display:flex; align-items:center; flex-wrap:wrap; gap:8px; min-width:0; }
+.ff-text { font-family:var(--font-mono); color:var(--nd-fg-3); overflow-wrap:anywhere; }
+.ff-none { display:inline-flex; align-items:center; height:22px; padding:0 9px; box-sizing:border-box; border-radius:999px; background:var(--nd-badge-muted); border:1px solid var(--nd-border); color:var(--nd-fg-3); font-size:var(--text-md); font-weight:500; }
 .blast-radius-warning { color:var(--run); font-size:11.5px; margin:0 0 8px; }
 
 .empty { color:var(--muted); padding:24px 16px; text-align:center; font-size:12.5px; }
@@ -346,17 +532,17 @@ select option { background:var(--panel-2); color:var(--text); padding:6px 12px; 
 @media (max-width:1100px) { .pv-summary { grid-template-columns:1fr 1fr; } }
 @media (max-width:640px) { .pv-summary { grid-template-columns:1fr; } }
 .pv-pi-card, .pv-tile { border-radius:14px; padding:1rem 1.25rem; display:flex; flex-direction:column; gap:10px; justify-content:space-between; }
-.pv-pi-card { background:#16191D; border:1px solid #3A3466; padding:16px; }
+.pv-pi-card { background:var(--nd-pi-card-bg); border:1px solid var(--nd-pi-card-border); padding:16px; }
 .pv-pi-top { display:flex; align-items:center; justify-content:space-between; gap:8px; }
 .pv-pi-name { font-family:var(--font-mono); font-size:var(--text-base); font-weight:600; color:var(--nd-fg-1); }
-.pv-pi-current-tag { font-size:var(--text-base); color:#B7AAFF; }
+.pv-pi-current-tag { font-size:var(--text-base); color:var(--brand-accent); }
 .pv-pi-bar { height:6px; border-radius:999px; background:var(--nd-track); overflow:hidden; display:flex; }
 .pv-pi-bar-seg { height:100%; background:var(--nd-released); }
 .pv-pi-meta { font-size:var(--text-base); color:var(--nd-fg-3); display:flex; align-items:center; gap:6px; letter-spacing:.03em; }
 .pv-pi-meta b { color:var(--nd-fg-1); font-weight:500; }
 
-.pv-tile { background:#111316; border:1px solid #1F2328; text-align:left; font:inherit; }
-.pv-tile.active { background:#16191D; border-color:#3A3F47; }
+.pv-tile { background:var(--nd-pv-card-bg); border:1px solid var(--nd-pv-card-border); text-align:left; font:inherit; }
+.pv-tile.active { background:var(--nd-pv-tile-active-bg); border-color:var(--nd-pv-tile-active-border); }
 .pv-tile-top { display:flex; align-items:center; gap:7px; }
 .pv-tile-swatch { width:8px; height:8px; border-radius:50%; flex:none; }
 .pv-tile-label { font-size:var(--text-xs); font-weight:600; text-transform:uppercase; letter-spacing:.08em; color:var(--nd-fg-4); }
@@ -368,7 +554,7 @@ select option { background:var(--panel-2); color:var(--text); padding:6px 12px; 
    Filter bar — Product view (PI) and Release Notes both use these same classes for a
    consistent look (Release Notes just skips the date selects, since it has none).
    ========================================================================================= */
-.pv-filters { display:flex; gap:8px; flex-wrap:wrap; align-items:center; background:var(--nd-bg-card); border:1px solid #1F2328; border-radius:14px; padding:10px; margin-bottom:1rem; font-family:var(--font-ui); }
+.pv-filters { display:flex; gap:8px; flex-wrap:wrap; align-items:center; background:var(--nd-bg-card); border:1px solid var(--nd-pv-card-border); border-radius:14px; padding:10px; margin-bottom:1rem; font-family:var(--font-ui); }
 .pv-clear { height:30px; background:transparent; border:none; color:var(--nd-fg-3); font-size:var(--text-md); font-family:var(--font-ui); cursor:pointer; padding:0 10px; }
 .pv-clear:hover { color:var(--nd-fg-1); }
 .pv-count { color:var(--nd-fg-4); font-size:var(--text-md); font-family:var(--font-ui); margin-left:auto; }
@@ -378,14 +564,17 @@ select option { background:var(--panel-2); color:var(--text); padding:6px 12px; 
    Product view (PI) — work-item table (§4.4). Every row (header, epic, child, ungrouped) shares
    the same 5-column grid template so the PI/TEST/QA/PROD columns line up everywhere.
    ========================================================================================= */
-.wi-table { background:var(--nd-bg-card); border:1px solid #1F2328; border-radius:16px; overflow:hidden; font-family:var(--font-ui); }
+.wi-table { background:var(--nd-bg-card); border:1px solid var(--nd-pv-card-border); border-radius:16px; overflow:hidden; font-family:var(--font-ui); }
 .wi-body { max-height:480px; overflow-y:auto; }
+/* Only reserved when there are no results to show (toggled in renderIssues()) — with real rows, the
+   panel should shrink to fit its content instead of leaving padded empty space below a short result set. */
+.wi-body-empty { min-height:300px; }
 .wi-row { display:grid; grid-template-columns:minmax(0,1fr) 176px 176px 176px; gap:16px; padding:0 20px; align-items:center; }
-.wi-head { padding:12px 20px; border-bottom:1px solid #1A1D22; font-size:var(--text-base); font-weight:600; text-transform:uppercase; letter-spacing:.08em; color:var(--nd-fg-4); position:sticky; top:0; background:var(--nd-bg-card); z-index:1; }
+.wi-head { padding:12px 20px; border-bottom:1px solid var(--nd-wi-head-border); font-size:var(--text-base); font-weight:600; text-transform:uppercase; letter-spacing:.08em; color:var(--nd-fg-4); position:sticky; top:0; background:var(--nd-bg-card); z-index:1; }
 .wi-head > div { display:flex; align-items:center; gap:4px; }
 
-.wi-epic-row { background:var(--nd-bg-row); padding-top:16px; padding-bottom:16px; border-top:1px solid #2A2E34; cursor:pointer; }
-.wi-epic-row:hover { background:#1D2024; }
+.wi-epic-row { background:var(--nd-bg-row); padding-top:16px; padding-bottom:16px; border-top:1px solid var(--nd-wi-epic-border-top); cursor:pointer; }
+.wi-epic-row:hover { background:var(--nd-bg-hover); }
 .wi-epic-row-empty { cursor:default; }
 .wi-epic-row-empty:hover { background:var(--nd-bg-row); }
 .wi-epic-cell { grid-column:1 / span 3; display:flex; align-items:flex-start; gap:10px; min-width:0; }
@@ -393,11 +582,16 @@ select option { background:var(--panel-2); color:var(--text); padding:6px 12px; 
 .wi-epic-chevron.open { transform:rotate(90deg); }
 .wi-epic-chevron-empty { color:var(--nd-fg-4); flex:none; display:inline-flex; align-items:center; justify-content:center; width:10px; padding-top:3px; }
 .wi-epic-stack { display:flex; flex-direction:column; gap:7px; min-width:0; }
-.wi-epic-title { font-size:var(--text-title); font-weight:600; color:#F4F5F7; line-height:1.35; text-wrap:pretty; }
+.wi-epic-title { font-size:var(--text-title); font-weight:600; color:var(--nd-epic-title); line-height:1.35; text-wrap:pretty; }
 .wi-epic-badges { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
 .wi-epic-progress { grid-column:4; justify-self:end; display:flex; flex-direction:column; align-items:flex-end; gap:6px; }
-.wi-epic-bar { width:176px; height:6px; border-radius:3px; background:var(--nd-track); overflow:hidden; }
-.wi-epic-bar-fill { height:100%; }
+.wi-epic-bar { position:relative; width:176px; height:6px; border-radius:3px; background:var(--nd-track); overflow:hidden; }
+/* Layered, not stacked: the blue (code deployed) fill spans released + code, the green (released) fill sits on top of it. */
+.wi-epic-bar-fill { position:absolute; inset:0 auto 0 0; }
+.wi-epic-bar-code { background:var(--nd-code); }
+.wi-epic-bar-released { background:var(--nd-released); }
+.wi-epic-partial .wi-epic-bar-released { background:var(--nd-warn); }
+.wi-epic-partial .wi-epic-progress-label b { color:var(--nd-warn-text); }
 .wi-epic-progress-label { font-size:var(--text-base); color:var(--nd-fg-3); }
 .wi-epic-progress-label b { font-family:var(--font-mono); font-weight:600; }
 
@@ -407,26 +601,26 @@ select option { background:var(--panel-2); color:var(--text); padding:6px 12px; 
 .wi-title { font-size:var(--text-title); color:inherit; text-decoration:none; }
 .wi-title:hover { color:var(--nd-link); text-decoration:underline; }
 
-.wi-child-row { background:var(--nd-bg-sunken); padding:14px 20px 14px 58px; border-bottom:1px solid #16191D; cursor:pointer;
-    background-image:linear-gradient(#2E333A,#2E333A); background-size:1px 100%; background-position:27px 0; background-repeat:no-repeat; }
-.wi-child-title { font-size:var(--text-title); font-weight:500; color:#D5D8DC; text-wrap:pretty; }
+.wi-child-row { background:var(--nd-bg-sunken); padding:14px 20px 14px 58px; border-bottom:1px solid var(--nd-row-border-soft); cursor:pointer;
+    background-image:linear-gradient(var(--nd-tree-line),var(--nd-tree-line)); background-size:1px 100%; background-position:27px 0; background-repeat:no-repeat; }
+.wi-child-title { font-size:var(--text-title); font-weight:500; color:var(--nd-child-title); text-wrap:pretty; }
 .wi-child-meta { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-top:6px; }
 
 .wi-ungrouped-label-row { padding:14px 20px; font-size:var(--text-base); font-weight:600; text-transform:uppercase; letter-spacing:.08em; color:var(--nd-fg-4); }
-.wi-ungrouped-row { background:var(--nd-bg-sunken); padding:14px 20px; border-bottom:1px solid #16191D; cursor:pointer; }
+.wi-ungrouped-row { background:var(--nd-bg-sunken); padding:14px 20px; border-bottom:1px solid var(--nd-row-border-soft); cursor:pointer; }
 /* background-color (not the `background` shorthand) — .wi-child-row's tree-line background-image
    must survive the hover. */
-.wi-child-row:hover, .wi-ungrouped-row:hover { background-color:#1D2024; }
+.wi-child-row:hover, .wi-ungrouped-row:hover { background-color:var(--nd-bg-hover); }
 
 /* =========================================================================================
    Product view — row-detail breakdown (click a row to expand). Not covered by the migration
    spec, left on the legacy tokens deliberately.
    ========================================================================================= */
-.breakdown { padding:4px 14px 14px 14px; background:rgba(255,255,255,0.015); font-size:12px; }
+.breakdown { padding:4px 14px 14px 14px; background:var(--nd-breakdown-bg); font-size:12px; }
 /* Continues .wi-child-row's tree-line into its expanded breakdown (a sibling, not a descendant,
    in the DOM) and indents the breakdown's content to line up with the child row's own content
    start, so the breakdown still reads as that row's child. */
-.wi-child-row + .breakdown { padding-left:58px; background-color:rgba(255,255,255,0.015); background-image:linear-gradient(#2E333A,#2E333A); background-size:1px 100%; background-position:27px 0; background-repeat:no-repeat; }
+.wi-child-row + .breakdown { padding-left:58px; background-color:var(--nd-breakdown-bg); background-image:linear-gradient(var(--nd-tree-line),var(--nd-tree-line)); background-size:1px 100%; background-position:27px 0; background-repeat:no-repeat; }
 .breakdown-title { color:var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:.03em; padding:10px 0 8px; font-weight:650; }
 .breakdown-table { width:100%; border-collapse:collapse; margin-bottom:8px; }
 .breakdown-table th { text-align:left; font-size:var(--text-xs); text-transform:uppercase; letter-spacing:.03em; color:var(--muted); padding:5px 8px; border-bottom:1px solid var(--border); font-weight:600; }
@@ -452,20 +646,23 @@ select option { background:var(--panel-2); color:var(--text); padding:6px 12px; 
 .release-notes-category { margin-top:6px; }
 .release-notes-category-label { font-size:10.5px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); padding:6px 0 2px; margin-bottom:0.75rem; }
 .release-note-item { display:grid; grid-template-columns:56px 1fr; align-items:start; gap:1rem; padding:4px 0; cursor:default; }
-.release-note-item .issue-type { margin-left:0; justify-self:start; font-size:var(--text-xs); font-weight:600; letter-spacing:.06em; text-transform:uppercase; color:var(--nd-fg-2); border:1px solid #3A3E44; border-radius:5px; padding:1px 6px; font-family:var(--font-ui); }
+.release-note-item .issue-type { margin-left:0; justify-self:start; font-size:var(--text-xs); font-weight:600; letter-spacing:.06em; text-transform:uppercase; color:var(--nd-fg-2); border:1px solid var(--nd-tag-border); border-radius:5px; padding:1px 6px; font-family:var(--font-ui); }
+.release-note-main { display:flex; flex-direction:column; gap:4px; min-width:0; }
+.release-note-title-wrap { display:inline-flex; align-items:baseline; flex-wrap:wrap; gap:.5rem; }
 .release-note-title { color:var(--text); text-decoration:none; font-size:var(--text-title); }
 .release-note-title:hover { color:var(--accent-blue); text-decoration:underline; }
+.release-note-meta { color:var(--nd-fg-3); font-size:var(--text-md); font-family:var(--font-ui); display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
 .release-notes-sprint { margin:0 0 3rem 1rem; }
 .release-notes-sprint:last-child { margin-bottom:0; }
 .release-notes-sprint-head { display:flex; align-items:center; gap:8px; margin-bottom:4px; }
 .release-notes-sprint-title { display:block; margin-bottom:1rem; font-size:12.5px; font-weight:600; color:var(--text); }
-.issue-type { font-size:10px; text-transform:uppercase; letter-spacing:.03em; color:#bbb; border:1px solid #555; padding:1px 6px; border-radius:4px; margin-left:7px;}
+.issue-type { font-size:10px; text-transform:uppercase; letter-spacing:.03em; color:var(--nd-tag-neutral-fg); border:1px solid var(--nd-tag-neutral-border); padding:1px 6px; border-radius:4px; margin-left:7px;}
 /* Per-type color variants for .issue-type — not wired up in any markup yet, ready to add (e.g.
    class="issue-type badge-bug") once a per-type color scheme is actually rolled out on Release Notes. */
-.badge-bug { border-color:red; background:darkred; color:white; }
-.badge-task { color:white; border-color:dodgerblue; background:blue; }
-.badge-story { color:white; border-color:green; background:darkgreen; }
-.badge-epic { background:darkviolet; color:white; border-color:violet; }
+.badge-bug { border-color:var(--badge-bug-border); background:var(--badge-bug-bg); color:var(--badge-bug-fg); }
+.badge-task { color:var(--badge-task-fg); border-color:var(--badge-task-border); background:var(--badge-task-bg); }
+.badge-story { color:var(--badge-story-fg); border-color:var(--badge-story-border); background:var(--badge-story-bg); }
+.badge-epic { background:var(--badge-epic-bg); color:var(--badge-epic-fg); border-color:var(--badge-epic-border); }
 
 /* ---------- Insights charts (untouched — no chart library, this repo has no build step/dependencies) ---------- */
 .chart-legend { display:flex; gap:14px; flex-wrap:wrap; margin-bottom:12px; font-size:11px; color:var(--muted); }

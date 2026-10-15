@@ -1,0 +1,8 @@
+{
+  "name": "evdt-service-shipscope",
+  "private": true,
+  "description": "ShipScope — no dependencies; this file only exposes `npm test`.",
+  "scripts": {
+    "test": "node --test \"test/*.test.js\""
+  }
+}
