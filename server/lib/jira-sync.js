@@ -2,7 +2,9 @@ const { withScope } = require('./scope');
 const { assertAdmin, roleOf, TenantNotFoundError } = require('./tenants');
 const { accessTokenFor, JiraNotConnectedError } = require('./jira-connections');
 const { AtlassianError, fetchBoards, fetchSprints, fetchFieldIds, searchIssues } = require('./atlassian');
-const { piOfSprint, comparePiDesc, currentPiOf, previousPiOf, issueFields, mapIssue } = require('./jira-model');
+const {
+    RhythmTemplateError, compileTemplate, extractPiFromSprintName, rhythmOf, piOfSprint, comparePiDesc, currentPiOf, previousPiOf, issueFields, mapIssue,
+} = require('./jira-model');
 
 /**
  * FR-008 (which boards a tenant syncs) and FR-009 (syncing their issues, migration 010).
@@ -16,6 +18,10 @@ const { piOfSprint, comparePiDesc, currentPiOf, previousPiOf, issueFields, mapIs
 
 class JiraBoardError extends Error {}
 
+// The dashboard's "Now" increment: every selected board's current one together (teams in different rhythms -- a PI,
+// a sprint -- are all "now" at once). Not a name Jira can produce: increments are PI labels or sprint names.
+const NOW_KEY = '@now';
+
 const EPIC_BATCH = 100;
 const ERROR_MAX_LENGTH = 300;
 
@@ -24,16 +30,55 @@ const ERROR_MAX_LENGTH = 300;
  *
  * @param {import('pg').Pool} pool
  * @param {{ tenantId: string, actorUserId: string, atlassian: object, fetch?: typeof fetch }} input
- * @returns {Promise<Array<{ boardId: number, name: string, type: string|null, projectKey: string|null, projectName: string|null, selected: boolean }>>}
+ * @returns {Promise<Array<{ boardId: number, name: string, type: string|null, projectKey: string|null, projectName: string|null, selected: boolean, rhythm?: string, piTemplate?: string|null, currentIncrement?: string|null }>>}
+ *   rhythm, piTemplate and currentIncrement on selected boards
  */
 async function listBoards(pool, { tenantId, actorUserId, atlassian, fetch: fetchFn = fetch }) {
     const selected = await withScope(pool, { tenantId }, async (client) => {
         await assertAdmin(client, { tenantId, userId: actorUserId });
-        return new Set((await client.query('SELECT board_id FROM jira_boards WHERE tenant_id = $1', [tenantId])).rows.map((r) => Number(r.board_id)));
+        const { rows } = await client.query('SELECT board_id, rhythm, pi_template, current_increment FROM jira_boards WHERE tenant_id = $1', [tenantId]);
+        return new Map(rows.map((r) => [Number(r.board_id), { rhythm: r.rhythm, piTemplate: r.pi_template, currentIncrement: r.current_increment }]));
     });
     const { accessToken, cloudId } = await accessTokenFor(pool, { tenantId, atlassian, fetch: fetchFn });
     const boards = await fetchBoards({ accessToken, cloudId, fetch: fetchFn });
-    return boards.map((b) => ({ ...b, selected: selected.has(b.boardId) }));
+    return boards.map((b) => ({ ...b, selected: selected.has(b.boardId), ...(selected.get(b.boardId) || {}) }));
+}
+
+/**
+ * Sets how a selected board's sprints group into increments (lib/jira-model.js rhythmOf()). A change drops the
+ * board's synced issues, so its next sync starts over under the new rhythm. Admins only.
+ *
+ * @param {import('pg').Pool} pool
+ * @param {{ tenantId: string, actorUserId: string, boardId: number, rhythm: 'auto'|'pi'|'sprint', piTemplate: string|null }} input
+ * @returns {Promise<{ boardId: number, rhythm: string, piTemplate: string|null }>}
+ * @throws {JiraBoardError} not a selected board, or an invalid template
+ */
+async function configureBoard(pool, { tenantId, actorUserId, boardId, rhythm, piTemplate }) {
+    if (piTemplate !== null) {
+        if (rhythm === 'sprint') throw new JiraBoardError('A PI template only applies to the "pi" or "auto" rhythm');
+        try {
+            compileTemplate(piTemplate);
+        } catch (err) {
+            if (err instanceof RhythmTemplateError) throw new JiraBoardError(err.message);
+            throw err;
+        }
+    }
+    return withScope(pool, { tenantId }, async (client) => {
+        await assertAdmin(client, { tenantId, userId: actorUserId });
+        const { rows: [before] } = await client.query(
+            'SELECT rhythm, pi_template FROM jira_boards WHERE tenant_id = $1 AND board_id = $2 FOR UPDATE',
+            [tenantId, boardId]
+        );
+        if (!before) throw new JiraBoardError(`Board ${boardId} is not selected for sync`);
+        if (before.rhythm !== rhythm || before.pi_template !== piTemplate) {
+            await client.query(
+                'UPDATE jira_boards SET rhythm = $3, pi_template = $4, current_increment = NULL WHERE tenant_id = $1 AND board_id = $2',
+                [tenantId, boardId, rhythm, piTemplate]
+            );
+            await client.query('DELETE FROM jira_issues WHERE tenant_id = $1 AND board_id = $2', [tenantId, boardId]);
+        }
+        return { boardId, rhythm, piTemplate };
+    });
 }
 
 /**
@@ -121,7 +166,7 @@ async function syncTenant(pool, { tenantId, atlassian, fetch: fetchFn = fetch, n
 
 async function syncTenantUnrecorded(pool, { tenantId, atlassian, fetch: fetchFn, now }) {
     const { boards, boardsWithIssues } = await withScope(pool, { tenantId }, async (client) => ({
-        boards: (await client.query('SELECT board_id, name FROM jira_boards WHERE tenant_id = $1 ORDER BY board_id', [tenantId])).rows,
+        boards: (await client.query('SELECT board_id, name, rhythm, pi_template FROM jira_boards WHERE tenant_id = $1 ORDER BY board_id', [tenantId])).rows,
         boardsWithIssues: new Set((await client.query('SELECT DISTINCT board_id FROM jira_issues WHERE tenant_id = $1', [tenantId])).rows.map((r) => Number(r.board_id))),
     }));
     if (!boards.length) return { boards: 0, issues: 0, currentPi: null };
@@ -129,36 +174,39 @@ async function syncTenantUnrecorded(pool, { tenantId, atlassian, fetch: fetchFn,
     const { accessToken, cloudId } = await accessTokenFor(pool, { tenantId, atlassian, fetch: fetchFn });
     const fieldIds = await fetchFieldIds({ accessToken, cloudId, fetch: fetchFn });
     const plan = [];
-    const currentPis = [];
+    const currentByBoard = new Map();
     for (const board of boards) {
         const boardId = Number(board.board_id);
         const sprints = await fetchSprints({ accessToken, cloudId, boardId, fetch: fetchFn });
-        const current = currentPiOf(sprints);
+        const rhythm = rhythmOf({ rhythm: board.rhythm, piTemplate: board.pi_template }, sprints);
+        const current = currentPiOf(sprints, rhythm);
+        currentByBoard.set(boardId, current);
         if (!current) continue;
-        currentPis.push(current);
         const pis = [current];
-        const previous = boardsWithIssues.has(boardId) ? null : previousPiOf(sprints, current);
+        const previous = boardsWithIssues.has(boardId) ? null : previousPiOf(sprints, current, rhythm);
         if (previous) pis.push(previous);
         for (const pi of pis) {
-            const inPi = sprints.filter((s) => piOfSprint(s.name) === pi);
+            const inPi = sprints.filter((s) => piOfSprint(s.name, rhythm) === pi);
+            const kind = rhythm.kind === 'pi' && inPi.some((s) => extractPiFromSprintName(s.name, rhythm.pattern)) ? 'pi' : 'sprint';
             const issues = await fetchPiIssues({ accessToken, cloudId, fieldIds, pi, sprints: inPi, fetch: fetchFn });
-            plan.push({ boardId, pi, sprints: inPi, issues });
+            plan.push({ boardId, pi, kind, sprints: inPi, issues });
         }
     }
-    const currentPi = currentPis.sort(comparePiDesc)[0] || null;
+    const distinctCurrent = [...new Set([...currentByBoard.values()].filter(Boolean))].sort(comparePiDesc);
+    const currentPi = distinctCurrent.length > 1 ? NOW_KEY : distinctCurrent[0] || null;
 
     await withScope(pool, { tenantId }, async (client) => {
         const { rows: still } = await client.query('SELECT 1 FROM jira_connections WHERE tenant_id = $1', [tenantId]);
         if (!still.length) return;
-        for (const { boardId, pi, sprints, issues } of plan) {
+        for (const { boardId, pi, kind, sprints, issues } of plan) {
             const { rows: [existing] } = await client.query('SELECT sprints FROM jira_pis WHERE tenant_id = $1 AND pi = $2', [tenantId, pi]);
             const byName = new Map((existing?.sprints || []).map((s) => [s.name, s]));
             for (const s of sprints) byName.set(s.name, { name: s.name, startDate: s.startDate, endDate: s.endDate });
             const merged = [...byName.values()].sort((a, b) => String(a.startDate || '').localeCompare(String(b.startDate || '')));
             await client.query(
-                `INSERT INTO jira_pis (tenant_id, pi, sprints, synced_at) VALUES ($1, $2, $3, $4)
-                 ON CONFLICT (tenant_id, pi) DO UPDATE SET sprints = EXCLUDED.sprints, synced_at = EXCLUDED.synced_at`,
-                [tenantId, pi, JSON.stringify(merged), now]
+                `INSERT INTO jira_pis (tenant_id, pi, kind, sprints, synced_at) VALUES ($1, $2, $3, $4, $5)
+                 ON CONFLICT (tenant_id, pi) DO UPDATE SET kind = EXCLUDED.kind, sprints = EXCLUDED.sprints, synced_at = EXCLUDED.synced_at`,
+                [tenantId, pi, kind, JSON.stringify(merged), now]
             );
             if (issues.length) {
                 await client.query(
@@ -173,6 +221,9 @@ async function syncTenantUnrecorded(pool, { tenantId, atlassian, fetch: fetchFn,
                 'DELETE FROM jira_issues WHERE tenant_id = $1 AND pi = $2 AND board_id = $3 AND NOT (key = ANY($4))',
                 [tenantId, pi, boardId, issues.map((i) => i.key)]
             );
+        }
+        for (const [boardId, current] of currentByBoard) {
+            await client.query('UPDATE jira_boards SET current_increment = $3 WHERE tenant_id = $1 AND board_id = $2', [tenantId, boardId, current]);
         }
         await client.query(
             'UPDATE jira_connections SET current_pi = $2, last_synced_at = $3, last_error = NULL WHERE tenant_id = $1',
@@ -209,18 +260,31 @@ async function syncAllJira({ pool, atlassian, fetch: fetchFn = fetch, log = () =
     return totals;
 }
 
+/** The current increments of the selected boards that have synced issues, newest first. */
+async function currentIncrements(client, tenantId) {
+    const { rows } = await client.query(
+        `SELECT DISTINCT b.current_increment AS pi FROM jira_boards b
+         WHERE b.tenant_id = $1 AND b.current_increment IS NOT NULL
+           AND EXISTS (SELECT 1 FROM jira_issues i WHERE i.tenant_id = b.tenant_id AND i.pi = b.current_increment)`,
+        [tenantId]
+    );
+    return rows.map((r) => r.pi).sort(comparePiDesc);
+}
+
 /**
- * The tenant's synced PIs for the dashboard: `jiraIndex` (data/jira-issues/index.json) and `issueStatusIndex`
- * (status-index.json: per key, its newest PI). Call inside the tenant's scope.
+ * The tenant's synced increments for the dashboard: `jiraIndex` (data/jira-issues/index.json, each entry with its
+ * `kind`: pi or sprint) and `issueStatusIndex` (status-index.json: per key, its newest increment). When the
+ * selected boards are in different increments right now (a SAFe team in PI-27.3, a Scrum team in its Sprint 7), a
+ * first "Now" entry joins them and is the current one, so the dashboard opens on every team at once. Call inside
+ * the tenant's scope.
  *
  * @param {import('pg').PoolClient} client
  * @param {{ tenantId: string }} input
  * @returns {Promise<{ jiraIndex: { currentPi: string|null, pis: object[] }, issueStatusIndex: object }>}
  */
 async function readDashboardJira(client, { tenantId }) {
-    const { rows: [connection] } = await client.query('SELECT current_pi FROM jira_connections WHERE tenant_id = $1', [tenantId]);
     const { rows: pis } = await client.query(
-        'SELECT p.pi, p.sprints FROM jira_pis p WHERE p.tenant_id = $1 AND EXISTS (SELECT 1 FROM jira_issues i WHERE i.tenant_id = p.tenant_id AND i.pi = p.pi)',
+        'SELECT p.pi, p.kind, p.sprints FROM jira_pis p WHERE p.tenant_id = $1 AND EXISTS (SELECT 1 FROM jira_issues i WHERE i.tenant_id = p.tenant_id AND i.pi = p.pi)',
         [tenantId]
     );
     const { rows: issues } = await client.query("SELECT key, pi, data->>'statusCategory' AS status_category FROM jira_issues WHERE tenant_id = $1", [tenantId]);
@@ -230,17 +294,24 @@ async function readDashboardJira(client, { tenantId }) {
     for (const i of issues.sort((a, b) => rank.get(a.pi) - rank.get(b.pi))) {
         if (!issueStatusIndex[i.key]) issueStatusIndex[i.key] = { pi: i.pi, statusCategory: i.status_category };
     }
+    const entries = sorted.map((p) => ({ pi: p.pi, kind: p.kind, file: `${String(p.pi).replace(/[^A-Za-z0-9.-]/g, '_')}.json`, sprints: p.sprints }));
+    const current = await currentIncrements(client, tenantId);
+    if (current.length > 1) {
+        const joined = entries.filter((e) => current.includes(e.pi));
+        entries.unshift({
+            pi: NOW_KEY, kind: 'now', label: `Now: ${current.join(', ')}`, file: 'now.json', includes: current,
+            sprints: joined.flatMap((e) => e.sprints),
+        });
+    }
     return {
-        jiraIndex: {
-            currentPi: connection?.current_pi && rank.has(connection.current_pi) ? connection.current_pi : null,
-            pis: sorted.map((p) => ({ pi: p.pi, file: `${String(p.pi).replace(/[^A-Za-z0-9.-]/g, '_')}.json`, sprints: p.sprints })),
-        },
+        jiraIndex: { currentPi: current.length > 1 ? NOW_KEY : current[0] || null, pis: entries },
         issueStatusIndex,
     };
 }
 
 /**
- * One PI's issues (what a data/jira-issues/<PI>.json shard holds). Members only.
+ * One increment's issues (what a data/jira-issues/<PI>.json shard holds); for "Now", every board's current one,
+ * each issue keeping its own increment in `pi`. Members only.
  *
  * @param {import('pg').Pool} pool
  * @param {{ tenantId: string, actorUserId: string, pi: string }} input
@@ -250,9 +321,11 @@ async function readDashboardJira(client, { tenantId }) {
 async function listPiIssues(pool, { tenantId, actorUserId, pi }) {
     return withScope(pool, { tenantId }, async (client) => {
         if (!(await roleOf(client, { tenantId, userId: actorUserId }))) throw new TenantNotFoundError('Tenant not found');
-        const { rows } = await client.query('SELECT data FROM jira_issues WHERE tenant_id = $1 AND pi = $2 ORDER BY key', [tenantId, pi]);
-        return rows.map((r) => r.data);
+        const pis = pi === NOW_KEY ? await currentIncrements(client, tenantId) : [pi];
+        const { rows } = await client.query('SELECT key, data FROM jira_issues WHERE tenant_id = $1 AND pi = ANY($2) ORDER BY key, pi', [tenantId, pis]);
+        const seen = new Set();
+        return rows.filter((r) => !seen.has(r.key) && seen.add(r.key)).map((r) => r.data);
     });
 }
 
-module.exports = { JiraBoardError, listBoards, setBoards, syncTenant, syncAllJira, readDashboardJira, listPiIssues };
+module.exports = { NOW_KEY, JiraBoardError, listBoards, setBoards, configureBoard, syncTenant, syncAllJira, readDashboardJira, listPiIssues };

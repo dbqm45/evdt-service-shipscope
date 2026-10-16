@@ -41,7 +41,8 @@ function sprintLabelFor(issue){
 
     const m = issue.sprint.match(/(\d+\.\d+)\.(\d+)/);
 
-    return m ? `PI-${m[1]}.${m[2]}` : null;
+    // A sprint not named after a PI (a team that doesn't work in PIs) is its own bucket.
+    return m ? `PI-${m[1]}.${m[2]}` : issue.sprint;
 }
 
 /** Chart 1's data: every issue's PROD status (via the same issueStatusForEnv the Product view table

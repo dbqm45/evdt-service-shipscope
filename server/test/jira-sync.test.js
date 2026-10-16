@@ -1,7 +1,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const crypto = require('crypto');
-const { piOfSprint, currentPiOf, previousPiOf, issueType, mapIssue, comparePiDesc } = require('../lib/jira-model');
+const { piOfSprint, currentPiOf, previousPiOf, issueType, mapIssue, comparePiDesc, compileTemplate, rhythmOf, RhythmTemplateError } = require('../lib/jira-model');
 
 const FIELD_IDS = { sprintFieldId: 'customfield_10020', epicLinkFieldId: 'customfield_10014', flaggedFieldId: 'customfield_10021' };
 const sp = (id, name, state, startDate = null, endDate = null) => ({ id, name, state, startDate, endDate });
@@ -29,6 +29,32 @@ test('jira model: PIs from sprint names (or the sprint itself), the current PI, 
     assert.strictEqual(currentPiOf([]), null);
     assert.strictEqual(previousPiOf(sprints, 'PI-27.3'), 'PI-27.2');
     assert.strictEqual(previousPiOf(sprints, 'PI-27.2'), null);
+});
+
+test('jira model: rhythms -- SAFe PIs, every sprint on its own, auto-detected, or the admin\'s own PI naming', () => {
+    const safe = [sp(1, 'Sparks 27.3.1', 'active')];
+    const scrum = [sp(2, 'PAY Sprint 9', 'closed', '2026-08-01'), sp(3, 'PAY Sprint 10', 'active', '2026-09-01')];
+    assert.strictEqual(rhythmOf({ rhythm: 'auto', piTemplate: null }, safe).kind, 'pi');
+    assert.strictEqual(rhythmOf({ rhythm: 'auto', piTemplate: null }, scrum).kind, 'sprint');
+    assert.strictEqual(rhythmOf({ rhythm: 'sprint', piTemplate: null }, safe).kind, 'sprint', 'an admin can opt a PI-named board out');
+    assert.strictEqual(piOfSprint('Sparks 27.3.1', rhythmOf({ rhythm: 'sprint', piTemplate: null }, safe)), 'Sparks 27.3.1');
+    // Sprint order is by time, not by name: "Sprint 10" follows "Sprint 9".
+    assert.strictEqual(previousPiOf(scrum, 'PAY Sprint 10', { kind: 'sprint' }), 'PAY Sprint 9');
+    // Names need not contain numbers or sort in time order at all.
+    const named = [sp(5, 'Apple', 'closed', '2026-08-01'), sp(6, 'Banana', 'active', '2026-09-01')];
+    assert.strictEqual(previousPiOf(named, 'Banana', { kind: 'sprint' }), 'Apple');
+    assert.strictEqual(previousPiOf(named, 'Apple', { kind: 'sprint' }), null);
+
+    const own = rhythmOf({ rhythm: 'auto', piTemplate: 'Release {pi} (week {n})' }, [sp(4, 'Team A Release 2026.4 (Week 2)', 'active')]);
+    assert.strictEqual(own.kind, 'pi');
+    assert.strictEqual(piOfSprint('Team A Release 2026.4 (Week 2)', own), 'PI-2026.4', 'case-insensitive, literal parentheses');
+    assert.strictEqual(piOfSprint('Hotfix week', own), 'Hotfix week', 'a sprint without the naming is its own increment');
+    assert.match(compileTemplate('a.b {pi} * c+').source, /^a\\\.b\\s\+/, 'regex characters are literal');
+    for (const bad of ['', 'no placeholder', '{pi} and {pi}', 'x'.repeat(101)]) assert.throws(() => compileTemplate(bad), RhythmTemplateError, bad);
+    // A template can't be turned into a slow pattern: its parts are fixed, bounded fragments.
+    const t0 = Date.now();
+    compileTemplate('*{pi}*'.repeat(1) + '*'.repeat(40)).test('9'.repeat(5000) + 'x');
+    assert.ok(Date.now() - t0 < 1000);
 });
 
 test('jira model: an issue mapped to the dashboard shape, its sprint taken from the board being synced', () => {
@@ -168,11 +194,11 @@ test('FR-009: the current PI of each board (plus the previous one on its first s
     assert.deepStrictEqual(data.jiraIndex, {
         currentPi: 'PI-27.3',
         pis: [
-            { pi: 'PI-27.3', file: 'PI-27.3.json', sprints: [
+            { pi: 'PI-27.3', kind: 'pi', file: 'PI-27.3.json', sprints: [
                 { name: 'Sparks 27.3.1', startDate: '2026-08-01', endDate: '2026-08-15' },
                 { name: 'Sparks 27.3.2', startDate: '2026-08-15', endDate: '2026-09-01' },
             ] },
-            { pi: 'PI-27.2', file: 'PI-27.2.json', sprints: [{ name: 'Sparks 27.2.3', startDate: '2026-06-01', endDate: '2026-07-01' }] },
+            { pi: 'PI-27.2', kind: 'pi', file: 'PI-27.2.json', sprints: [{ name: 'Sparks 27.2.3', startDate: '2026-06-01', endDate: '2026-07-01' }] },
         ],
     });
     // ABC-1 was in PI-27.2 too (its sprint history), but its newest PI wins in the status index.
@@ -236,5 +262,59 @@ test('FR-009: a team-managed board with sprints syncs by sprint; one with sprint
     assert.deepStrictEqual(sync.json(), { boards: 2, issues: 1, currentPi: 'Sprint 7' }, 'sprints not named after a PI are their own increment; the previous one (Sprint 6) is empty');
     assert.deepStrictEqual((await api('/jira-issues?pi=Sprint 7')).map((i) => [i.key, i.sprint]), [['LAB-1', 'Sprint 7']]);
     assert.strictEqual((await call('GET', '/jira')).json().lastError, null);
+});
+
+test('mixed rhythms: a SAFe board and a Scrum board open together on "Now"; each issue keeps its own increment', async (t) => {
+    const { call, api } = await setup(t);
+    await call('PUT', '/jira/boards', { boardIds: [10, 13] });
+    assert.deepStrictEqual((await call('POST', '/jira/sync')).json(), { boards: 2, issues: 7, currentPi: '@now' });
+
+    const { jiraIndex } = await api('/dashboard-data');
+    assert.strictEqual(jiraIndex.currentPi, '@now');
+    assert.deepStrictEqual(jiraIndex.pis.map((p) => [p.pi, p.kind]), [['@now', 'now'], ['PI-27.3', 'pi'], ['PI-27.2', 'pi'], ['Sprint 7', 'sprint']]);
+    assert.deepStrictEqual([jiraIndex.pis[0].label, jiraIndex.pis[0].includes], ['Now: PI-27.3, Sprint 7', ['PI-27.3', 'Sprint 7']]);
+    assert.deepStrictEqual(jiraIndex.pis[0].sprints.map((x) => x.name), ['Sparks 27.3.1', 'Sparks 27.3.2', 'Sprint 7'], 'the sprints of every joined increment');
+
+    const now = await api('/jira-issues?pi=@now');
+    assert.deepStrictEqual(now.map((i) => [i.key, i.pi]), [['ABC-1', 'PI-27.3'], ['ABC-10', 'PI-27.3'], ['ABC-2', 'PI-27.3'], ['LAB-1', 'Sprint 7']]);
+    assert.deepStrictEqual((await call('GET', '/jira')).json().currentPi, '@now');
+});
+
+test('board rhythm: an admin sets it per board (with an own PI naming); a change re-syncs the board from scratch', async (t) => {
+    const { app, call, api, rows } = await setup(t);
+    await call('PUT', '/jira/boards', { boardIds: [10, 13] });
+    await call('POST', '/jira/sync');
+
+    // The Scrum team's sprints are named "Sprint 7": the admin says they are PI 7.
+    const put = (boardId, payload, sid) => call('PUT', `/jira/boards/${boardId}`, payload, sid);
+    assert.deepStrictEqual((await put(13, { rhythm: 'pi', piTemplate: 'Sprint {pi}' })).json(), { boardId: 13, rhythm: 'pi', piTemplate: 'Sprint {pi}' });
+    assert.deepStrictEqual(await rows('SELECT key FROM jira_issues WHERE board_id = 13'), [], 'dropped until the next sync');
+    await call('POST', '/jira/sync');
+    let index = (await api('/dashboard-data')).jiraIndex;
+    assert.deepStrictEqual(index.pis.filter((p) => p.pi.startsWith('PI-') && p.pi !== 'PI-27.3' && p.pi !== 'PI-27.2').map((p) => [p.pi, p.kind]), [['PI-7', 'pi']],
+        'PI-6 (Sprint 6) was synced too, but has no issues, so the dashboard does not list it');
+    assert.deepStrictEqual(index.pis[0].includes, ['PI-27.3', 'PI-7']);
+
+    // The SAFe board switched to plain sprints: its increments become its sprints.
+    await put(10, { rhythm: 'sprint', piTemplate: null });
+    await call('POST', '/jira/sync');
+    index = (await api('/dashboard-data')).jiraIndex;
+    assert.ok(index.pis.some((p) => p.pi === 'Sparks 27.3.2' && p.kind === 'sprint'));
+    assert.deepStrictEqual((await call('GET', '/jira/boards')).json().boards.filter((b) => b.selected).map((b) => [b.boardId, b.rhythm, b.currentIncrement]),
+        [[10, 'sprint', 'Sparks 27.3.2'], [13, 'pi', 'PI-7']]);
+
+    for (const [boardId, payload] of [
+        [13, { rhythm: 'pi', piTemplate: 'no placeholder' }],
+        [13, { rhythm: 'sprint', piTemplate: 'Sprint {pi}' }],
+        [11, { rhythm: 'pi', piTemplate: null }],
+        [13, { rhythm: 'weekly', piTemplate: null }],
+        [13, { rhythm: 'pi' }],
+    ]) {
+        assert.strictEqual((await put(boardId, payload)).statusCode, 400, JSON.stringify([boardId, payload]));
+    }
+    const bob = await signIn(app, 'bob');
+    const link = (await call('POST', '/invitations', { role: 'member' })).json().url;
+    await app.inject({ method: 'POST', url: `${new URL(link).pathname}/accept`, cookies: { sid: bob } });
+    assert.strictEqual((await put(13, { rhythm: 'auto', piTemplate: null }, bob)).statusCode, 403);
 });
 

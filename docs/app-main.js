@@ -29,7 +29,9 @@ function initGlobalPiSelect(){
         const o = document.createElement('option');
 
         o.value = entry.pi;
-        o.textContent = entry.pi === currentPi() ? `${entry.pi} (current)` : entry.pi;
+        const label = entry.label || entry.pi;
+
+        o.textContent = entry.pi === currentPi() ? `${label} (current)` : label;
         sel.appendChild(o);
     });
 

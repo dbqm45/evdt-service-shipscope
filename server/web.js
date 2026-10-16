@@ -6,7 +6,7 @@ const { createPool, checkConnection } = require('./lib/db');
 const { loadAuthConfig, loadGitHubAppConfig, loadAtlassianConfig } = require('./lib/config');
 const { AtlassianError, buildAuthorizeUrl: buildAtlassianAuthorizeUrl, exchangeCode: exchangeAtlassianCode, fetchJiraSites } = require('./lib/atlassian');
 const { JiraNotConnectedError, JiraSiteError, saveConnection, getConnection, selectSite, disconnect, listProjects } = require('./lib/jira-connections');
-const { JiraBoardError, listBoards, setBoards, syncTenant: syncJiraTenant, listPiIssues } = require('./lib/jira-sync');
+const { JiraBoardError, listBoards, setBoards, configureBoard, syncTenant: syncJiraTenant, listPiIssues } = require('./lib/jira-sync');
 const { APP_VERSION } = require('./lib/version');
 const { buildAuthorizeUrl, exchangeCode, fetchGitHubUser, GitHubOAuthError } = require('./lib/github-oauth');
 const { createSession, getSessionUser, deleteSession } = require('./lib/sessions');
@@ -519,6 +519,26 @@ function buildApp({ pool, auth, githubApp = null, atlassian = null, fetch: fetch
             boards: await setBoards(pool, {
                 tenantId: request.params.tenantId, actorUserId: request.user.id, boardIds: request.body.boardIds, atlassian, fetch: fetchFn,
             }),
+        }));
+
+        // How a selected board's sprints group into increments: SAFe PIs (optionally the admin's own PI naming), every
+        // sprint on its own, or detected from the sprint names (lib/jira-model.js rhythmOf()).
+        app.put('/tenants/:tenantId/jira/boards/:boardId', {
+            preHandler: requireUser,
+            schema: {
+                params: { type: 'object', required: ['tenantId', 'boardId'], properties: { tenantId: UUID_PARAM, boardId: GITHUB_ID_PARAM } },
+                body: {
+                    type: 'object',
+                    required: ['rhythm', 'piTemplate'],
+                    additionalProperties: false,
+                    properties: {
+                        rhythm: { type: 'string', enum: ['auto', 'pi', 'sprint'] },
+                        piTemplate: { anyOf: [{ type: 'null' }, { type: 'string', minLength: 1, maxLength: 100 }] },
+                    },
+                },
+            },
+        }, async (request) => configureBoard(pool, {
+            tenantId: request.params.tenantId, actorUserId: request.user.id, boardId: Number(request.params.boardId), ...request.body,
         }));
 
         // FR-009 on demand (the worker also runs it every pass), e.g. right after choosing boards.

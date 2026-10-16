@@ -12,7 +12,7 @@ function renderProductSummary(){
 
     // Single fill (the overall "on prod" share) per §4.1 — the per-status breakdown lives in the 4
     // tiles below instead of a multi-segment bar.
-    const piCardHtml = PiCard({ name: targetPi, isCurrent: showCurrentTag, total, onProd, onProdPct: pct(onProd) });
+    const piCardHtml = PiCard({ name: targetPi && incrementLabel(targetPi), isCurrent: showCurrentTag, total, onProd, onProdPct: pct(onProd) });
 
     const tiles = [
         { key: 'released', label: 'Released', color: 'var(--nd-released)', value: counts.released },

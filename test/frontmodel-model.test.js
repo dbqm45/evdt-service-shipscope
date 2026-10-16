@@ -236,8 +236,8 @@ test('issueEnvDate / issueLastChange', () => {
 test('isRealPi', () => {
     const { run } = loadApp();
 
-    for (const v of ['PI-24.4', 'pi-1.2', 'PI24.4', 'x PI-1.1']) assert.equal(run(`isRealPi(${JSON.stringify(v)})`), true);
-    for (const v of [null, undefined, '', '—', 'PI-x', 'Sprint 5']) assert.equal(run(`isRealPi(${JSON.stringify(v ?? null)})`), false);
+    for (const v of ['PI-24.4', 'pi-1.2', 'PI24.4', 'x PI-1.1', 'Sprint 5', 'PAY Sprint 1']) assert.equal(run(`isRealPi(${JSON.stringify(v)})`), true, v);
+    for (const v of [null, undefined, '', '—']) assert.equal(run(`isRealPi(${JSON.stringify(v ?? null)})`), false);
 });
 
 test('compareVersionDesc ordering and tiebreaks', () => {
@@ -436,6 +436,18 @@ test('piContinuationBadge', () => {
     assert.equal(run('piContinuationBadge("C")'), '');
     assert.match(run('String(piContinuationBadge("B"))'), /Continued in PI-1\.2/);
     assert.match(run('String(piContinuationBadge("D"))'), /Continued in &lt;x&gt;/);
+
+    // "Now" joins every team's current increment: an issue in any of them is not "continued" elsewhere.
+    setState({
+        selectedPi: '@now', issueStatusIndex: { A: { pi: 'PI-1.1' }, S: { pi: 'PAY Sprint 1' }, B: { pi: 'PI-1.2' } },
+        jiraIndex: { currentPi: '@now', pis: [{ pi: '@now', label: 'Now: PI-1.1, PAY Sprint 1', includes: ['PI-1.1', 'PAY Sprint 1'] }, { pi: 'PI-1.1' }] },
+    });
+    assert.equal(run('piContinuationBadge("A")'), '');
+    assert.equal(run('piContinuationBadge("S")'), '');
+    assert.match(run('String(piContinuationBadge("B"))'), /Continued in PI-1\.2/);
+    assert.equal(run('incrementLabel("@now")'), 'Now: PI-1.1, PAY Sprint 1');
+    assert.equal(run('incrementLabel("PI-1.1")'), 'PI-1.1');
+    assert.deepEqual(JSON.parse(run('JSON.stringify(selectedIncrements())')), ['PI-1.1', 'PAY Sprint 1']);
 });
 
 test('piWorkItemCounts excludes epics and honours the sprint scope', () => {
