@@ -7,6 +7,12 @@ dashboard, nie publikowany pakiet), dlatego wpisy są pogrupowane według dat. I
 ShipScope, znajdują się w `README.pl.md`, pełne techniczne odniesienie w `CLAUDE.md` (po angielsku), a
 wyjaśnienie sposobu liczenia poszczególnych wartości/badge'y w `FAQ.pl.md`.
 
+## [0.1.13] - 2026-10-16
+
+### Nowe
+
+- **SHP:** sync Jira boards in their own rhythm and open on every team's current increment (#22)
+
 ## [0.1.12] - 2026-10-16
 
 ### Poprawione
