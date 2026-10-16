@@ -1,0 +1,23 @@
+name: Tests
+
+# Root test suite (`npm test`: scripts/, scripts/lib/, docs/app-*.js, release tooling). No path filters:
+# the suite reads files from across the repo (test/release.test.js checks server/package.json too) and
+# runs in seconds, so every PR gets it. The root has no dependencies, so no `npm ci`.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm test
