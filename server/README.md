@@ -16,7 +16,14 @@ The SaaS-pivot backend scoped by `@context/foundation/prd.md`, deployed to Rende
   installs the ShipScope GitHub App on their organization's repos, links that installation to the tenant and
   chooses which of its repos to track.
 
-Not yet: ingesting deployment data from tracked repos (FR-005), GitHub webhooks, Jira OAuth, any dashboard data.
+- **Deployment ingestion** (FR-005, `worker.js` + `lib/deployment-sync.js`): every 15 minutes the Background
+  Worker pulls new GitHub deployments of every tracked repo into the tenant's `deployments` table, with the
+  Jira issue keys from each deploy's commit range and rollback detection. A daily cleanup applies the tenant's
+  retention (`lib/retention.js`).
+
+Not yet: version from releases/tags/`versionFile`, environment drift, the `manual` flag and display names
+(the file-based sync has them; every record keeps its sha so they can be added later), GitHub webhooks, Jira
+OAuth, the dashboard reading from this API.
 
 This directory is a separate dependency boundary from the repo root: its own `package.json` and the **only
 place in this repo with third-party dependencies** (`pg`, `fastify`, `@fastify/cookie` — see `@CLAUDE.md`'s
@@ -53,6 +60,16 @@ GitHub App routes (only when the `GITHUB_APP_*` variables are set):
 | `DELETE /tenants/:tenantId/github/repos/:repoId` | session + admin | Stops tracking. 204, or 404. |
 | `DELETE /tenants/:tenantId/github/installations/:installationId` | session + admin | Unlinks the installation and its tracked repos (it stays installed on GitHub). 204, or 404. |
 
+Deployments and settings:
+
+| Route | Auth | What it does |
+|---|---|---|
+| `GET /tenants/:tenantId/deployments` | session + member | Newest first. Optional `repoId`, `environment` (`test`/`qa`/`prod`), `limit` (default 100, max 500). Each: `deploymentId, repo, environment, status, sha, deployedAt, deployedByLogin, workflowRunUrl, durationMs, commitUrl, rollbackToSha, relatedIssues, issueCommitTypes`. |
+| `GET /tenants/:tenantId/settings` | session + member | `{ name, deploymentRetentionDays }`. |
+| `PUT /tenants/:tenantId/settings` | session + admin | Body `{ "deploymentRetentionDays": 7..730 }` (default 90). Applied by the next daily cleanup. |
+
+`GET /tenants/:tenantId/github` also reports each tracked repo's `lastSyncedAt` and `lastSyncError`.
+
 A member who isn't an admin gets 403 on admin routes; someone outside the tenant gets 404, same as for a
 tenant that doesn't exist.
 
@@ -80,13 +97,27 @@ not stripped or coerced).
   one tenant only (a database-wide unique constraint), and a tracked repo can only reference an installation
   of its own tenant (a composite foreign key). The App authenticates with a JWT signed by its private key
   (RS256, `node:crypto`); installation tokens are minted per request and never stored.
+- **Deployment sync** (worker): one pass every `SYNC_INTERVAL_MINUTES` (default 15) and one retention cleanup a
+  day, each behind a Postgres advisory lock so two worker instances (or a slow pass) never overlap. Each
+  tenant is read under its own RLS scope -- the worker has no cross-tenant view either. All GitHub calls for a
+  repo happen before its database transaction (30 s timeout each), and a repo's records, issue facts and
+  cursor are written together. A failing repo stores its error on `tracked_repos.last_sync_error` and the
+  pass continues. Rules ported from `scripts/sync-github-deployments.js`: the cursor never passes a
+  deployment that has no final status yet (unless it's stuck for 48 h); the newest *terminal* status
+  decides (GitHub's `inactive` marker is ignored); a redeploy of the same commit inherits the previous
+  record's issues instead of comparing a commit with itself; at most 200 new deployments per repo per pass,
+  oldest first.
+- **Retention**: records older than the tenant's `deployment_retention_days` are deleted daily, except each
+  repo/environment's latest deployment and latest successful one. `issue_deployments` ("issue X first reached
+  ENV") is never trimmed. Untracking a repo deletes its deployments.
 - **Tenant isolation (RLS)**: every `memberships` query runs through `lib/scope.js`'s `withScope()`, which
   sets `app.current_tenant_id` / `app.current_user_id` with `set_config(..., true)` inside one transaction.
   Those settings end with the transaction, so a pooled connection can't carry a tenant into the next request.
   Policies (migration `002`): read your tenant's rows or your own rows; write only into the scoped tenant.
   `invitations` (migration `003`) is tenant-scoped the same way, plus a read-only policy for exactly one
   invitation whose token hash is set as `app.invite_token_hash` (how a not-yet-member reads the link).
-  `github_installations` and `tracked_repos` (migration `004`) are tenant-scoped the same way.
+  `github_installations` and `tracked_repos` (migration `004`), `deployments` and `issue_deployments`
+  (migration `005`) are tenant-scoped the same way.
   An unscoped query fails closed: zero rows, or an RLS error for a write.
 
 ## Running locally
@@ -115,8 +146,8 @@ not stripped or coerced).
    - **Setup URL**: `http://localhost:3000/github/setup`, with **Redirect on update** ticked
    - **Request user authorization (OAuth) during installation**: leave unticked (ShipScope signs the user in
      itself after the setup redirect, to verify the installation)
-   - **Repository permissions**: Metadata (read-only, the default) is enough to list repos for now; FR-005 will
-     add Deployments and Contents (read-only)
+   - **Repository permissions**: Metadata, **Deployments** and **Contents**, all read-only (Contents for the
+     commit range of each deploy)
    - **Where can this GitHub App be installed?**: Any account, so other organizations can install it
    - Put the **App ID**, the App's URL name (**slug**, the last part of its public page URL) and a generated
      **private key** (the `.pem` file's contents) into `.env` as `GITHUB_APP_ID`, `GITHUB_APP_SLUG` and
@@ -126,14 +157,14 @@ not stripped or coerced).
    Create a tenant with e.g. `fetch('/tenants', { method: 'POST', headers: { 'content-type':
    'application/json' }, body: JSON.stringify({ name: 'Acme' }) })` from the browser console on that page.
 
-Other commands: `npm start` (Web Service, env from the process), `npm run worker` (heartbeat loop),
+Other commands: `npm start` (Web Service, env from the process), `npm run worker` (heartbeat, deployment sync when the `GITHUB_APP_*` variables are set, daily retention cleanup),
 `npm run migrate` (pending `migrations/*.sql`).
 
 ## Testing
 
 `npm test` runs this directory's `node:test` suite. Unit tests (mocked pool, mocked GitHub via an injected
 `fetch`, Fastify's `app.inject()` — no network, no credentials) always run. The real-Postgres tests
-(`migrate`, `tenants`, `rls`, `auth-flow`, `invitations`, `github`) are skipped unless `TEST_DATABASE_URL` is set:
+(`migrate`, `tenants`, `rls`, `auth-flow`, `invitations`, `github`, `deployments`) are skipped unless `TEST_DATABASE_URL` is set:
 
 ```bash
 docker run -d --name shipscope-pg -e POSTGRES_PASSWORD=postgres -p 5432:5432 postgres:16-alpine

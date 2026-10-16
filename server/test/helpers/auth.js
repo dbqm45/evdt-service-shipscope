@@ -66,6 +66,23 @@ function fakeGitHub(usersByCode, github = {}) {
             }
             return json({ id: Number(m[1]), account: installation.account });
         }
+        // Repo endpoints for the deployment sync: github.repos[fullName] = { deployments (newest first),
+        // statuses: { [id]: [...] (newest first) }, commits: { [sha]: message }, compare(base, head) -> body,
+        // fail: HTTP status to answer everything with }.
+        m = url.match(/^https:\/\/api\.github\.com\/repos\/([^/]+\/[^/]+)\/(.+)$/);
+        if (m && github.repos?.[m[1]]) {
+            assert.match(auth, /^Bearer inst-token-\d+$/, 'installation token');
+            const repo = github.repos[m[1]];
+            if (repo.fail) return json({ message: 'boom' }, repo.fail);
+            const rest = m[2];
+            if (rest.startsWith('deployments?')) return json(pageOf(repo.deployments, url));
+            let sub = rest.match(/^deployments\/(\d+)\/statuses/);
+            if (sub) return json((repo.statuses[sub[1]] || []).slice(0, 10));
+            sub = rest.match(/^commits\/([0-9a-f]+)$/);
+            if (sub) return json({ sha: sub[1], commit: { message: repo.commits?.[sub[1]] || '' } });
+            sub = rest.match(/^compare\/([0-9a-f]+)\.\.\.([0-9a-f]+)$/);
+            if (sub) return json(repo.compare(sub[1], sub[2]));
+        }
         if (url.startsWith('https://api.github.com/installation/repositories')) {
             m = auth.match(/^Bearer inst-token-(\d+)$/);
             assert.ok(m, 'installation token');

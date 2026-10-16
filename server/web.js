@@ -20,6 +20,7 @@ const {
     linkInstallation, listConnections, trackedRepoIdsForAdmin, trackRepo, untrackRepo, unlinkInstallation,
     InstallationNotFoundError, InstallationTakenError,
 } = require('./lib/github-connections');
+const { listDeployments, getSettings, updateSettings, MAX_LIMIT } = require('./lib/deployments');
 
 const SESSION_COOKIE = 'sid';
 const STATE_COOKIE = 'oauth_state';
@@ -322,6 +323,54 @@ function buildApp({ pool, auth, githubApp = null, fetch: fetchFn = fetch, logger
         const result = await acceptInvitation(pool, { token: request.params.token, userId: request.user.id });
         return reply.code(201).send(result);
     });
+
+    const tenantOnlyParams = { type: 'object', required: ['tenantId'], properties: { tenantId: UUID_PARAM } };
+
+    app.get('/tenants/:tenantId/settings', {
+        preHandler: requireUser,
+        schema: { params: tenantOnlyParams },
+    }, async (request) => getSettings(pool, { tenantId: request.params.tenantId, actorUserId: request.user.id }));
+
+    // How long deployment history is kept (the worker's daily cleanup applies it). Admins only.
+    app.put('/tenants/:tenantId/settings', {
+        preHandler: requireUser,
+        schema: {
+            params: tenantOnlyParams,
+            body: {
+                type: 'object',
+                required: ['deploymentRetentionDays'],
+                additionalProperties: false,
+                properties: { deploymentRetentionDays: { type: 'integer', minimum: 7, maximum: 730 } },
+            },
+        },
+    }, async (request) => updateSettings(pool, {
+        tenantId: request.params.tenantId, actorUserId: request.user.id, deploymentRetentionDays: request.body.deploymentRetentionDays,
+    }));
+
+    // FR-005: the tenant's deployments as the worker ingested them, newest first.
+    app.get('/tenants/:tenantId/deployments', {
+        preHandler: requireUser,
+        schema: {
+            params: tenantOnlyParams,
+            querystring: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                    repoId: GITHUB_ID_PARAM,
+                    environment: { type: 'string', enum: ['test', 'qa', 'prod'] },
+                    limit: { type: 'string', pattern: '^[1-9][0-9]{0,3}$' },
+                },
+            },
+        },
+    }, async (request) => ({
+        deployments: await listDeployments(pool, {
+            tenantId: request.params.tenantId,
+            actorUserId: request.user.id,
+            repoId: request.query.repoId ? Number(request.query.repoId) : undefined,
+            environment: request.query.environment,
+            limit: request.query.limit ? Math.min(Number(request.query.limit), MAX_LIMIT) : undefined,
+        }),
+    }));
 
     if (githubApp) registerGitHubRoutes();
 

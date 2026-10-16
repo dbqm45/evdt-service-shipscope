@@ -100,11 +100,18 @@ the cookie token is stored; the GitHub user token is never stored), and invitati
 (FR-003, `lib/invitations.js`; one-time hashed tokens, single-use claim by conditional `UPDATE`, last-admin guard).
 GitHub App connection (FR-004/FR-006, `lib/github-app.js` for App JWT/installation-token calls, `lib/github-connections.js`
 for the data): an installation is linked only after the user's own token shows they can access it (`GET
-/user/installations` in the sign-in callback) -- never on the `installation_id` from GitHub's setup redirect alone. Dependencies, all scoped to
+/user/installations` in the sign-in callback) -- never on the `installation_id` from GitHub's setup redirect alone.
+Deployment ingestion (FR-005): the Background Worker (`worker.js`) runs `lib/deployment-sync.js` every 15 minutes
+and `lib/retention.js` daily, each behind a Postgres advisory lock; the pure rules live in `lib/deployment-logic.js`,
+a port of `scripts/lib/deployment-records.js` (server/ can't require from scripts/ -- Render deploys `server/`
+alone), so a fix to one of those rules belongs in both until the file-based sync is retired. Retention is per
+tenant (`tenants.deployment_retention_days`, default 90, 7-730) and always keeps each repo/environment's latest
+and latest successful deployment. Dependencies, all scoped to
 `server/package.json` (the rest of the repo remains dependency-free): `pg`, `fastify`, `@fastify/cookie`.
 Fastify was chosen for its built-in JSON-schema validation of request input; it runs with
 `removeAdditional: false, coerceTypes: false`, so unknown fields and wrong types are a 400, never silently
-fixed. **Every query on an RLS table (`memberships`, `invitations`, `github_installations`, `tracked_repos`) must go through `lib/scope.js`'s `withScope()`**, which
+fixed. **Every query on an RLS table (`memberships`, `invitations`, `github_installations`, `tracked_repos`,
+`deployments`, `issue_deployments`) must go through `lib/scope.js`'s `withScope()`**, which
 sets `app.current_tenant_id`/`app.current_user_id` with transaction-local `set_config(..., true)`; an unscoped
 read returns zero rows and an unscoped write is an RLS error (migration `002`). Run `npm install && npm test`
 inside `server/`; see `@server/README.md` for routes, the security model, local sign-in with a dev GitHub App,

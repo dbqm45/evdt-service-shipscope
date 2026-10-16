@@ -1,34 +1,103 @@
 const { createPool, checkConnection } = require('./lib/db');
+const { loadGitHubAppConfig } = require('./lib/config');
+const { syncAll } = require('./lib/deployment-sync');
+const { cleanupAll } = require('./lib/retention');
 
 const HEARTBEAT_INTERVAL_MS = 30_000;
+const CLEANUP_INTERVAL_MS = 24 * 3600_000;
+const DEFAULT_SYNC_INTERVAL_MINUTES = 15;
+// Postgres advisory lock keys: one sync and one cleanup at a time, even with more than one worker instance.
+const SYNC_LOCK = 727_001;
+const CLEANUP_LOCK = 727_002;
+
+const stamp = () => new Date().toISOString();
 
 /**
  * One heartbeat tick: pings Postgres and logs the result. Extracted from the loop below so it's testable
  * without waiting on a real interval or a real database.
- *
- * TODO (later PRD work, not this walking skeleton): once this worker does real GitHub/Jira sync, add
- * application-level timeout/circuit-breaker logic here — Render Background Workers have no execution-time
- * ceiling, so a stuck loop will keep billing compute until someone notices (see
- * context/foundation/infrastructure.md's risk register).
  */
 async function heartbeatTick(pool, log = console.log) {
     try {
         const { latencyMs } = await checkConnection(pool);
-        log(`${new Date().toISOString()} heartbeat ok (db latency ${latencyMs}ms)`);
+        log(`${stamp()} heartbeat ok (db latency ${latencyMs}ms)`);
     } catch (err) {
-        log(`${new Date().toISOString()} heartbeat failed: ${err.message}`);
+        log(`${stamp()} heartbeat failed: ${err.message}`);
+    }
+}
+
+/**
+ * Runs fn while holding a Postgres session-level advisory lock; if another session holds it, skips.
+ *
+ * @template T
+ * @param {import('pg').Pool} pool
+ * @param {number} lockKey
+ * @param {() => Promise<T>} fn
+ * @returns {Promise<{ skipped: true }|{ skipped: false, result: T }>}
+ */
+async function runExclusive(pool, lockKey, fn) {
+    const client = await pool.connect();
+    try {
+        const { rows } = await client.query('SELECT pg_try_advisory_lock($1) AS locked', [lockKey]);
+        if (!rows[0].locked) return { skipped: true };
+        try {
+            return { skipped: false, result: await fn() };
+        } finally {
+            await client.query('SELECT pg_advisory_unlock($1)', [lockKey]);
+        }
+    } finally {
+        client.release();
+    }
+}
+
+/** SYNC_INTERVAL_MINUTES: 1-1440, default 15. */
+function syncIntervalMinutes(env) {
+    if (env.SYNC_INTERVAL_MINUTES === undefined || env.SYNC_INTERVAL_MINUTES === '') return DEFAULT_SYNC_INTERVAL_MINUTES;
+    const value = Number(env.SYNC_INTERVAL_MINUTES);
+    if (!Number.isInteger(value) || value < 1 || value > 1440) throw new Error('SYNC_INTERVAL_MINUTES must be a whole number of minutes, 1-1440');
+    return value;
+}
+
+/** One deployment sync pass (FR-005), never overlapping another. Errors are logged, never thrown. */
+async function syncTick(pool, app, log = console.log, deps = { syncAll }) {
+    try {
+        const run = await runExclusive(pool, SYNC_LOCK, () => deps.syncAll({ pool, app, log: (m) => log(`${stamp()} ${m}`) }));
+        if (run.skipped) log(`${stamp()} sync skipped: another run holds the lock`);
+        else log(`${stamp()} sync done: ${run.result.repos} repos, +${run.result.inserted} deployments, ${run.result.failed} failed`);
+    } catch (err) {
+        log(`${stamp()} sync failed: ${err.message}`);
+    }
+}
+
+/** The daily retention cleanup, never overlapping another. Errors are logged, never thrown. */
+async function cleanupTick(pool, log = console.log, deps = { cleanupAll }) {
+    try {
+        const run = await runExclusive(pool, CLEANUP_LOCK, () => deps.cleanupAll(pool));
+        if (!run.skipped) log(`${stamp()} cleanup done: ${run.result} old deployment records deleted`);
+    } catch (err) {
+        log(`${stamp()} cleanup failed: ${err.message}`);
     }
 }
 
 if (require.main === module) {
+    const app = loadGitHubAppConfig(process.env);
+    const syncMinutes = syncIntervalMinutes(process.env);
     const pool = createPool();
-    const interval = setInterval(() => heartbeatTick(pool), HEARTBEAT_INTERVAL_MS);
+    const timers = [setInterval(() => heartbeatTick(pool), HEARTBEAT_INTERVAL_MS)];
     heartbeatTick(pool);
 
+    if (app) {
+        timers.push(setInterval(() => syncTick(pool, app), syncMinutes * 60_000));
+        syncTick(pool, app);
+    } else {
+        console.log(`${stamp()} GITHUB_APP_* not set: deployment sync is off`);
+    }
+    timers.push(setInterval(() => cleanupTick(pool), CLEANUP_INTERVAL_MS));
+    cleanupTick(pool);
+
     process.on('SIGTERM', () => {
-        clearInterval(interval);
+        timers.forEach(clearInterval);
         pool.end(() => process.exit(0));
     });
 }
 
-module.exports = { heartbeatTick };
+module.exports = { heartbeatTick, runExclusive, syncIntervalMinutes, syncTick, cleanupTick };
