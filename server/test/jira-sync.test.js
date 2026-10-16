@@ -71,18 +71,24 @@ const ATLASSIAN = { clientId: 'atl-client', clientSecret: 'atl-secret', encrypti
 const SITE_A = { id: 'cloud-a', url: 'https://acme.atlassian.net', name: 'acme', scopes: ['read:jira-work'] };
 const SITE_B = { id: 'cloud-b', url: 'https://acme-labs.atlassian.net', name: 'labs', scopes: ['read:jira-work'] };
 
-/** Site A: Sparks (scrum, 10), Rocket (scrum, 11), a kanban board (12); PI-27.3 is current on Sparks. */
+/**
+ * Site A: Sparks (scrum, 10), Rocket (scrum, 11), a kanban board (12), and two team-managed (`simple`) boards: Labs
+ * with sprints not named after a PI (13) and Ops with sprints turned off (14). PI-27.3 is current on Sparks.
+ */
 function siteData() {
     return {
         boards: [
             { id: 10, name: 'Sparks', type: 'scrum', location: { projectKey: 'ABC', projectName: 'eMobility Sparks' } },
             { id: 11, name: 'Rocket', type: 'scrum', location: { projectKey: 'ABC', projectName: 'eMobility Sparks' } },
-            { id: 12, name: 'Ops', type: 'kanban' },
+            { id: 12, name: 'Support', type: 'kanban' },
+            { id: 13, name: 'Labs board', type: 'simple', location: { projectKey: 'LAB', projectName: 'Labs' } },
+            { id: 14, name: 'Ops board', type: 'simple', location: { projectKey: 'OPS', projectName: 'Ops' } },
         ],
         sprints: {
             10: [sp(101, 'Sparks 27.2.3', 'closed', '2026-06-01', '2026-07-01'), sp(102, 'Sparks 27.3.1', 'closed', '2026-08-01', '2026-08-15'),
                 sp(103, 'Sparks 27.3.2', 'active', '2026-08-15', '2026-09-01'), sp(104, 'Sparks 27.4.1', 'future', '2026-11-01')],
             11: [sp(201, 'Rocket 27.3.1', 'active')],
+            13: [sp(301, 'Sprint 6', 'closed', '2026-09-01', '2026-09-15'), sp(302, 'Sprint 7', 'active', '2026-09-15', '2026-09-29')],
         },
         fields: [
             { id: 'customfield_10020', name: 'Sprint', schema: { custom: 'com.pyxis.greenhopper.jira:gh-sprint' } },
@@ -95,6 +101,7 @@ function siteData() {
             raw('ABC-4', 'Story', [{ id: 201, name: 'Rocket 27.3.1' }]),
             raw('ABC-5', 'Sub', [{ id: 103, name: 'Sparks 27.3.2' }]),
             raw('ABC-10', 'Epic'),
+            raw('LAB-1', 'Story', [{ id: 302, name: 'Sprint 7' }]),
         ],
     };
 }
@@ -121,17 +128,22 @@ async function setup(t, { sites = [SITE_A], pageSize = 50 } = {}) {
     return { pool, app, alice, tenantId, call, api, rows, jira, atlassian, fetch };
 }
 
-test('FR-008: admins see the site\'s Scrum boards and choose which to sync; only real boards of the site are accepted', async (t) => {
+test('FR-008: admins see every board of the site with its type and choose which to sync; kanban boards and unknown ids are refused', async (t) => {
     const { app, tenantId, call } = await setup(t, { pageSize: 1 });
     const boards = await call('GET', '/jira/boards');
     assert.strictEqual(boards.statusCode, 200, boards.body);
     assert.deepStrictEqual(boards.json().boards, [
-        { boardId: 10, name: 'Sparks', projectKey: 'ABC', projectName: 'eMobility Sparks', selected: false },
-        { boardId: 11, name: 'Rocket', projectKey: 'ABC', projectName: 'eMobility Sparks', selected: false },
-    ], 'kanban boards have no sprints, so no PI');
+        { boardId: 10, name: 'Sparks', type: 'scrum', projectKey: 'ABC', projectName: 'eMobility Sparks', selected: false },
+        { boardId: 11, name: 'Rocket', type: 'scrum', projectKey: 'ABC', projectName: 'eMobility Sparks', selected: false },
+        { boardId: 12, name: 'Support', type: 'kanban', projectKey: null, projectName: null, selected: false },
+        { boardId: 13, name: 'Labs board', type: 'simple', projectKey: 'LAB', projectName: 'Labs', selected: false },
+        { boardId: 14, name: 'Ops board', type: 'simple', projectKey: 'OPS', projectName: 'Ops', selected: false },
+    ], 'team-managed (simple) boards are listed too: filtering on type=scrum hid them');
 
     assert.strictEqual((await call('PUT', '/jira/boards', { boardIds: [10] })).statusCode, 200);
-    assert.deepStrictEqual((await call('GET', '/jira/boards')).json().boards.map((b) => [b.boardId, b.selected]), [[10, true], [11, false]]);
+    assert.deepStrictEqual((await call('GET', '/jira/boards')).json().boards.filter((b) => b.selected).map((b) => b.boardId), [10]);
+    const kanban = await call('PUT', '/jira/boards', { boardIds: [10, 12] });
+    assert.match(kanban.json().error, /kanban board: it has no sprints/);
     for (const [payload, code] of [[{ boardIds: [12] }, 400], [{ boardIds: [999] }, 400], [{ boardIds: ['10'] }, 400], [{ boardIds: [10, 10] }, 400], [{}, 400]]) {
         assert.strictEqual((await call('PUT', '/jira/boards', payload)).statusCode, code, JSON.stringify(payload));
     }
@@ -215,3 +227,14 @@ test('FR-009: the worker syncs every connected tenant; a failing one is recorded
 
     assert.strictEqual((await pool.query('SELECT * FROM jira_issues')).rows.length, 0, 'RLS: unscoped reads see nothing');
 });
+
+test('FR-009: a team-managed board with sprints syncs by sprint; one with sprints turned off adds nothing and fails nothing', async (t) => {
+    const { call, api } = await setup(t);
+    assert.strictEqual((await call('PUT', '/jira/boards', { boardIds: [13, 14] })).statusCode, 200);
+    const sync = await call('POST', '/jira/sync');
+    assert.strictEqual(sync.statusCode, 200, sync.body);
+    assert.deepStrictEqual(sync.json(), { boards: 2, issues: 1, currentPi: 'Sprint 7' }, 'sprints not named after a PI are their own increment; the previous one (Sprint 6) is empty');
+    assert.deepStrictEqual((await api('/jira-issues?pi=Sprint 7')).map((i) => [i.key, i.sprint]), [['LAB-1', 'Sprint 7']]);
+    assert.strictEqual((await call('GET', '/jira')).json().lastError, null);
+});
+

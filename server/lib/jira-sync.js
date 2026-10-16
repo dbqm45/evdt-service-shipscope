@@ -20,11 +20,11 @@ const EPIC_BATCH = 100;
 const ERROR_MAX_LENGTH = 300;
 
 /**
- * The site's Scrum boards, each marked selected or not. Admins only.
+ * The site's boards, each with its type and marked selected or not. Admins only.
  *
  * @param {import('pg').Pool} pool
  * @param {{ tenantId: string, actorUserId: string, atlassian: object, fetch?: typeof fetch }} input
- * @returns {Promise<Array<{ boardId: number, name: string, projectKey: string|null, projectName: string|null, selected: boolean }>>}
+ * @returns {Promise<Array<{ boardId: number, name: string, type: string|null, projectKey: string|null, projectName: string|null, selected: boolean }>>}
  */
 async function listBoards(pool, { tenantId, actorUserId, atlassian, fetch: fetchFn = fetch }) {
     const selected = await withScope(pool, { tenantId }, async (client) => {
@@ -37,20 +37,22 @@ async function listBoards(pool, { tenantId, actorUserId, atlassian, fetch: fetch
 }
 
 /**
- * Sets the boards to sync (replacing the selection). Each must be a Scrum board of the connected site. Issues of
- * boards no longer selected are removed. Admins only.
+ * Sets the boards to sync (replacing the selection). Each must be a board of the connected site, and not a kanban
+ * board (no sprints, so no PI). Issues of boards no longer selected are removed. Admins only.
  *
  * @param {import('pg').Pool} pool
  * @param {{ tenantId: string, actorUserId: string, boardIds: number[], atlassian: object, fetch?: typeof fetch }} input
  * @returns {Promise<Array<{ boardId: number, name: string, projectKey: string|null, projectName: string|null }>>} the selection
- * @throws {JiraBoardError} a board that isn't one of the site's Scrum boards
+ * @throws {JiraBoardError} a board that isn't on the site, or is a kanban board
  */
 async function setBoards(pool, { tenantId, actorUserId, boardIds, atlassian, fetch: fetchFn = fetch }) {
     await withScope(pool, { tenantId }, (client) => assertAdmin(client, { tenantId, userId: actorUserId }));
     const { accessToken, cloudId } = await accessTokenFor(pool, { tenantId, atlassian, fetch: fetchFn });
     const available = new Map((await fetchBoards({ accessToken, cloudId, fetch: fetchFn })).map((b) => [b.boardId, b]));
     const missing = boardIds.find((id) => !available.has(id));
-    if (missing !== undefined) throw new JiraBoardError(`Board ${missing} is not a Scrum board on the connected Jira site`);
+    if (missing !== undefined) throw new JiraBoardError(`Board ${missing} is not on the connected Jira site`);
+    const kanban = boardIds.find((id) => available.get(id).type === 'kanban');
+    if (kanban !== undefined) throw new JiraBoardError(`Board ${kanban} is a kanban board: it has no sprints, so no PI to sync`);
     const chosen = boardIds.map((id) => available.get(id));
     return withScope(pool, { tenantId }, async (client) => {
         await assertAdmin(client, { tenantId, userId: actorUserId });

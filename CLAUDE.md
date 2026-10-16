@@ -125,7 +125,7 @@ It deliberately does not port `scripts/lib/flag-ingest.js` (schemaVersion 1, the
 connected per tenant through Atlassian OAuth 2.0 (3LO) (FR-007, `lib/atlassian.js`, `lib/jira-connections.js`): only the
 refresh token is stored, AES-256-GCM-sealed with the tenant id as associated data (`lib/secret-box.js`, key
 `TOKEN_ENCRYPTION_KEY`); access tokens are minted per use under a row lock because Atlassian rotates refresh tokens. Issues (FR-008/FR-009,
-`lib/jira-sync.js`, pure rules in `lib/jira-model.js`) are scoped by the admin's chosen Scrum boards instead of the
+`lib/jira-sync.js`, pure rules in `lib/jira-model.js`) are scoped by the admin's chosen boards (company-managed `scrum` or team-managed `simple`, never kanban) instead of the
 file-based sync's name heuristics (Team field, labels, board-name prefixes): an issue's sprint is the one whose id is on
 the board being synced. The worker fully re-syncs each board's current PI every pass (plus its issues' Epics), a board's
 first sync also takes the previous PI, older PIs stay as snapshots; a sprint not named after a PI is its own increment. The dashboard is served by the Web Service at `/t/<tenantId>/` (an allowlist of
