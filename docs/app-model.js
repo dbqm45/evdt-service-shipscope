@@ -289,10 +289,6 @@ function compareVersionDesc(a, b){
 
 /* ---------- Rendering: Product / PI view ---------- */
 
-/** Groups a filtered issue list by Epic — Epic-type issues become pure group headers (never their own
- *  row, since an Epic never has a deployment of its own to show a status for), Story/Task/Bug group under
- *  their resolved `epicKey`. Anything with neither (no epicKey and not itself an Epic) falls into
- *  `ungrouped`, so nothing silently disappears. Group order follows first-encounter order in `issues`. */
 /** Work-item type display order for Product view — Bugs first (per the ideation session: a Bug sitting
  *  under an Epic is the one thing most likely to need attention, so it should never be buried below
  *  Stories/Tasks), then Story, then Task (the type product people care about least). `Epic` only matters
@@ -305,6 +301,10 @@ function typeSortRank(type){
     return idx === -1 ? WORK_ITEM_TYPE_ORDER.length : idx;
 }
 
+/** Groups a filtered issue list by Epic — Epic-type issues become pure group headers (never their own
+ *  row, since an Epic never has a deployment of its own to show a status for), Story/Task/Bug group under
+ *  their resolved `epicKey`. Anything with neither (no epicKey and not itself an Epic) falls into
+ *  `ungrouped`, so nothing silently disappears. Group order follows first-encounter order in `issues`. */
 function groupIssuesByEpic(issues){
     const groups = new Map();
     const order = [];
@@ -427,9 +427,8 @@ function epicHasOpenBug(children){
 
 /** The PI the team is presumed to be working in right now — resolved server-side by sync-jira.js (from a
  *  configured board's active sprint, falling back to the highest PI seen among synced non-Epic issues —
- *  see CLAUDE.md's Jira issues section) and shipped in `data/jira-issues/index.json`, since `state.jiraIssues`
- *  itself only ever holds one PI's worth of data now (whichever is currently selected — see
- *  `state.selectedPi`), not every PI, so there's nothing to scan client-side any more. */
+ *  see CLAUDE.md's Jira issues section) and shipped in `data/jira-issues/index.json`; `state.jiraIssues` holds
+ *  only the selected PI (`state.selectedPi`), so it can't be found client-side. */
 function currentPi(){
     return (state.jiraIndex && state.jiraIndex.currentPi) || null;
 }
@@ -479,9 +478,8 @@ function sprintsForSelectedPi(){
     return (entry && entry.sprints) || [];
 }
 
-/** Sprint name(s) covering *today* for the currently-loaded PI — the same "does today fall inside this
- *  sprint" question a now-removed cosmetic badge once asked, but used here to actually scope the view, and
- *  returning every match rather than collapsing to one (a board can legitimately have more than one sprint
+/** Sprint name(s) covering *today* for the currently-loaded PI, used to scope the view — every match
+ *  rather than collapsing to one (a board can legitimately have more than one sprint
  *  active). Only meaningful for the org's real current PI — a past PI the org has already moved on from
  *  has no "current sprint" of its own, by definition. Falls back to the most recently *started* sprint
  *  when none covers today (a gap between sprints) so switching into the current PI right after one sprint

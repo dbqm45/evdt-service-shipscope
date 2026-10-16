@@ -285,7 +285,7 @@ function EnvCardHeader({ env, icon, serviceCount, note }){
 }
 
 function FlagsNotTrackedIcon(){
-    return html`<span class="flags-not-tracked-icon" title="Feature flags for this component aren't tracked in the Flags panel below yet — check with the owning team directly.">${raw(ICONS.flag)}<span class="flags-not-tracked-mark">?</span></span>`;
+    return html`<span class="flags-not-tracked-icon" title="Feature flags for this component aren't tracked in the Flags panel below yet — check with the owning team directly.">${raw(ICONS.flag)}</span>`;
 }
 
 /** Avatar plus name block of a matrix row. `.comp-name` is the flex row: avatar on the left, then a plain

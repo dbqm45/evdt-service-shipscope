@@ -107,10 +107,11 @@ function jiraIssueUrl(key){
     const base = state && 'jiraBrowseUrl' in state ? state.jiraBrowseUrl : JIRA_BASE_URL;
     return base ? `${base}/${key}` : null;
 }
+
 let expandedIssue = null;
-let visibleIssueCount = 20;
 const collapsedEpics = new Set();
 const ISSUE_PAGE_SIZE = 20;
+let visibleIssueCount = ISSUE_PAGE_SIZE;
 
 function fmtDateShort(iso){
     return new Date(iso).toLocaleDateString('pl-PL',{day:'2-digit',month:'2-digit',year:'numeric'});
@@ -134,7 +135,7 @@ function dayHeadLabel(iso){
 
     yesterday.setDate(today.getDate() - 1);
 
-    const sameDay = (a, b) => a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+    const sameDay = (a, b) => dayKey(a) === dayKey(b);
     const weekday = d.toLocaleDateString('en-US', { weekday: 'long' });
     const dateStr = `${String(d.getDate()).padStart(2, '0')}.${String(d.getMonth() + 1).padStart(2, '0')}.${d.getFullYear()}`;
 

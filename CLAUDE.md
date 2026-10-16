@@ -1308,7 +1308,7 @@ surface on their own. Both use `ICONS.hourglass`/`ICONS.bug` (small inline SVGs,
 other icon in this app — see the `ICONS` object) rather than emoji, for the same reason every other badge
 here does: consistent rendering across platforms/fonts instead of depending on the OS's emoji glyphs.
 Both read the exact same `children` list `epicRollup()` already receives — scoped
-by date/sprint, not by the Type/Priority filters or `activeStatusTile` (those only narrow the issue list
+by date/sprint, not by the Type/Priority filters (those only narrow the issue list
 and `allIssues`, not this rollup) — so they stay consistent with whatever `epicRollup()` itself already
 shows for the same epic, by construction. The `FALLBACK` dataset's `EBO-99001`/`legacyMigrationEnabled`/deployment `d21` under
 `EVP-4288` exist specifically to exercise both badges together in the `file://` preview without a server.
@@ -1321,11 +1321,7 @@ combination" behavior every other filter pairing in this view already has, no sp
 it). It's an ordinary filter, not a scope control like Sprint/PI, so "Clear" resets it and a PI switch
 resets it too (via the same `btnClearFilters.click()` a PI switch already triggers for every other filter).
 
-A third tab, "Release Notes", lives in the same file and is fully enabled — `RELEASE_NOTES_ENABLED` is
-hardcoded `true` (the earlier `?releaseNotes=1` query-param soft-launch gate is gone), but the on/off
-*mechanism* itself (fully removing a tab from the DOM when its constant is `false`, in `initTabs()`/`init()`
-— a harder cut than `PRODUCT_VIEW_ENABLED`'s shown-but-disabled pattern) is kept in place deliberately, as a
-template for the next preview tab to copy. It re-derives everything from the same `state` the other two
+A third tab, "Release Notes" (`docs/app-release-notes.js`), is always on. It re-derives everything from the same `state` the other two
 tabs already read (no new data file, no new sync script): real, `isRealPi`-filtered
 Jira issues that have actually shipped (`issueIsReleasedToProd` — `released` or `deployed_code_only` on
 `prod` per `issueStatusForEnv`, i.e. genuinely visible to users, not merely deployed behind an off flag) are
@@ -1339,7 +1335,7 @@ least one released issue, and only its released issues are listed — unreleased
 PI/sprint are simply invisible here, not shown as "in progress", since this tab's whole point is "what's
 actually live," not a progress tracker. Because it depends entirely on real Jira data (`title`, `pi`,
 `sprint`), it renders nothing useful whenever `sync-jira.js` has fallen back to deployment-derived stubs
-(see "Jira issues" above) — the same underlying gap that already keeps `PRODUCT_VIEW_ENABLED` off.
+(see "Jira issues" above).
 
 Each listed item renders as two lines (`.release-note-main`), not one: the first line is the title plus a
 PROD status pill (`.release-note-title-wrap`, an inline-flex span so the two wrap together rather than the

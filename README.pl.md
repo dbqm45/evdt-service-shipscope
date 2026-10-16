@@ -30,15 +30,12 @@ Dwa widoki, oba czytające te same dane źródłowe:
 Zobacz [FAQ.pl.md](FAQ.pl.md) po szczegółowe wyjaśnienie, jak każda z tych liczb, badge'y i sprawdzeń jest
 liczona.
 
-### Release Notes (podgląd, domyślnie ukryty)
+### Release Notes
 
-Trzecia, eksperymentalna zakładka — grupuje te same issue z Jiry po **aplikacji** → PI → sprincie (a nie
-tylko po PI), z badge'em „Fully released to PROD” albo „In progress” per grupa. Grupowanie po aplikacji
-pochodzi z pola w `docs/components.json`, nie z Jiry, bo jeden wdrażany komponent może realnie obsługiwać
-więcej niż jedną aplikację (np. współdzielony BFF). Domyślnie jest wyłączona i pojawia się tylko, gdy strona
-zostanie wczytana z `?releaseNotes=1` w URL — to celowe, miękkie wdrożenie funkcji, nie granica uprawnień,
-na czas jej weryfikacji na realnych danych. Zobacz [FAQ.pl.md](FAQ.pl.md) po dokładny sposób liczenia tego
-rollupu.
+Trzecia zakładka wymienia zadania z Jiry już wydane na PROD, według PI → sprintu, z podziałem na funkcje i
+poprawki błędów, z filtrem „Service” według **aplikacji** (pole w `docs/components.json`, nie w Jirze, bo jeden
+wdrażany komponent może obsługiwać więcej niż jedną aplikację, np. współdzielony BFF). Zobacz
+[FAQ.pl.md](FAQ.pl.md), jak ustalane jest „wydane”.
 
 ## Jak to działa
 

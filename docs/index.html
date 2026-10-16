@@ -8,8 +8,8 @@
     <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="style.css">
 
-    <!-- Preload the JSON data app.js's loadData() fetches on startup, so the browser starts
-         downloading them during HTML parsing instead of waiting for app.js to load and run first.
+    <!-- Preload the JSON data loadData() (app-data.js) fetches on startup, so the browser starts
+         downloading them during HTML parsing instead of waiting for the scripts to load and run first.
          `as="fetch" crossorigin` is required for a preload to actually be reused by a later fetch()
          call (fetch()'s default request mode is "cors"); without it the browser fetches each file
          twice and logs an unused-preload warning. jira-issues/{pi}.json is deliberately not preloaded
@@ -242,7 +242,7 @@
 </div>
 
 <!-- Classic scripts, not ES modules: they share one global scope and still load over file:// (ES modules don't).
-     Order matters — together they are the former single app.js, split on line boundaries; app-main.js calls init() last. -->
+     Order matters: a later file may use what an earlier one defines at load time; app-main.js calls init() last. -->
 <script src="app-html.js"></script>
 <script src="app-core.js"></script>
 <script src="app-components.js"></script>

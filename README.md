@@ -29,14 +29,12 @@ Two views, both reading the same underlying data:
 See [FAQ.md](FAQ.md) for a detailed explanation of how each of these figures, badges, and checks is
 calculated.
 
-### Release Notes (preview, hidden by default)
+### Release Notes
 
-A third, experimental tab — grouping the same Jira issues by **application** → PI → sprint (rather than by
-PI alone), with a "Fully released to PROD" vs. "In progress" rollup per group. Application grouping comes
-from a `docs/components.json` field, not from Jira, since one deployable component can genuinely serve more
-than one application (e.g. a shared BFF). It's off by default and only appears when the page is loaded with
-`?releaseNotes=1` in the URL — a deliberate soft launch, not a permissions boundary, while it's still being
-validated against real data. See [FAQ.md](FAQ.md) for exactly how the rollup is computed.
+A third tab lists the Jira issues already released to PROD, by PI → sprint, split into features and bug fixes,
+with a Service filter by **application** (a `docs/components.json` field, not Jira, since one deployable
+component can serve more than one application, e.g. a shared BFF). See [FAQ.md](FAQ.md) for how "released" is
+decided.
 
 ## How it works
 

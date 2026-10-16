@@ -344,7 +344,7 @@ test('priorityReleaseStatusBreakdown skips stub PIs and missing priorities, rank
     });
     const rows = ev('priorityReleaseStatusBreakdown()');
 
-    assert.deepEqual(rows.map(r => r.priority), ['Blocker', 'Minor', 'Zeta']);
+    assert.deepEqual(rows.map(r => r.label), ['Blocker', 'Minor', 'Zeta']);
     assert.equal(rows[0].total, 2);
     assert.equal(rows[1].counts.released, 1);
 });
