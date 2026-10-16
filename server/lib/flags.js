@@ -1,6 +1,6 @@
 const crypto = require('crypto');
 const { withScope, setScope } = require('./scope');
-const { assertAdmin } = require('./tenants');
+const { assertAdmin, roleOf, TenantNotFoundError } = require('./tenants');
 
 /**
  * Feature flags pushed from outside (migration 008, contract schemaVersion 2 -- server/README.md). A tenant names
@@ -326,6 +326,79 @@ async function ingestFlags(pool, { token, payload, now = new Date() }) {
     });
 }
 
+/** flag key -> issue keys whose Jira issue names that flag (jira_issues.data.featureFlags, migration 014). */
+async function jiraLinks(client, tenantId) {
+    const { rows } = await client.query(
+        `SELECT DISTINCT f AS flag, key FROM jira_issues, jsonb_array_elements_text(COALESCE(data->'featureFlags', '[]')) AS f
+         WHERE tenant_id = $1 ORDER BY key`,
+        [tenantId]
+    );
+    const links = new Map();
+    for (const r of rows) {
+        if (!links.has(r.flag)) links.set(r.flag, []);
+        links.get(r.flag).push(r.key);
+    }
+    return links;
+}
+
+class FlagNotFoundError extends Error {}
+
+/**
+ * The tenant's flags for the settings page: every flag some source still reports, with its description and its
+ * Jira links by origin (the sender's, set by hand in ShipScope, named in Jira itself), and its effective state per
+ * environment (the dashboard's: per slot, the highest-priority source). Members.
+ *
+ * @param {import('pg').Pool} pool
+ * @param {{ tenantId: string, actorUserId: string }} input
+ * @returns {Promise<Array<{ key: string, description: string, senderDescription: string|null, manualDescription: string|null, links: { sender: string[], manual: string[], jira: string[] }, states: object, components: string[] }>>}
+ * @throws {TenantNotFoundError}
+ */
+async function listFlags(pool, { tenantId, actorUserId }) {
+    return withScope(pool, { tenantId }, async (client) => {
+        if (!(await roleOf(client, { tenantId, userId: actorUserId }))) throw new TenantNotFoundError('Tenant not found');
+        const { rows: repos } = await client.query('SELECT repo_id, full_name FROM tracked_repos WHERE tenant_id = $1', [tenantId]);
+        const names = new Map(repos.map((r) => [Number(r.repo_id), r.full_name.split('/').pop()]));
+        const { flagsMeta, flagStates } = await readDashboardFlags(client, { tenantId, componentOf: (id) => names.get(id) });
+        const { rows } = await client.query(
+            'SELECT key, description, jira_keys, manual_description, manual_jira_keys FROM flags WHERE tenant_id = $1 ORDER BY key',
+            [tenantId]
+        );
+        const fromJira = await jiraLinks(client, tenantId);
+        return rows.filter((r) => flagsMeta[r.key]).map((r) => ({
+            key: r.key,
+            description: flagsMeta[r.key].description,
+            senderDescription: r.description,
+            manualDescription: r.manual_description,
+            links: { sender: r.jira_keys, manual: r.manual_jira_keys, jira: fromJira.get(r.key) || [] },
+            states: flagStates[r.key] || {},
+            components: flagsMeta[r.key].components,
+        }));
+    });
+}
+
+/**
+ * What an admin sets on a flag in ShipScope: a description that wins over the sender's (null: the sender's again)
+ * and Jira issues linked by hand. A sender's next message never overwrites these. Admins only.
+ *
+ * @param {import('pg').Pool} pool
+ * @param {{ tenantId: string, actorUserId: string, key: string, description: string|null, jiraKeys: string[] }} input
+ * @returns {Promise<{ key: string, manualDescription: string|null, manualJiraKeys: string[] }>}
+ * @throws {TenantNotFoundError|ForbiddenError|FlagNotFoundError}
+ */
+async function setFlagDetails(pool, { tenantId, actorUserId, key, description, jiraKeys }) {
+    return withScope(pool, { tenantId }, async (client) => {
+        await assertAdmin(client, { tenantId, userId: actorUserId });
+        const text = description === null ? null : description.trim() || null;
+        const keys = [...new Set(jiraKeys)].sort();
+        const { rowCount } = await client.query(
+            'UPDATE flags SET manual_description = $3, manual_jira_keys = $4 WHERE tenant_id = $1 AND key = $2',
+            [tenantId, key, text, keys]
+        );
+        if (!rowCount) throw new FlagNotFoundError(`No flag ${key}`);
+        return { key, manualDescription: text, manualJiraKeys: keys };
+    });
+}
+
 /**
  * The tenant's flags in the dashboard's data/*.json shapes (flags-meta.json, flag-states.json,
  * flag-state-history.json). Sources of one kind fold into that kind's slot (`build`, or `runtime-be` for runtime
@@ -342,7 +415,11 @@ async function readDashboardFlags(client, { tenantId, componentOf }) {
         name: s.name, slot: s.kind === 'runtime' ? 'runtime-be' : 'build', priority: s.priority,
         component: s.repo_id === null ? null : componentOf(Number(s.repo_id)) || null,
     }]));
-    const { rows: flags } = await client.query('SELECT key, description, jira_keys, created_at FROM flags WHERE tenant_id = $1', [tenantId]);
+    const { rows: flags } = await client.query(
+        'SELECT key, description, jira_keys, manual_description, manual_jira_keys, created_at FROM flags WHERE tenant_id = $1',
+        [tenantId]
+    );
+    const fromJira = await jiraLinks(client, tenantId);
     const { rows: values } = await client.query(
         'SELECT source_id, key, environment, state, rollout, changed_at, changed_by FROM flag_values WHERE tenant_id = $1 AND removed_at IS NULL',
         [tenantId]
@@ -384,9 +461,9 @@ async function readDashboardFlags(client, { tenantId, componentOf }) {
     // A flag no source reports any more (removed everywhere, or its sources deleted) is not shown.
     for (const f of flags.filter((row) => slotsOf.has(row.key))) {
         flagsMeta[f.key] = {
-            description: f.description || '',
+            description: f.manual_description || f.description || '',
             source: slotsOf.get(f.key).has('runtime-be') ? 'runtime-be' : 'build',
-            jiraKeys: f.jira_keys,
+            jiraKeys: [...new Set([...f.jira_keys, ...f.manual_jira_keys, ...(fromJira.get(f.key) || [])])].sort(),
             components: [...componentsOf.get(f.key)].sort(),
             createdAt: f.created_at.toISOString(),
         };
@@ -402,6 +479,9 @@ async function readDashboardFlags(client, { tenantId, componentOf }) {
 }
 
 module.exports = {
+    FlagNotFoundError,
+    listFlags,
+    setFlagDetails,
     TOKEN_PATTERN,
     IngestTokenError,
     IngestPayloadError,

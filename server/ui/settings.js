@@ -52,7 +52,7 @@ async function api(method, path, body){
 /** Page state: what each section was last loaded with, plus one-time values (a new link or token) to show once. */
 const settingsState = {
     tenantId: SETTINGS_TENANT_ID, me: null, tenant: null, features: { githubApp: false, jira: false },
-    workspace: null, github: null, installationRepos: {}, jira: null, boards: null, flags: null,
+    workspace: null, github: null, installationRepos: {}, jira: null, boards: null, flagFields: null, flags: null, flagList: null,
     once: {}, messages: {},
 };
 
@@ -222,8 +222,33 @@ function webhookLine(webhooks, webhook){
     return html`<p class="settings-hint"><span class="state-tag warn">instant updates off</span> ${webhook.error || 'Turned on with the next sync of the selected boards.'}</p>`;
 }
 
-/** @param {{ enabled: boolean, webhooks: boolean, jira: object|null, boards: object[]|null|{ error: string }, admin: boolean }} props */
-function renderJira({ enabled, webhooks, jira, boards, admin }){
+/** How the tenant's Jira issues name their feature flags: not at all, labels with a prefix, or a field. */
+function FlagLinkForm(flagLink, fields){
+    const type = flagLink ? flagLink.type : 'none';
+    const option = (value, label) => html`<option value="${value}" ${value === type ? raw('selected') : ''}>${label}</option>`;
+    let fieldSelect = html`<select name="id" ${type === 'field' ? '' : raw('disabled')}><option value="">Loading fields…</option></select>`;
+    if (fields && fields.error) {
+        fieldSelect = html`<span class="settings-error">${fields.error}</span>`;
+    } else if (Array.isArray(fields)) {
+        const selected = flagLink && flagLink.type === 'field' ? flagLink.id : '';
+        fieldSelect = fields.length
+            ? html`<select name="id" ${type === 'field' ? '' : raw('disabled')}>${fields.map((f) => html`<option value="${f.id}" ${f.id === selected ? raw('selected') : ''}>${f.name} (${f.type})</option>`)}</select>`
+            : html`<span class="settings-hint">No text, labels or select field yet — a Jira admin can add one (e.g. "Feature flag").</span>`;
+    }
+    return html`<h3>Feature flags in Jira</h3>
+        <p class="settings-hint">How your issues name the feature flags their work ships behind. ShipScope reads it with every sync, and the
+        dashboard links each flag to those issues. A field is clearest for people working in Jira (a Jira admin adds it once, e.g. a
+        "Feature flag" text or labels field, and puts it on the issue screens); labels need no admin (e.g. <span class="mono">flag:newCheckout</span>).</p>
+        <form class="settings-form" data-action="save-flag-link">
+            <label>Issues name flags <select name="type" data-action-change="flag-link-type">${option('none', 'Not at all')}${option('label', 'In labels with a prefix')}${option('field', 'In a field')}</select></label>
+            <label>Label prefix <input name="prefix" maxlength="30" value="${flagLink && flagLink.type === 'label' ? flagLink.prefix : 'flag:'}" ${type === 'label' ? '' : raw('disabled')}></label>
+            <label>Field ${fieldSelect}</label>
+            <button type="submit" class="btn">Save</button>
+        </form>`;
+}
+
+/** @param {{ enabled: boolean, webhooks: boolean, jira: object|null, boards: object[]|null|{ error: string }, admin: boolean, flagFields?: object[]|null|{ error: string } }} props */
+function renderJira({ enabled, webhooks, jira, boards, admin, flagFields = null }){
     const section = (body, hint) => Section({ id: 'jira', title: 'Jira', hint, body });
     if (!enabled) {
         return section(html`<p class="settings-hint">Jira is not configured on this server (ATLASSIAN_* variables and TOKEN_ENCRYPTION_KEY).</p>`);
@@ -255,7 +280,8 @@ function renderJira({ enabled, webhooks, jira, boards, admin }){
                 <p class="settings-hint">Tick the boards to sync — each is one team. Saving the selection keeps the rhythm of boards that stay selected.</p>
                 <table class="settings-table"><tbody>${boards.map((b) => BoardRow(b, admin))}</tbody></table>
                 <form id="jiraBoardSelection" class="settings-actions" data-action="save-boards"><button type="submit" class="btn btn-primary">Save selection</button>
-                <button type="button" class="btn" data-action="sync-jira">Sync now</button></form>`;
+                <button type="button" class="btn" data-action="sync-jira">Sync now</button></form>
+                ${FlagLinkForm(jira.flagLink || null, flagFields)}`;
         }
     }
     return section(html`${status}${site}${boardBlock}
@@ -263,21 +289,12 @@ function renderJira({ enabled, webhooks, jira, boards, admin }){
 }
 
 /** @param {{ flags: object[]|null|{ error: string }, repos: object[], admin: boolean, once: object, origin: string }} props */
-function renderFlags({ flags, repos, admin, once, origin }){
-    const section = (body) => Section({
-        id: 'flags',
-        title: 'Feature flags',
-        hint: 'ShipScope never reads your flags: each source (a build step, a flag service, a cron job) sends their full state to the ingest URL with its own token.',
-        body,
-    });
-    if (!admin) {
-        return section(html`<p class="settings-hint">Only admins manage flag sources.</p>`);
-    }
+function renderSources({ flags, repos, once, origin }){
     if (flags === null) {
-        return section(html`<p class="settings-loading">Loading…</p>`);
+        return html`<p class="settings-loading">Loading…</p>`;
     }
     if (flags.error) {
-        return section(html`<p class="settings-error">${flags.error}</p>`);
+        return html`<p class="settings-error">${flags.error}</p>`;
     }
     const repoOptions = (selected) => html`<option value="">— any component —</option>${repos.map((r) => html`<option value="${r.repoId}" ${r.repoId === selected ? raw('selected') : ''}>${r.fullName}</option>`)}`;
     const kindOptions = (selected) => ['build', 'runtime'].map((k) => html`<option value="${k}" ${k === selected ? raw('selected') : ''}>${k}</option>`);
@@ -293,7 +310,8 @@ function renderFlags({ flags, repos, admin, once, origin }){
             <button type="button" class="btn-link btn" data-action="revoke-token" data-token-id="${t.id}">revoke</button></span>`) : 'none — the source can\'t send anything'}</div>
         </td><td class="actions"><button type="button" class="btn" data-action="new-token" data-source-id="${s.id}">New token</button>
         <button type="button" class="btn btn-danger" data-action="delete-source" data-source-id="${s.id}">Delete</button></td></tr>`);
-    return section(html`${once.token ? SecretBox({
+    return html`<p class="settings-hint">ShipScope never reads your flags: each source (a build step, a flag service, a cron job)
+        sends their full state to the ingest URL with its own token.</p>${once.token ? SecretBox({
         label: 'Ingest token — shown only once',
         value: once.token,
         note: `The source sends POST ${origin}/api/flags/ingest with the header "Authorization: Bearer <token>".`,
@@ -306,16 +324,65 @@ function renderFlags({ flags, repos, admin, once, origin }){
             <label>Priority (optional) <input name="priority" type="number" min="0" max="1000"></label>
             <label>Component <select name="repoId">${repoOptions(null)}</select></label>
             <button type="submit" class="btn btn-primary">Add source</button>
-        </form>`);
+        </form>`;
 }
+
+const ENVS = ['test', 'qa', 'prod'];
+const LINK_ORIGINS = [['sender', 'from its source'], ['jira', 'from Jira'], ['manual', 'set here']];
+
+/** One flag: state per environment, description, Jira links by origin; for admins the hand-set fields. */
+function FlagRow(flag, { admin, jiraUrl }){
+    const stateTag = (env) => {
+        const slots = flag.states[env] || {};
+        const v = slots['runtime-be'] || slots.build;
+        if (!v) {
+            return html`<span class="state-tag">${env}: —</span>`;
+        }
+        const label = v.state === 'partial' && v.rollout !== null ? `partial ${v.rollout}%` : v.state;
+        return html`<span class="state-tag ${v.state === 'on' ? 'ok' : v.state === 'partial' ? 'warn' : ''}" title="${v.sourceName || ''}">${env}: ${label}</span>`;
+    };
+    const issue = (key) => (jiraUrl ? html`<a href="${jiraUrl}/browse/${key}" target="_blank" rel="noopener">${key}</a>` : html`${key}`);
+    const links = LINK_ORIGINS.filter(([origin]) => flag.links[origin].length)
+        .map(([origin, label]) => html`<span>${flag.links[origin].map((k, i) => html`${i ? ', ' : ''}${issue(k)}`)} <span class="settings-row-meta">(${label})</span></span>`);
+    const edit = admin ? html`<form class="settings-form" data-action="save-flag" data-key="${flag.key}">
+            <label>Description (shown instead of the source's) <input name="description" maxlength="500" value="${flag.manualDescription || ''}" placeholder="${flag.senderDescription || ''}"></label>
+            <label>Jira issues linked here <input name="jiraKeys" value="${flag.links.manual.join(', ')}" placeholder="e.g. ABC-12, ABC-15"></label>
+            <button type="submit" class="btn">Save</button></form>` : '';
+    return html`<tr><td><strong class="mono">${flag.key}</strong> ${ENVS.map(stateTag)}
+        <div>${flag.description || html`<span class="settings-hint">No description</span>`}</div>
+        <div class="settings-row-meta">Jira: ${links.length ? links.map((l, i) => html`${i ? ' · ' : ''}${l}`) : 'not linked'}</div>
+        ${edit}</td></tr>`;
+}
+
+/** @param {{ flagList: object[]|null|{ error: string }, sources: object[]|null|{ error: string }, repos: object[], admin: boolean, once: object, origin: string, jiraUrl?: string|null }} props */
+function renderFlags({ flagList, sources, repos, admin, once, origin, jiraUrl = null }){
+    let list = html`<p class="settings-loading">Loading…</p>`;
+    if (flagList && flagList.error) {
+        list = html`<p class="settings-error">${flagList.error}</p>`;
+    } else if (Array.isArray(flagList)) {
+        list = flagList.length
+            ? html`<table class="settings-table"><tbody>${flagList.map((f) => FlagRow(f, { admin, jiraUrl }))}</tbody></table>`
+            : html`<p class="settings-hint">No flags yet: a flag shows up once a source sends it.</p>`;
+    }
+    return Section({
+        id: 'flags',
+        title: 'Feature flags',
+        hint: 'Each flag can be linked to Jira issues three ways, all shown on the dashboard: by its source, by your Jira issues themselves (see Jira → Feature flags in Jira), or here by hand.',
+        body: html`<h3>Flags</h3>${list}<h3>Sources</h3>${admin ? renderSources({ flags: sources, repos, once, origin }) : html`<p class="settings-hint">Only admins manage flag sources.</p>`}`,
+    });
+}
+
 
 function renderSettings(){
     const s = settingsState;
     const admin = isAdmin();
     return html`${renderWorkspace({ workspace: s.workspace, admin, meId: s.me && s.me.user.id, once: s.once, tenantName: s.tenant && s.tenant.name })}
         ${renderGitHub({ enabled: s.features.githubApp, webhooks: s.features.githubWebhooks, github: s.github, installationRepos: s.installationRepos, admin })}
-        ${renderJira({ enabled: s.features.jira, webhooks: s.features.jiraWebhooks, jira: s.jira, boards: s.boards, admin })}
-        ${renderFlags({ flags: s.flags, repos: (s.github && s.github.repos) || [], admin, once: s.once, origin: location.origin })}`;
+        ${renderJira({ enabled: s.features.jira, webhooks: s.features.jiraWebhooks, jira: s.jira, boards: s.boards, admin, flagFields: s.flagFields })}
+        ${renderFlags({
+        flagList: s.flagList, sources: s.flags, repos: (s.github && s.github.repos) || [], admin, once: s.once, origin: location.origin,
+        jiraUrl: s.jira && s.jira.site ? s.jira.site.url : null,
+    })}`;
 }
 
 function rerender(){
@@ -349,13 +416,19 @@ const loaders = {
         settingsState.boards = null;
         if (isAdmin() && settingsState.jira.connected && settingsState.jira.site) {
             rerender();
-            settingsState.boards = await api('GET', tenantPath('/jira/boards')).then((r) => r.boards, (err) => ({ error: err.message }));
+            [settingsState.boards, settingsState.flagFields] = await Promise.all([
+                api('GET', tenantPath('/jira/boards')).then((r) => r.boards, (err) => ({ error: err.message })),
+                api('GET', tenantPath('/jira/flag-fields')).then((r) => r.fields, (err) => ({ error: err.message })),
+            ]);
         }
     },
     async flags(){
-        if (isAdmin()) {
-            settingsState.flags = await api('GET', tenantPath('/flag-sources')).then((r) => r.sources, (err) => ({ error: err.message }));
-        }
+        const [list, sources] = await Promise.all([
+            api('GET', tenantPath('/flags')).then((r) => r.flags, (err) => ({ error: err.message })),
+            isAdmin() ? api('GET', tenantPath('/flag-sources')).then((r) => r.sources, (err) => ({ error: err.message })) : Promise.resolve(null),
+        ]);
+        settingsState.flagList = list;
+        settingsState.flags = sources;
     },
 };
 
@@ -485,8 +558,23 @@ const actions = {
         });
         return { section: 'jira', ok: 'Rhythm saved; the board is synced again from scratch with the next sync.' };
     },
+    'save-flag-link': async (form) => {
+        const values = formValues(form);
+        const body = values.type === 'label' ? { type: 'label', prefix: values.prefix.trim() }
+            : values.type === 'field' ? { type: 'field', id: values.id } : { type: 'none' };
+        await api('PUT', tenantPath('/jira/flag-link'), body);
+        return { section: 'jira', ok: 'Saved; issues are read this way from the next sync ("Sync now" to apply it right away).' };
+    },
+    'save-flag': async (form, data) => {
+        const values = formValues(form);
+        const jiraKeys = [...new Set(values.jiraKeys.split(/[\s,;]+/).map((k) => k.trim().toUpperCase()).filter(Boolean))];
+        await api('PUT', tenantPath(`/flags/${encodeURIComponent(data.key)}`), { description: values.description.trim() || null, jiraKeys });
+        return { section: 'flags', ok: `Saved ${data.key}.` };
+    },
     'sync-jira': async () => {
         const result = await api('POST', tenantPath('/jira/sync'));
+        // Links named in Jira come with the sync: the flag list shows them right away.
+        await loaders.flags().catch(() => {});
         return { section: 'jira', ok: `Synced ${result.boards} board(s), ${result.issues} issue(s); now: ${result.currentPi || 'nothing current'}.` };
     },
     'disconnect-jira': async () => {
@@ -589,6 +677,14 @@ function wireEvents(root){
     });
     // The PI naming only applies to the PI and auto rhythms.
     root.addEventListener('change', (event) => {
+        if (event.target.matches('select[data-action-change="flag-link-type"]')) {
+            const elements = event.target.form.elements;
+            elements.namedItem('prefix').disabled = event.target.value !== 'label';
+            const field = elements.namedItem('id');
+            if (field) {
+                field.disabled = event.target.value !== 'field';
+            }
+        }
         if (event.target.matches('select[data-action-change="rhythm-changed"]')) {
             const input = event.target.form.elements.namedItem('piTemplate');
             input.disabled = !['pi', 'auto'].includes(event.target.value);
@@ -625,7 +721,7 @@ async function initSettings(){
 }
 
 if (typeof module !== 'undefined') {
-    module.exports = { renderWorkspace, renderGitHub, renderJira, renderFlags, formValues, actions, settingsState, runAction, load, api, ApiError };
+    module.exports = { renderWorkspace, renderGitHub, renderJira, renderFlags, FlagRow, formValues, actions, settingsState, runAction, load, api, ApiError };
 } else if (SETTINGS_TENANT_ID) {
     initSettings();
 }

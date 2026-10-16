@@ -131,13 +131,40 @@ test('settings page: the Jira section -- connect, choose a site, pick boards and
     assert.match(member, /Connected to <strong>acme<\/strong>/);
 });
 
-test('settings page: the flag sources section -- sources, their tokens, a new token shown once', () => {
+test('settings page: the flags section -- each flag with its state and Jira links by origin; sources for admins', () => {
     const repos = [{ repoId: 101, fullName: 'acme/web' }];
-    assert.match(str(ui.renderFlags({ flags: [], repos, admin: false, once: {}, origin: 'https://s' })), /Only admins manage flag sources/);
-    assert.match(str(ui.renderFlags({ flags: null, repos, admin: true, once: {}, origin: 'https://s' })), /Loading/);
-    const flags = [{ id: 's1', name: 'LaunchDarkly', kind: 'runtime', priority: 100, repoId: 101, tokens: [{ id: 't1', createdAt: '2026-10-01T10:00:00Z', lastUsedAt: null }] },
+    const flagList = [{
+        key: 'newCheckout', description: 'New checkout', senderDescription: 'from LD', manualDescription: 'New checkout',
+        links: { sender: ['ABC-1'], manual: ['ABC-3'], jira: ['ABC-2'] },
+        states: { prod: { 'runtime-be': { state: 'partial', rollout: 25, sourceName: 'LD' } }, test: { build: { state: 'on', rollout: null, sourceName: 'CI' } } },
+        components: ['web'],
+    }, { key: 'x"y', description: '', senderDescription: null, manualDescription: null, links: { sender: [], manual: [], jira: [] }, states: {}, components: [] }];
+    const member = str(ui.renderFlags({ flagList, sources: null, repos, admin: false, once: {}, origin: 'https://s', jiraUrl: 'https://acme.atlassian.net' }));
+    assert.match(member, /Only admins manage flag sources/);
+    assert.match(member, /<strong class="mono">newCheckout<\/strong>/);
+    assert.match(member, /state-tag warn" title="LD">prod: partial 25%/);
+    assert.match(member, /state-tag ok" title="CI">test: on/);
+    assert.match(member, /qa: —/);
+    assert.match(member, /href="https:\/\/acme\.atlassian\.net\/browse\/ABC-1"[^>]*>ABC-1<\/a> <span class="settings-row-meta">\(from its source\)/);
+    assert.match(member, />ABC-2<\/a> <span class="settings-row-meta">\(from Jira\)/);
+    assert.match(member, />ABC-3<\/a> <span class="settings-row-meta">\(set here\)/);
+    assert.match(member, /Jira: not linked/);
+    assert.match(member, /x&quot;y/, 'a flag key is escaped');
+    assert.ok(!/data-action="save-flag"/.test(member), 'members read only');
+
+    const admin = str(ui.renderFlags({ flagList, sources: [], repos, admin: true, once: {}, origin: 'https://s' }));
+    assert.match(admin, /data-action="save-flag" data-key="newCheckout"/);
+    assert.match(admin, /name="description" maxlength="500" value="New checkout" placeholder="from LD"/);
+    assert.match(admin, /name="jiraKeys" value="ABC-3"/);
+    assert.match(admin, /ABC-1 <span/, 'without a Jira site URL, keys are plain text');
+    assert.match(admin, /No flag source yet/);
+    assert.match(str(ui.renderFlags({ flagList: [], sources: [], repos, admin: true, once: {}, origin: 'https://s' })), /No flags yet/);
+    assert.match(str(ui.renderFlags({ flagList: { error: 'boom' }, sources: [], repos, admin: true, once: {}, origin: 'https://s' })), /settings-error">boom/);
+
+    assert.match(str(ui.renderFlags({ flagList: [], sources: null, repos, admin: true, once: {}, origin: 'https://s' })), /Sources<\/h3><p class="settings-loading">Loading/);
+    const sources = [{ id: 's1', name: 'LaunchDarkly', kind: 'runtime', priority: 100, repoId: 101, tokens: [{ id: 't1', createdAt: '2026-10-01T10:00:00Z', lastUsedAt: null }] },
         { id: 's2', name: 'Build "files"', kind: 'build', priority: 0, repoId: null, tokens: [] }];
-    const out = str(ui.renderFlags({ flags, repos, admin: true, once: { token: 'sst_secret' }, origin: 'https://s' }));
+    const out = str(ui.renderFlags({ flagList: [], sources, repos, admin: true, once: { token: 'sst_secret' }, origin: 'https://s' }));
     assert.match(out, /<code>sst_secret<\/code>/);
     assert.match(out, /POST https:\/\/s\/api\/flags\/ingest/);
     assert.match(out, /data-source-id="s1"[\s\S]*?<option value="runtime" selected>runtime[\s\S]*?<option value="101" selected>acme\/web/);
@@ -145,6 +172,27 @@ test('settings page: the flag sources section -- sources, their tokens, a new to
     assert.match(out, /data-action="revoke-token" data-token-id="t1"/);
     assert.match(out, /none — the source can&#39;t send anything/);
     assert.match(out, /data-action="create-source"/);
+    assert.match(str(ui.renderFlags({ flagList: [], sources: { error: 'nope' }, repos, admin: true, once: {}, origin: 'https://s' })), /settings-error">nope/);
+});
+
+test('settings page: the Jira section offers the flag convention -- none, prefixed labels, or a field', () => {
+    const jira = { connected: true, site: { cloudId: 'c1', name: 'acme', url: 'https://acme.atlassian.net' }, lastError: null, flagLink: null };
+    const fields = [{ id: 'customfield_10050', name: 'Feature flag', type: 'text' }, { id: 'customfield_10051', name: 'Flags <x>', type: 'labels' }];
+    const none = str(ui.renderJira({ enabled: true, jira, boards: [], admin: true, flagFields: fields }));
+    assert.match(none, /data-action="save-flag-link"/);
+    assert.match(none, /<option value="none" selected>Not at all/);
+    assert.match(none, /name="prefix" maxlength="30" value="flag:" disabled/);
+    assert.match(none, /<select name="id" disabled><option value="customfield_10050" >Feature flag \(text\)/);
+    assert.match(none, /Flags &lt;x&gt; \(labels\)/);
+    const byField = str(ui.renderJira({ enabled: true, jira: { ...jira, flagLink: { type: 'field', id: 'customfield_10051', name: 'Flags' } }, boards: [], admin: true, flagFields: fields }));
+    assert.match(byField, /<option value="field" selected>/);
+    assert.match(byField, /<select name="id" ><option value="customfield_10050" >[\s\S]*<option value="customfield_10051" selected>/);
+    const byLabel = str(ui.renderJira({ enabled: true, jira: { ...jira, flagLink: { type: 'label', prefix: 'ff-' } }, boards: [], admin: true, flagFields: [] }));
+    assert.match(byLabel, /name="prefix" maxlength="30" value="ff-" >/);
+    assert.match(byLabel, /No text, labels or select field yet/);
+    assert.match(str(ui.renderJira({ enabled: true, jira, boards: [], admin: true, flagFields: null })), /Loading fields/);
+    assert.match(str(ui.renderJira({ enabled: true, jira, boards: [], admin: true, flagFields: { error: 'Jira request failed' } })), /settings-error">Jira request failed/);
+    assert.ok(!/save-flag-link/.test(str(ui.renderJira({ enabled: true, jira, boards: null, admin: false }))), 'members don\'t');
 });
 
 test('settings page: form values, including a group of checkboxes', () => {
@@ -217,6 +265,20 @@ test('settings page: actions send what the API expects, then reload their sectio
     assert.strictEqual(global.location.assigned, '/');
     delete global.location;
     delete global.confirm;
+
+    calls.length = 0;
+    await ui.runAction('save-flag-link', form([['type', 'label'], ['prefix', ' flag: '], ['id', 'customfield_1']]));
+    await ui.runAction('save-flag-link', form([['type', 'field'], ['prefix', 'flag:'], ['id', 'customfield_10050']]));
+    await ui.runAction('save-flag-link', form([['type', 'none'], ['prefix', 'flag:']]));
+    assert.deepStrictEqual(calls.filter((c) => c.method === 'PUT').map((c) => [c.url, c.body]), [
+        [`${base}/jira/flag-link`, { type: 'label', prefix: 'flag:' }],
+        [`${base}/jira/flag-link`, { type: 'field', id: 'customfield_10050' }],
+        [`${base}/jira/flag-link`, { type: 'none' }],
+    ], 'only what the chosen convention needs');
+    calls.length = 0;
+    await ui.runAction('save-flag', form([['description', '  '], ['jiraKeys', 'abc-1, ABC-2;abc-1  ']], { key: 'new.Checkout' }, 'flags'));
+    assert.deepStrictEqual(calls[0], { method: 'PUT', url: `${base}/flags/new.Checkout`, body: { description: null, jiraKeys: ['ABC-1', 'ABC-2'] } });
+    assert.deepStrictEqual(ui.settingsState.messages.flags, { error: false, text: 'Saved new.Checkout.' });
 
     await ui.runAction('create-invitation', form([['role', 'admin']], {}, 'workspace'));
     assert.deepStrictEqual(ui.settingsState.once, { inviteUrl: 'https://s/invitations/tok' });

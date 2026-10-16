@@ -48,7 +48,8 @@ async function saveConnection(pool, { tenantId, actorUserId, refreshToken, scope
  * @param {import('pg').Pool} pool
  * @param {{ tenantId: string, actorUserId: string }} input
  * @returns {Promise<{ connected: false }|{ connected: true, site: { cloudId: string, url: string, name: string }|null, sites?: object[], connectedAt: Date, lastError: string|null, currentPi: string|null, lastSyncedAt: Date|null, webhook: { active: boolean, expiresAt: Date|null, error: string|null } }>}
- *   webhook.active: Jira tells ShipScope about issue changes right away (else only the periodic sync)
+ *   webhook.active: Jira tells ShipScope about issue changes right away (else only the periodic sync); flagLink: how
+ *   issues name their feature flags (lib/jira-sync.js setFlagLink()), or null
  * @throws {TenantNotFoundError}
  */
 async function getConnection(pool, { tenantId, actorUserId }) {
@@ -56,7 +57,7 @@ async function getConnection(pool, { tenantId, actorUserId }) {
         if (!(await roleOf(client, { tenantId, userId: actorUserId }))) throw new TenantNotFoundError('Tenant not found');
         const { rows: [row] } = await client.query(
             `SELECT available_sites, cloud_id, site_url, site_name, connected_at, last_error, current_pi, last_synced_at,
-                    webhook_ids, webhook_expires_at, webhook_error
+                    webhook_ids, webhook_expires_at, webhook_error, flag_link
              FROM jira_connections WHERE tenant_id = $1`,
             [tenantId]
         );
@@ -70,6 +71,7 @@ async function getConnection(pool, { tenantId, actorUserId }) {
                 expiresAt: row.webhook_expires_at,
                 error: row.webhook_error,
             },
+            flagLink: row.flag_link,
         };
     });
 }

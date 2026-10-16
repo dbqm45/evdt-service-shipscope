@@ -174,6 +174,27 @@ curl -sf -X POST "$SHIPSCOPE_URL/api/flags/ingest" \
 Odpowiedź: `{ source, flags, changed, removed, stale, created }`. Usunięcie źródła usuwa jego tokeny, wartości
 i historię; przestanie śledzenia repozytorium zostawia źródło, tylko bez komponentu.
 
+### Powiązanie flag z zadaniami w Jirze
+
+Dashboard musi wiedzieć, które zadania w Jirze są „za” daną flagą — dopiero wtedy pokazuje, czy funkcja jest już
+dostępna dla użytkowników. Powiązanie może pochodzić z trzech miejsc i dashboard pokazuje je wszystkie razem:
+
+1. **Ze źródła flag** — pole `jiraKeys` w wiadomości (wyżej). Wygodne, gdy narzędzie do flag samo zna zadania.
+2. **Z samej Jiry** — zadanie mówi, za jaką flagą jest jego praca. To najwygodniejsze dla zespołu: wpisuje się to tam,
+   gdzie i tak pracuje. Ustawienia → Jira → „Feature flags in Jira”, jedna z dwóch konwencji:
+   - **pole w zadaniu** (zalecane): admin Jiry dodaje raz pole, np. „Feature flag”, typu *Labels* (kilka flag, z
+     podpowiadaniem) albo *Short text* (klucze oddzielone przecinkiem lub spacją), i dodaje je do ekranów zadań.
+     W projekcie company-managed: Jira → ⚙ Settings → Issues → Custom fields → Create custom field, potem
+     „Associate to screens”. W projekcie team-managed: ustawienia projektu → Issue types → przeciągnij pole na typ
+     zadania. Potem w ShipScope wybierz to pole z listy;
+   - **etykiety z przedrostkiem** — bez pomocy admina: etykieta `flag:newCheckout` na zadaniu (przedrostek ustawiasz
+     sam). Wadą jest to, że etykiety w Jirze są wspólne dla całej witryny i łatwo o literówkę.
+
+   ShipScope odczytuje to przy każdej synchronizacji („Sync now” od razu). Klucz w Jirze musi być dokładnie taki jak
+   klucz flagi wysyłany przez źródło (wielkość liter ma znaczenie).
+3. **Ręcznie w ShipScope** — Ustawienia → Feature flags → przy fladze pole „Jira issues linked here” (i opis, który
+   zastępuje opis ze źródła). Źródło nigdy tego nie nadpisze.
+
 ## 5. Jira (Atlassian OAuth)
 
 Gdzie: **https://developer.atlassian.com/console/myapps/ → Create → OAuth 2.0 integration**. Tak jak przy GitHubie:

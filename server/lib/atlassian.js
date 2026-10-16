@@ -239,6 +239,30 @@ function fetchVersions({ accessToken, cloudId, projectKey, fetch: fetchFn = fetc
 }
 
 /**
+ * The site's custom fields an issue can name feature flags in: text (`string`), labels (array of strings) or
+ * select/checkbox options (`option`, or an array of them).
+ *
+ * @param {{ accessToken: string, cloudId: string, fetch?: typeof fetch }} input
+ * @returns {Promise<Array<{ id: string, name: string, type: 'text'|'labels'|'options' }>>} sorted by name
+ * @throws {AtlassianError}
+ */
+async function fetchFlagFieldCandidates({ accessToken, cloudId, fetch: fetchFn = fetch }) {
+    const fields = await getJson(`${API_BASE}/${encodeURIComponent(cloudId)}/rest/api/3/field`, accessToken, fetchFn);
+    if (!Array.isArray(fields)) throw new AtlassianError('field list response is not a list');
+    const typeOf = (schema) => {
+        if (schema?.type === 'string') return 'text';
+        if (schema?.type === 'option') return 'options';
+        if (schema?.type === 'array' && schema.items === 'string') return 'labels';
+        if (schema?.type === 'array' && schema.items === 'option') return 'options';
+        return null;
+    };
+    return fields
+        .filter((f) => typeof f?.id === 'string' && /^customfield_\d+$/.test(f.id) && typeof f.name === 'string' && typeOf(f.schema))
+        .map((f) => ({ id: f.id, name: f.name.slice(0, 200), type: typeOf(f.schema) }))
+        .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/**
  * The ids of the custom fields the issue mapping reads. Sprint and Epic Link by their fixed schema type; Flagged
  * by name (it has no dedicated type) -- the same lookup as the file-based scripts/lib/jira-issues.js.
  *
@@ -342,5 +366,5 @@ async function deleteWebhooks({ accessToken, cloudId, ids, fetch: fetchFn = fetc
 module.exports = {
     WEBHOOK_SCOPE, registerWebhooks, refreshWebhooks, deleteWebhooks,
     SCOPES, AtlassianError, buildAuthorizeUrl, exchangeCode, refreshAccessToken, fetchJiraSites, fetchProjects,
-    fetchBoards, fetchSprints, fetchVersions, fetchFieldIds, searchIssues,
+    fetchBoards, fetchSprints, fetchVersions, fetchFieldIds, fetchFlagFieldCandidates, searchIssues,
 };

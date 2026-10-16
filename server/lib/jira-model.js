@@ -218,10 +218,42 @@ function issueType(issuetype) {
     return null;
 }
 
-/** The fields an issue search asks for (the custom ones by the ids fetchFieldIds() found). */
-function issueFields({ sprintFieldId, epicLinkFieldId, flaggedFieldId }) {
+/** The fields an issue search asks for (the custom ones by the ids fetchFieldIds() found, and the flag field if any). */
+function issueFields({ sprintFieldId, epicLinkFieldId, flaggedFieldId, flagLink = null }) {
     return ['summary', 'issuetype', 'status', 'priority', 'created', 'resolutiondate', 'project', 'parent', 'subtasks', 'issuelinks', 'labels',
-        sprintFieldId, epicLinkFieldId, flaggedFieldId].filter(Boolean);
+        sprintFieldId, epicLinkFieldId, flaggedFieldId, flagLink && flagLink.type === 'field' ? flagLink.id : null].filter(Boolean);
+}
+
+// The same key rule as the flag ingest API (web.js FLAG_KEY): what a sender can report is what Jira can link to.
+const FLAG_KEY = /^[A-Za-z_][A-Za-z0-9_.:-]{0,127}$/;
+const MAX_FLAGS_PER_ISSUE = 20;
+
+/**
+ * The feature flags an issue names, by the tenant's convention: a field on the issue (text with keys separated by
+ * commas or spaces, labels, or select options), or labels starting with a prefix (`flag:newCheckout`, prefix matched
+ * case-insensitively). Anything that isn't a valid flag key is ignored.
+ *
+ * @param {object} fields a raw issue's `fields`
+ * @param {{ type: 'field', id: string }|{ type: 'label', prefix: string }|null} flagLink
+ * @returns {string[]} distinct flag keys, in order of appearance
+ */
+function extractFlagKeys(fields, flagLink) {
+    if (!flagLink || !fields) return [];
+    let candidates = [];
+    if (flagLink.type === 'label') {
+        const prefix = flagLink.prefix.toLowerCase();
+        candidates = (Array.isArray(fields.labels) ? fields.labels : [])
+            .filter((l) => typeof l === 'string' && l.toLowerCase().startsWith(prefix))
+            .map((l) => l.slice(prefix.length));
+    } else if (flagLink.type === 'field') {
+        const value = fields[flagLink.id];
+        const parts = Array.isArray(value) ? value : [value];
+        candidates = parts.flatMap((v) => {
+            const text = typeof v === 'string' ? v : typeof v?.value === 'string' ? v.value : '';
+            return text.split(/[\s,;]+/);
+        });
+    }
+    return [...new Set(candidates.filter((k) => FLAG_KEY.test(k)))].slice(0, MAX_FLAGS_PER_ISSUE);
 }
 
 const str = (v, max = 500) => (typeof v === 'string' ? v.slice(0, max) : null);
@@ -230,7 +262,7 @@ const str = (v, max = 500) => (typeof v === 'string' ? v.slice(0, max) : null);
  * One raw issue in the dashboard's shape, or null for something to skip (unknown type, malformed).
  *
  * @param {object} raw a /search/jql issue
- * @param {{ sprintFieldId: string|null, epicLinkFieldId: string|null, flaggedFieldId: string|null }} fieldIds
+ * @param {{ sprintFieldId: string|null, epicLinkFieldId: string|null, flaggedFieldId: string|null, flagLink?: object|null }} fieldIds
  * @param {{ pi: string, sprintsInScope: Map<number, { name: string, state: string }>, sprint?: string|null }} scope the PI being synced and
  *   its board's sprints in it; `sprint`: the name to use when none of those is the issue's (a release or flow month is its own "sprint")
  * @returns {object|null}
@@ -282,11 +314,12 @@ function mapIssue(raw, fieldIds, { pi, sprintsInScope, sprint: fallbackSprint = 
         priority: str(f.priority?.name, 100),
         created: str(f.created, 40),
         resolvedAt: str(f.resolutiondate, 40),
+        featureFlags: extractFlagKeys(f, fieldIds.flagLink || null),
         ...(blockers.length ? { dependencyNote: str(`Blocked by ${blockers[0].inwardIssue.key}: ${blockers[0].inwardIssue.fields?.summary || ''}`) } : {}),
     };
 }
 
 module.exports = {
     RhythmTemplateError, extractPiFromSprintName, compileTemplate, rhythmOf, piOfSprint, comparePiDesc, currentPiOf, previousPiOf,
-    releaseName, currentReleaseOf, previousReleaseOf, flowMonth, releaseJql, flowJql, issueType, issueFields, mapIssue,
+    releaseName, currentReleaseOf, previousReleaseOf, flowMonth, releaseJql, flowJql, issueType, issueFields, extractFlagKeys, mapIssue,
 };

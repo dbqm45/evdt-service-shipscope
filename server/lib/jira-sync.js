@@ -2,7 +2,8 @@ const { withScope } = require('./scope');
 const { assertAdmin, roleOf, TenantNotFoundError } = require('./tenants');
 const { accessTokenFor, JiraNotConnectedError } = require('./jira-connections');
 const {
-    AtlassianError, WEBHOOK_SCOPE, fetchBoards, fetchSprints, fetchVersions, fetchFieldIds, searchIssues, registerWebhooks, refreshWebhooks, deleteWebhooks,
+    AtlassianError, WEBHOOK_SCOPE, fetchBoards, fetchSprints, fetchVersions, fetchFieldIds, fetchFlagFieldCandidates, searchIssues, registerWebhooks, refreshWebhooks,
+    deleteWebhooks,
 } = require('./atlassian');
 const {
     RhythmTemplateError, compileTemplate, extractPiFromSprintName, rhythmOf, piOfSprint, comparePiDesc, currentPiOf, previousPiOf,
@@ -221,14 +222,15 @@ async function syncTenant(pool, { tenantId, atlassian, fetch: fetchFn = fetch, n
 }
 
 async function syncTenantUnrecorded(pool, { tenantId, atlassian, fetch: fetchFn, now }) {
-    const { boards, boardsWithIssues } = await withScope(pool, { tenantId }, async (client) => ({
+    const { boards, boardsWithIssues, flagLink } = await withScope(pool, { tenantId }, async (client) => ({
+        flagLink: (await client.query('SELECT flag_link FROM jira_connections WHERE tenant_id = $1', [tenantId])).rows[0]?.flag_link || null,
         boards: (await client.query('SELECT board_id, name, project_key, rhythm, pi_template FROM jira_boards WHERE tenant_id = $1 ORDER BY board_id', [tenantId])).rows,
         boardsWithIssues: new Set((await client.query('SELECT DISTINCT board_id FROM jira_issues WHERE tenant_id = $1', [tenantId])).rows.map((r) => Number(r.board_id))),
     }));
     if (!boards.length) return { boards: 0, issues: 0, currentPi: null };
 
     const { accessToken, cloudId } = await accessTokenFor(pool, { tenantId, atlassian, fetch: fetchFn });
-    const fieldIds = await fetchFieldIds({ accessToken, cloudId, fetch: fetchFn });
+    const fieldIds = { ...(await fetchFieldIds({ accessToken, cloudId, fetch: fetchFn })), flagLink };
     const plan = [];
     const currentByBoard = new Map();
     for (const board of boards) {
@@ -336,6 +338,49 @@ async function ensureWebhook(pool, { tenantId, atlassian, accessToken, cloudId, 
         if (ids.length && unchanged) ids = [];
     }
     await save({ ids, jql: ids.length ? jql : null, expiresAt: ids.length ? expiresAt : null, error });
+}
+
+const FLAG_PREFIX = /^[A-Za-z0-9_.:-]{1,30}$/;
+
+/**
+ * The site's fields an issue can name feature flags in: custom fields holding text, labels or select options.
+ * Admins only.
+ *
+ * @param {import('pg').Pool} pool
+ * @param {{ tenantId: string, actorUserId: string, atlassian: object, fetch?: typeof fetch }} input
+ * @returns {Promise<Array<{ id: string, name: string, type: string }>>}
+ */
+async function listFlagFields(pool, { tenantId, actorUserId, atlassian, fetch: fetchFn = fetch }) {
+    await withScope(pool, { tenantId }, (client) => assertAdmin(client, { tenantId, userId: actorUserId }));
+    const { accessToken, cloudId } = await accessTokenFor(pool, { tenantId, atlassian, fetch: fetchFn });
+    return fetchFlagFieldCandidates({ accessToken, cloudId, fetch: fetchFn });
+}
+
+/**
+ * How the tenant's Jira issues name their feature flags: a field (one of listFlagFields()), labels with a prefix, or
+ * not at all. Takes effect with the next sync of each board's current increment. Admins only.
+ *
+ * @param {import('pg').Pool} pool
+ * @param {{ tenantId: string, actorUserId: string, atlassian: object, flagLink: { type: 'none' }|{ type: 'label', prefix: string }|{ type: 'field', id: string }, fetch?: typeof fetch }} input
+ * @returns {Promise<object|null>} what was stored
+ * @throws {JiraBoardError} an invalid prefix, or a field that isn't one of the site's candidates
+ */
+async function setFlagLink(pool, { tenantId, actorUserId, atlassian, flagLink, fetch: fetchFn = fetch }) {
+    let stored = null;
+    if (flagLink.type === 'label') {
+        if (!FLAG_PREFIX.test(flagLink.prefix)) throw new JiraBoardError('A label prefix is 1-30 letters, digits or _ . : -');
+        stored = { type: 'label', prefix: flagLink.prefix };
+    } else if (flagLink.type === 'field') {
+        const field = (await listFlagFields(pool, { tenantId, actorUserId, atlassian, fetch: fetchFn })).find((f) => f.id === flagLink.id);
+        if (!field) throw new JiraBoardError('That Jira field can\'t hold feature flags (a text, labels or select field is needed)');
+        stored = { type: 'field', id: field.id, name: field.name };
+    }
+    await withScope(pool, { tenantId }, async (client) => {
+        await assertAdmin(client, { tenantId, userId: actorUserId });
+        const { rowCount } = await client.query('UPDATE jira_connections SET flag_link = $2 WHERE tenant_id = $1', [tenantId, stored]);
+        if (!rowCount) throw new JiraNotConnectedError('Jira is not connected');
+    });
+    return stored;
 }
 
 /**
@@ -465,4 +510,4 @@ async function listPiIssues(pool, { tenantId, actorUserId, pi }) {
     });
 }
 
-module.exports = { WEBHOOK_RECONNECT, removeJiraWebhooks, NOW_KEY, JiraBoardError, listBoards, setBoards, configureBoard, syncTenant, syncAllJira, readDashboardJira, listPiIssues };
+module.exports = { WEBHOOK_RECONNECT, removeJiraWebhooks, listFlagFields, setFlagLink, NOW_KEY, JiraBoardError, listBoards, setBoards, configureBoard, syncTenant, syncAllJira, readDashboardJira, listPiIssues };

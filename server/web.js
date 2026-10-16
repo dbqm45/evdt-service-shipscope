@@ -6,7 +6,9 @@ const { createPool, checkConnection } = require('./lib/db');
 const { loadAuthConfig, loadGitHubAppConfig, loadAtlassianConfig } = require('./lib/config');
 const { AtlassianError, buildAuthorizeUrl: buildAtlassianAuthorizeUrl, exchangeCode: exchangeAtlassianCode, fetchJiraSites } = require('./lib/atlassian');
 const { JiraNotConnectedError, JiraSiteError, saveConnection, getConnection, selectSite, disconnect, listProjects } = require('./lib/jira-connections');
-const { JiraBoardError, listBoards, setBoards, configureBoard, syncTenant: syncJiraTenant, listPiIssues, removeJiraWebhooks } = require('./lib/jira-sync');
+const {
+    JiraBoardError, listBoards, setBoards, configureBoard, syncTenant: syncJiraTenant, listPiIssues, removeJiraWebhooks, listFlagFields, setFlagLink,
+} = require('./lib/jira-sync');
 const { APP_VERSION } = require('./lib/version');
 const { buildAuthorizeUrl, exchangeCode, fetchGitHubUser, GitHubOAuthError } = require('./lib/github-oauth');
 const { createSession, getSessionUser, deleteSession } = require('./lib/sessions');
@@ -29,6 +31,7 @@ const { buildDashboardData } = require('./lib/dashboard-data');
 const {
     createFlagSource, updateFlagSource, deleteFlagSource, listFlagSources, createIngestToken, revokeIngestToken, ingestFlags,
     IngestTokenError, IngestPayloadError, FlagSourceNotFoundError, FlagSourceConflictError,
+    FlagNotFoundError, listFlags, setFlagDetails,
 } = require('./lib/flags');
 const { loadDashboardAssets, loadUiAssets, ASSET_PATTERN } = require('./lib/dashboard-assets');
 const { WebhookAuthError, verifyGitHubSignature, verifyAtlassianJwt, githubSyncKeys, jiraSyncKeys, requestSync } = require('./lib/webhooks');
@@ -73,6 +76,7 @@ const ERROR_STATUS = [
     [AlreadyMemberError, 409],
     [LastAdminError, 409],
     [ConfirmationMismatchError, 400],
+    [FlagNotFoundError, 404],
     [InvitationUnusableError, 410],
     [InstallationNotFoundError, 404],
     [InstallationTakenError, 409],
@@ -527,6 +531,38 @@ function buildApp({ pool, auth, githubApp = null, atlassian = null, fetch: fetch
             return reply.code(204).send();
         });
 
+        // How Jira issues name their feature flags: a custom field (one of these candidates) or labels with a prefix.
+        app.get('/tenants/:tenantId/jira/flag-fields', {
+            preHandler: requireUser,
+            schema: { params: tenantParams },
+        }, async (request) => ({
+            fields: await listFlagFields(pool, { tenantId: request.params.tenantId, actorUserId: request.user.id, atlassian, fetch: fetchFn }),
+        }));
+
+        app.put('/tenants/:tenantId/jira/flag-link', {
+            preHandler: requireUser,
+            schema: {
+                params: tenantParams,
+                body: {
+                    oneOf: [
+                        { type: 'object', required: ['type'], additionalProperties: false, properties: { type: { const: 'none' } } },
+                        {
+                            type: 'object', required: ['type', 'prefix'], additionalProperties: false,
+                            properties: { type: { const: 'label' }, prefix: { type: 'string', minLength: 1, maxLength: 30 } },
+                        },
+                        {
+                            type: 'object', required: ['type', 'id'], additionalProperties: false,
+                            properties: { type: { const: 'field' }, id: { type: 'string', pattern: '^customfield_[0-9]{1,10}$' } },
+                        },
+                    ],
+                },
+            },
+        }, async (request) => ({
+            flagLink: await setFlagLink(pool, {
+                tenantId: request.params.tenantId, actorUserId: request.user.id, atlassian, flagLink: request.body, fetch: fetchFn,
+            }),
+        }));
+
         // FR-008: which boards to sync (a board's sprints define the PIs and scope the issues to its team).
         app.get('/tenants/:tenantId/jira/boards', {
             preHandler: requireUser,
@@ -665,6 +701,32 @@ function buildApp({ pool, auth, githubApp = null, atlassian = null, fetch: fetch
         }, async (request, reply) => reply.code(201).send(await createFlagSource(pool, {
             tenantId: request.params.tenantId, actorUserId: request.user.id, ...request.body,
         })));
+
+        // The flags themselves, for the settings page: descriptions and Jira links by origin, state per environment.
+        app.get('/tenants/:tenantId/flags', {
+            preHandler: requireUser,
+            schema: { params: tenantOnlyParams },
+        }, async (request) => ({ flags: await listFlags(pool, { tenantId: request.params.tenantId, actorUserId: request.user.id }) }));
+
+        // What an admin sets by hand: a description over the sender's, and linked Jira issues. Never overwritten by
+        // a sender's message.
+        app.put('/tenants/:tenantId/flags/:key', {
+            preHandler: requireUser,
+            schema: {
+                params: { type: 'object', required: ['tenantId', 'key'], properties: { tenantId: UUID_PARAM, key: FLAG_KEY } },
+                body: {
+                    type: 'object',
+                    required: ['description', 'jiraKeys'],
+                    additionalProperties: false,
+                    properties: {
+                        description: { anyOf: [{ type: 'null' }, { type: 'string', maxLength: 500 }] },
+                        jiraKeys: { type: 'array', maxItems: 50, uniqueItems: true, items: { type: 'string', pattern: '^[A-Z][A-Z0-9_]{0,19}-[1-9][0-9]{0,9}$' } },
+                    },
+                },
+            },
+        }, async (request) => setFlagDetails(pool, {
+            tenantId: request.params.tenantId, actorUserId: request.user.id, key: request.params.key, ...request.body,
+        }));
 
         app.get('/tenants/:tenantId/flag-sources', {
             preHandler: requireUser,
