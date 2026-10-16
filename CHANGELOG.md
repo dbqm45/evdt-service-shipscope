@@ -7,6 +7,12 @@ dashboard, not a published package), so entries are grouped by date instead. See
 ShipScope is, `CLAUDE.md` for the technical reference, and `FAQ.md` for how specific numbers/badges are
 calculated.
 
+## [0.1.15] - 2026-10-16
+
+### Added
+
+- **SHP:** add a settings page for workspaces, GitHub, Jira and flags (#24)
+
 ## [0.1.14] - 2026-10-16
 
 ### Added
