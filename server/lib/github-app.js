@@ -1,0 +1,117 @@
+const crypto = require('crypto');
+
+/**
+ * GitHub App server-to-server calls (FR-004/FR-006). The App authenticates as itself with a short-lived
+ * JWT signed by its private key (RS256, node:crypto -- no dependency), and as an installation with an
+ * installation access token minted from that JWT. Installation tokens are minted per use and never
+ * stored (prd.md: credential hygiene); they expire after an hour on GitHub's side anyway.
+ */
+
+const API = 'https://api.github.com';
+const PER_PAGE = 100;
+/** Safety cap on pagination: 20 pages x 100 = 2000 repos/installations, far beyond a real tenant. */
+const MAX_PAGES = 20;
+
+class GitHubApiError extends Error {
+    constructor(message, status) {
+        super(message);
+        this.status = status;
+    }
+}
+
+const base64url = (value) => Buffer.from(typeof value === 'string' ? value : JSON.stringify(value)).toString('base64url');
+
+/**
+ * The App's JWT. iat is backdated 60s for clock drift and exp kept under GitHub's 10-minute maximum.
+ *
+ * @param {{ appId: string, privateKey: import('crypto').KeyObject, now?: number }} input
+ * @returns {string}
+ */
+function createAppJwt({ appId, privateKey, now = Date.now() }) {
+    const seconds = Math.floor(now / 1000);
+    const unsigned = `${base64url({ alg: 'RS256', typ: 'JWT' })}.${base64url({ iat: seconds - 60, exp: seconds + 540, iss: appId })}`;
+    const signature = crypto.sign('sha256', Buffer.from(unsigned), privateKey).toString('base64url');
+    return `${unsigned}.${signature}`;
+}
+
+async function githubFetch(fetchFn, path, { token, method = 'GET' }) {
+    const res = await fetchFn(`${API}${path}`, {
+        method,
+        headers: {
+            accept: 'application/vnd.github+json',
+            authorization: `Bearer ${token}`,
+            'user-agent': 'shipscope',
+            'x-github-api-version': '2022-11-28',
+        },
+    });
+    if (!res.ok) throw new GitHubApiError(`${method} ${path.split('?')[0]} failed with HTTP ${res.status}`, res.status);
+    return res.json();
+}
+
+/** Follows ?page=N until a short page; `pick` extracts the array from each response body. */
+async function allPages(fetchFn, path, token, pick) {
+    const items = [];
+    for (let page = 1; page <= MAX_PAGES; page++) {
+        const sep = path.includes('?') ? '&' : '?';
+        const batch = pick(await githubFetch(fetchFn, `${path}${sep}per_page=${PER_PAGE}&page=${page}`, { token }));
+        if (!Array.isArray(batch)) throw new GitHubApiError(`${path} response has no list`, 502);
+        items.push(...batch);
+        if (batch.length < PER_PAGE) return items;
+    }
+    return items;
+}
+
+const isId = (value) => Number.isSafeInteger(value) && value > 0;
+
+/**
+ * An installation's account, read as the App. Proves the installation exists and belongs to this App --
+ * but not that the current user may use it; see userCanAccessInstallation for that.
+ *
+ * @param {{ app: { appId: string, privateKey: import('crypto').KeyObject }, installationId: number, fetch?: typeof fetch }} input
+ * @returns {Promise<{ installationId: number, accountLogin: string, accountType: string }>}
+ * @throws {GitHubApiError}
+ */
+async function getInstallation({ app, installationId, fetch: fetchFn = fetch }) {
+    const body = await githubFetch(fetchFn, `/app/installations/${installationId}`, { token: createAppJwt(app) });
+    if (!body || body.id !== installationId || typeof body.account?.login !== 'string' || typeof body.account?.type !== 'string') {
+        throw new GitHubApiError('installation response is missing id/account', 502);
+    }
+    return { installationId, accountLogin: body.account.login, accountType: body.account.type };
+}
+
+/**
+ * Whether the signed-in user (their user access token from this App) can access the installation. This is
+ * the check that stops someone from linking another organization's installation to their own tenant by
+ * editing installation_id in the setup redirect.
+ *
+ * @param {{ accessToken: string, installationId: number, fetch?: typeof fetch }} input
+ * @returns {Promise<boolean>}
+ * @throws {GitHubApiError}
+ */
+async function userCanAccessInstallation({ accessToken, installationId, fetch: fetchFn = fetch }) {
+    const installations = await allPages(fetchFn, '/user/installations', accessToken, (body) => body?.installations);
+    return installations.some((installation) => installation?.id === installationId);
+}
+
+/**
+ * Repositories the installation was granted, read with a freshly minted installation token.
+ *
+ * @param {{ app: { appId: string, privateKey: import('crypto').KeyObject }, installationId: number, fetch?: typeof fetch }} input
+ * @returns {Promise<Array<{ id: number, fullName: string, private: boolean }>>}
+ * @throws {GitHubApiError}
+ */
+async function listInstallationRepos({ app, installationId, fetch: fetchFn = fetch }) {
+    const tokenBody = await githubFetch(fetchFn, `/app/installations/${installationId}/access_tokens`, {
+        token: createAppJwt(app),
+        method: 'POST',
+    });
+    if (typeof tokenBody?.token !== 'string' || !tokenBody.token) throw new GitHubApiError('access token response has no token', 502);
+
+    const repos = await allPages(fetchFn, '/installation/repositories', tokenBody.token, (body) => body?.repositories);
+    return repos.map((repo) => {
+        if (!isId(repo?.id) || typeof repo.full_name !== 'string') throw new GitHubApiError('repository entry is missing id/full_name', 502);
+        return { id: repo.id, fullName: repo.full_name, private: repo.private === true };
+    });
+}
+
+module.exports = { createAppJwt, getInstallation, userCanAccessInstallation, listInstallationRepos, GitHubApiError };
