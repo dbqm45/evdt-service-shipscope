@@ -145,3 +145,69 @@ The existing domain rule is preserved as-is: ShipScope decides, per component/en
    > **Resolved 2026-10-16 (user):** flags come from outside. Every tenant keeps them its own way (build-time files, a runtime API, a third-party flag service, or none at all), so ShipScope never discovers them itself: the tenant's own tooling pushes flag values -- and, optionally, each flag's description and linked Jira keys -- to an ingest API. Senders are named per-tenant flag sources with their own tokens; each message is the full state of that source per environment (removed flags are detected), values are off/on/partial with a rollout percentage, and the sender's change time is kept (contract schemaVersion 2, `server/lib/flags.js`). Managing flags in the ShipScope UI or a custom Jira field remain possible later additions, not the MVP path.
 2. **How is GitHub sync throttled/queued across many tenants at once?** — Today's single-org polling model has no cross-tenant contention. Multi-tenant polling needs a strategy to avoid one tenant's sync starving another's. Owner: user (or downstream implementation planning). By: before implementation planning for FR-005.
 3. **How does per-tenant Jira OAuth rate-limiting differ from today's shared service-account token model?** — Needs confirming whether per-tenant OAuth tokens get independent rate-limit buckets from Atlassian, which would simplify this considerably. Owner: user (or downstream implementation planning). By: before implementation planning for FR-009.
+
+## Deferred to the End: Launch & Commercialization
+
+Decided 2026-10-16 (user): hosting is revisited last, together with payments, plans and marketing -- once the product
+itself is done. Nothing below is built yet; each item is a decision to make (and then implement) at that stage. The
+deployment itself is ready to go when wanted: `render.yaml` and the step-by-step guide in `server/TESTY-RECZNE.pl.md`
+(part B).
+
+### 1. Hosting & production
+
+- **Deploy on Render** following `server/TESTY-RECZNE.pl.md` part B (production GitHub App, production Atlassian app,
+  secrets, Blueprint).
+- **Region.** `render.yaml` currently says `oregon` (US). EU customers' Jira/GitHub data may need an EU region
+  (Frankfurt) for GDPR expectations -- decide before the first real tenant; moving a database later means a migration.
+- **Custom domain** (e.g. `app.<brand>.com`): changes `PUBLIC_BASE_URL` and every callback/webhook URL in both apps.
+- **Staging environment**: a second Blueprint (or Render preview environments) so changes are tried before production.
+- **Backups and restore**: Render Postgres backups on the chosen plan; test one restore before customers depend on it.
+- **Monitoring and alerts**: health check alerts, worker failures (`sync failed` in logs), error rate; a status page.
+- **Still unverified with real services**: the Jira webhook delivery format (`server/TESTY-RECZNE.pl.md` steps 41-43).
+
+### 2. Payments & billing
+
+- **Provider.** Stripe (Billing + Checkout + Customer Portal) vs. a merchant of record such as Paddle or Lemon Squeezy,
+  which handles EU VAT and invoicing for you -- the main trade-off is fees vs. tax/compliance work.
+- **What is billed**: per workspace (tenant), monthly/yearly, trial length, what happens when a payment fails
+  (grace period, read-only mode, then suspension) and when a subscription ends (data kept how long, then deleted).
+- **In the product**: a billing section in Settings (plan, invoices, change/cancel via the provider's portal), the
+  provider's webhooks verified and queued like GitHub/Jira ones (`lib/webhooks.js` pattern), plan state stored on
+  `tenants`.
+- **Invoices and tax**: company details on invoices, EU VAT (reverse charge for B2B), Polish accounting requirements.
+
+### 3. Plans & limits
+
+- **What to price on** (pick one or two, keep it simple): tracked repositories, Jira boards, members, deployment
+  history retention (already per tenant, 7-730 days), instant updates (webhooks) vs. 15-minute sync.
+- **Free tier or trial only**; an internal/unlimited plan for EVDT itself.
+- **Where limits are enforced in code**: tracking a repo (`trackRepo`), selecting boards (`setBoards`), invitations
+  (`createInvitation`), retention (`updateSettings`), webhook processing -- each returns a clear "upgrade your plan"
+  error the settings page shows.
+- **Upgrade/downgrade rules**: what happens to repos/boards above a lower plan's limit.
+
+### 4. Legal & compliance
+
+- **Terms of service and privacy policy** -- also required by Atlassian to share the OAuth app with other companies
+  (Distribution settings) and expected by GitHub for a public App.
+- **GDPR**: ShipScope processes customers' Jira/GitHub data as a processor -- a DPA (data processing agreement), a
+  list of subprocessors (Render, the payment provider), data retention and deletion rules.
+- **Deleting a workspace and its data** -- not built yet (there is no "delete workspace" route): needed for GDPR
+  requests and for subscriptions that end.
+
+### 5. Marketing & distribution
+
+- **Name, brand and domain** (ShipScope is a working name -- check availability and trademarks).
+- **Landing page** with the value proposition ("what's really on production, per Jira issue, across repos"), a
+  pricing page, screenshots/short video, sign-up = "Sign in with GitHub".
+- **Demo**: a public read-only demo workspace (the built-in `FALLBACK` sample data is a starting point).
+- **Documentation for customers**: getting started (install the GitHub App, connect Jira, choose boards), flag
+  ingest examples per popular flag tool, FAQ (`FAQ.md` exists for the file-based version).
+- **Marketplaces**: GitHub Marketplace listing for the App; Atlassian Marketplace listing (requires a public,
+  reviewed app).
+- **Launch channels**: Product Hunt, Hacker News "Show HN", LinkedIn/communities around SAFe/agile delivery, posts
+  on the deployment-visibility problem; first customers from the existing network.
+- **Product analytics** (privacy-friendly, e.g. Plausible) and an **onboarding funnel** (signed in -> workspace ->
+  GitHub connected -> first deployment -> Jira connected).
+- **Support and feedback**: a support email or in-app contact, a public roadmap/changelog (the GitHub Releases from
+  `release.yml` already exist).
