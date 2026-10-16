@@ -26,6 +26,7 @@ test('runMigrations: applies cleanly from empty and creates the expected tables'
     assert.ok(tableNames.includes('tracked_repos'));
     assert.ok(tableNames.includes('deployments'));
     assert.ok(tableNames.includes('issue_deployments'));
+    for (const table of ['ingest_tokens', 'flags', 'flag_states', 'flag_state_history']) assert.ok(tableNames.includes(table), table);
     assert.ok(tableNames.includes('schema_migrations'));
 
     const { rows: migrationRows } = await pool.query('SELECT filename FROM schema_migrations ORDER BY filename');
@@ -37,6 +38,7 @@ test('runMigrations: applies cleanly from empty and creates the expected tables'
         '005_deployments.sql',
         '006_versions_and_drift.sql',
         '007_manual_and_display_names.sql',
+        '008_flags.sql',
     ]);
 });
 

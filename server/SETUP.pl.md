@@ -92,3 +92,45 @@ serwisów (`render.yaml` ustawia `DATABASE_URL` sam; sekrety mają `sync: false`
 5. Zaproś resztę zespołu linkiem (`POST /tenants/<id>/invitations`).
 
 Pierwsze dane pojawią się po najbliższej synchronizacji workera (do 15 minut).
+
+## 4. Feature flagi (opcjonalnie)
+
+ShipScope nie odczytuje flag sam: każdy trzyma je po swojemu (pliki build-time, API w runtime, usługa
+zewnętrzna typu LaunchDarkly/Unleash), więc to Twój system **wysyła** ich stan. Bez flag po prostu nic nie
+wysyłasz — dashboard działa, panel flag jest pusty.
+
+1. Admin tworzy token dla repozytorium, do którego należą flagi:
+   `POST /tenants/<id>/repos/<repoId>/ingest-tokens` z `{ "label": "GitHub Actions" }`. Token (`shpi_...`)
+   jest pokazany **tylko raz** — zapisz go od razu jako sekret (np. GitHub Actions secret `SHIPSCOPE_INGEST_TOKEN`).
+2. To, co zna stan flag, wysyła go przy każdej zmianie (albo cyklicznie — ponowne wysłanie tych samych wartości
+   niczego nie zmienia):
+
+   ```bash
+   curl -sf -X POST "$SHIPSCOPE_URL/api/flags/ingest" \
+     -H "Authorization: Bearer $SHIPSCOPE_INGEST_TOKEN" \
+     -H "Content-Type: application/json" \
+     -d '{
+       "schemaVersion": 1,
+       "source": "build",
+       "changedBy": "ci",
+       "observations": [
+         { "key": "newCheckout", "env": "test", "enabled": true },
+         { "key": "newCheckout", "env": "prod", "enabled": false }
+       ],
+       "flags": [
+         { "key": "newCheckout", "description": "Nowy proces zakupu", "jiraKeys": ["ABC-123"] }
+       ]
+     }'
+   ```
+
+   - `source`: `build` (wartość wbudowana przy budowaniu) albo `runtime-be` (przełączana na żywo — backend,
+     usługa flag). Gdy dla flagi są oba, dashboard pokazuje `runtime-be`.
+   - `env`: `test`, `qa` albo `prod`.
+   - `flags` (opcjonalne): opis i powiązane zadania z Jiry — to po nich dashboard liczy, czy funkcja jest już
+     dostępna dla użytkowników („released”), czy tylko wdrożona.
+3. Tokeny: lista `GET /tenants/<id>/ingest-tokens` (z datą ostatniego użycia), unieważnienie
+   `DELETE /tenants/<id>/ingest-tokens/<tokenId>`. Przestanie się śledzić repozytorium = jego tokeny i flagi
+   znikają.
+
+Ten sam klucz flagi z tym samym `source` wysłany z dwóch różnych repozytoriów to kolizja: wygrywa pierwsze, drugie
+dostaje ją w odpowiedzi (`collisions`) i nie nadpisuje wartości — zmień nazwę jednej z flag.

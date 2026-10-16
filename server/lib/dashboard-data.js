@@ -1,10 +1,11 @@
 const { withScope } = require('./scope');
 const { roleOf, TenantNotFoundError } = require('./tenants');
+const { readDashboardFlags } = require('./flags');
 
 /**
  * Everything the dashboard (docs/app-*.js) loads, for one tenant, in the exact shapes of the file-based
  * data/*.json it reads on GitHub Pages -- so the views and their tests stay unchanged and only
- * app-data.js's loader differs. Parts that have no database source yet (flags, Jira) come back empty;
+ * app-data.js's loader differs. Parts that have no database source yet (Jira) come back empty;
  * the views already handle that (they render "no data" states, the same as before a first sync).
  */
 
@@ -97,12 +98,16 @@ async function buildDashboardData(pool, { tenantId, actorUserId }) {
             return record;
         });
 
+        const { flagsMeta, flagStates, flagStateHistory } = await readDashboardFlags(client, {
+            tenantId, componentOf: (repoId) => names.get(repoId),
+        });
+
         const synced = repos.map((r) => r.last_synced_at).filter(Boolean).sort((a, b) => b - a);
         return {
             deployments: records,
-            flagsMeta: {},
-            flagStates: {},
-            flagStateHistory: [],
+            flagsMeta,
+            flagStates,
+            flagStateHistory,
             jiraIndex: { currentPi: null, pis: [] },
             issueStatusIndex: {},
             issueDeployments,

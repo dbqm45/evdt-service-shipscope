@@ -115,7 +115,11 @@ per-repo `version_file`/`drift_ignore_paths` (what `docs/components.json` holds 
 by an admin via `PUT /tenants/:tenantId/github/repos/:repoId/settings`. The dashboard data puts `driftBehind`
 on each environment's latest successful record. `manual` (from the deploy's Actions run, needs the App's Actions
 read permission) and the creator's display name are resolved too (`lib/deployment-people.js`, display-only, cached
-per tenant per pass, never failing the sync). The dashboard is served by the Web Service at `/t/<tenantId>/` (an allowlist of
+per tenant per pass, never failing the sync). Feature flags are **pushed from outside, never read by ShipScope**
+(decision 2026-10-16: each tenant keeps flags its own way -- build-time files, a runtime API, a flag service, or
+none): an admin issues an ingest token per tracked repo, and the sender posts the file-based contract
+(`design-docs/FLAG-INGEST.pl.md`) to `POST /api/flags/ingest`; `lib/flags.js` ports `scripts/lib/flag-ingest.js`'s
+rules (per-source collision guard, idempotent writes, history), same both-places rule as the deployment logic. The dashboard is served by the Web Service at `/t/<tenantId>/` (an allowlist of
 `docs/` files only, `lib/dashboard-assets.js`); there `docs/app-data.js`'s `API_TENANT_ID` switches `loadData()` to
 `/api/tenants/<tenantId>/dashboard-data` (`lib/dashboard-data.js`, the same `data/*.json` shapes), and never to the
 built-in `FALLBACK` sample data. Off that path (GitHub Pages, `file://`) nothing changed. Dependencies, all scoped to
@@ -123,7 +127,7 @@ built-in `FALLBACK` sample data. Off that path (GitHub Pages, `file://`) nothing
 Fastify was chosen for its built-in JSON-schema validation of request input; it runs with
 `removeAdditional: false, coerceTypes: false`, so unknown fields and wrong types are a 400, never silently
 fixed. **Every query on an RLS table (`memberships`, `invitations`, `github_installations`, `tracked_repos`,
-`deployments`, `issue_deployments`) must go through `lib/scope.js`'s `withScope()`**, which
+`deployments`, `issue_deployments`, `ingest_tokens`, `flags`, `flag_states`, `flag_state_history`) must go through `lib/scope.js`'s `withScope()`**, which
 sets `app.current_tenant_id`/`app.current_user_id` with transaction-local `set_config(..., true)`; an unscoped
 read returns zero rows and an unscoped write is an RLS error (migration `002`). Run `npm install && npm test`
 inside `server/`; see `@server/README.md` for routes, the security model, local sign-in with a dev GitHub App,

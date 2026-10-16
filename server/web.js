@@ -23,6 +23,9 @@ const {
 } = require('./lib/github-connections');
 const { listDeployments, getSettings, updateSettings, MAX_LIMIT } = require('./lib/deployments');
 const { buildDashboardData } = require('./lib/dashboard-data');
+const {
+    createIngestToken, listIngestTokens, revokeIngestToken, ingestFlags, IngestTokenError, IngestPayloadError,
+} = require('./lib/flags');
 const { loadDashboardAssets, ASSET_PATTERN } = require('./lib/dashboard-assets');
 
 const SESSION_COOKIE = 'sid';
@@ -64,6 +67,8 @@ const ERROR_STATUS = [
     [InstallationNotFoundError, 404],
     [InstallationTakenError, 409],
     [GitHubApiError, 502],
+    [IngestTokenError, 401],
+    [IngestPayloadError, 400],
 ];
 
 /** Drops the query string and masks invitation tokens, which work like passwords until accepted. */
@@ -386,8 +391,103 @@ function buildApp({ pool, auth, githubApp = null, fetch: fetchFn = fetch, logger
         }),
     }));
 
+    registerFlagRoutes();
     registerDashboardRoutes();
     if (githubApp) registerGitHubRoutes();
+
+    // Feature flags, pushed from outside (lib/flags.js): admins issue an ingest token per tracked repo, and
+    // whatever holds the tenant's flags (CI reading build-time files, a job polling a runtime API or a flag
+    // service) posts observations with it. No session: the token is the credential.
+    function registerFlagRoutes() {
+        const FLAG_KEY = { type: 'string', pattern: '^[A-Za-z_][A-Za-z0-9_.:-]{0,127}$' };
+        app.post('/api/flags/ingest', {
+            bodyLimit: 1024 * 1024,
+            schema: {
+                body: {
+                    type: 'object',
+                    required: ['schemaVersion', 'source', 'observations'],
+                    additionalProperties: false,
+                    properties: {
+                        schemaVersion: { const: 1 },
+                        component: { type: 'string', maxLength: 200 },
+                        // build: baked in at build time; runtime-be: switched live (a backend, a flag service, ...).
+                        source: { type: 'string', enum: ['build', 'runtime-be'] },
+                        changedBy: { type: 'string', minLength: 1, maxLength: 100 },
+                        observations: {
+                            type: 'array',
+                            maxItems: 5000,
+                            items: {
+                                type: 'object',
+                                required: ['key', 'env', 'enabled'],
+                                additionalProperties: false,
+                                properties: {
+                                    key: FLAG_KEY,
+                                    env: { type: 'string', enum: ['test', 'qa', 'prod'] },
+                                    enabled: { type: 'boolean' },
+                                    // Accepted by the contract (FLAG-INGEST.pl.md) but not used yet.
+                                    observedAt: { type: 'string', maxLength: 64 },
+                                    changedBy: { type: 'string', maxLength: 100 },
+                                    value: {},
+                                    kind: { type: 'string', maxLength: 32 },
+                                },
+                            },
+                        },
+                        flags: {
+                            type: 'array',
+                            maxItems: 5000,
+                            items: {
+                                type: 'object',
+                                required: ['key'],
+                                additionalProperties: false,
+                                properties: {
+                                    key: FLAG_KEY,
+                                    description: { type: ['string', 'null'], maxLength: 500 },
+                                    jiraKeys: { type: 'array', maxItems: 50, uniqueItems: true, items: { type: 'string', pattern: '^[A-Z][A-Z0-9_]{0,19}-[1-9][0-9]{0,9}$' } },
+                                },
+                            },
+                        },
+                    },
+                },
+            },
+        }, async (request) => {
+            const match = /^Bearer (\S+)$/.exec(request.headers.authorization || '');
+            return ingestFlags(pool, { token: match ? match[1] : '', payload: request.body });
+        });
+
+        const tokenRepoParams = { type: 'object', required: ['tenantId', 'repoId'], properties: { tenantId: UUID_PARAM, repoId: GITHUB_ID_PARAM } };
+        app.post('/tenants/:tenantId/repos/:repoId/ingest-tokens', {
+            preHandler: requireUser,
+            schema: {
+                params: tokenRepoParams,
+                body: {
+                    type: 'object',
+                    required: ['label'],
+                    additionalProperties: false,
+                    properties: { label: { type: 'string', minLength: 1, maxLength: 100 } },
+                },
+            },
+        }, async (request, reply) => {
+            const created = await createIngestToken(pool, {
+                tenantId: request.params.tenantId, actorUserId: request.user.id, repoId: Number(request.params.repoId), label: request.body.label,
+            });
+            if (!created) return reply.code(404).send({ error: 'That repository is not tracked' });
+            return reply.code(201).send(created);
+        });
+
+        app.get('/tenants/:tenantId/ingest-tokens', {
+            preHandler: requireUser,
+            schema: { params: tenantOnlyParams },
+        }, async (request) => ({ tokens: await listIngestTokens(pool, { tenantId: request.params.tenantId, actorUserId: request.user.id }) }));
+
+        app.delete('/tenants/:tenantId/ingest-tokens/:tokenId', {
+            preHandler: requireUser,
+            schema: { params: { type: 'object', required: ['tenantId', 'tokenId'], properties: { tenantId: UUID_PARAM, tokenId: UUID_PARAM } } },
+        }, async (request, reply) => {
+            const removed = await revokeIngestToken(pool, { tenantId: request.params.tenantId, actorUserId: request.user.id, tokenId: request.params.tokenId });
+            if (!removed) return reply.code(404).send({ error: 'No such ingest token' });
+            return reply.code(204).send();
+        });
+    }
 
     // The dashboard for one tenant: the existing docs/ page, whose app-data.js recognizes /t/<tenantId>/ and
     // loads its data from /api/tenants/<tenantId>/dashboard-data instead of data/*.json.
