@@ -201,6 +201,95 @@ test('settings page: the Jira section offers the flag convention -- none, prefix
     assert.ok(!/save-flag-link/.test(str(ui.renderJira({ enabled: true, jira, boards: null, admin: false }))), 'members don\'t');
 });
 
+test('getting started: each step read off the loaded sections -- todo, waiting, problem, done, or off on this server', () => {
+    ui.settingsState.tenantId = TENANT;
+    const features = { githubApp: true, jira: true };
+    const empty = { features, github: { installations: [], repos: [] }, jira: { connected: false }, boards: null, sources: [], flagList: [], workspace: { members: [{}], invitations: [] } };
+    const states = (input) => Object.fromEntries(ui.onboardingSteps(input).map((st) => [st.id, st.state]));
+    const byId = (input) => Object.fromEntries(ui.onboardingSteps(input).map((st) => [st.id, st]));
+
+    assert.deepStrictEqual(states(empty), { 'github-app': 'todo', repos: 'todo', deployments: 'todo', jira: 'todo', boards: 'todo', flags: 'todo', team: 'todo' });
+    assert.deepStrictEqual(ui.onboardingSteps(empty).filter((st) => !st.optional).map((st) => st.id), ['github-app', 'repos', 'deployments'], 'GitHub is what a dashboard needs');
+    assert.strictEqual(byId(empty)['github-app'].href, `/tenants/${TENANT}/github/install`);
+    assert.strictEqual(byId(empty).jira.href, `/tenants/${TENANT}/jira/connect`);
+    assert.deepStrictEqual(states({ ...empty, github: null, jira: null, sources: null, workspace: null }),
+        { 'github-app': 'loading', repos: 'loading', deployments: 'loading', jira: 'loading', boards: 'loading', flags: 'loading', team: 'loading' });
+    assert.deepStrictEqual(states({ ...empty, features: { githubApp: false, jira: false } }), { 'github-app': 'unavailable', repos: 'unavailable', deployments: 'unavailable', jira: 'unavailable', boards: 'unavailable', flags: 'todo', team: 'todo' });
+
+    const repo = (extra) => ({ fullName: 'acme/web', deployments: 0, lastSyncedAt: null, lastSyncError: null, rateLimitedUntil: null, ...extra });
+    const gh = (...repos) => ({ installations: [{ accountLogin: 'acme' }], repos });
+    const dep = (github) => byId({ ...empty, github }).deployments;
+    assert.match(dep(gh(repo())).hint, /first sync runs within 15 minutes/);
+    assert.strictEqual(dep(gh(repo())).state, 'waiting');
+    assert.match(dep(gh(repo({ lastSyncedAt: '2026-10-16T10:00:00Z' }))).hint, /GitHub has no deployments .* "environment: test"/, 'synced but nothing deployed: how deployments come to exist');
+    assert.deepStrictEqual([dep(gh(repo({ lastSyncError: 'boom' }))).state, dep(gh(repo({ lastSyncError: 'boom' }))).hint], ['problem', 'The sync failed for acme/web: see the error under GitHub.']);
+    assert.match(dep(gh(repo({ rateLimitedUntil: '2026-10-16T12:00:00Z' }))).hint, /rate limit/);
+    assert.deepStrictEqual([dep(gh(repo({ deployments: 4 }), repo({ fullName: 'acme/api' }))).state, dep(gh(repo({ deployments: 4 }), repo({ fullName: 'acme/api' }))).hint],
+        ['done', 'Deployments from 1 of 2 repositories so far.']);
+
+    const site = { name: 'acme', url: 'https://acme.atlassian.net' };
+    const boards = (input) => byId({ ...empty, ...input }).boards;
+    assert.deepStrictEqual([byId({ ...empty, jira: { connected: true, site: null } }).jira.hint], ['Choose which Jira site to use.']);
+    assert.strictEqual(boards({ jira: { connected: true, site }, boards: null }).state, 'loading');
+    assert.strictEqual(boards({ jira: { connected: true, site }, boards: { error: 'Jira says no' } }).state, 'problem');
+    assert.strictEqual(boards({ jira: { connected: true, site }, boards: [{ selected: false }] }).state, 'todo');
+    assert.strictEqual(boards({ jira: { connected: true, site, lastSyncedAt: null }, boards: [{ selected: true }] }).state, 'waiting');
+    assert.strictEqual(boards({ jira: { connected: true, site, lastSyncedAt: '2026-10-16T10:00:00Z' }, boards: [{ selected: true }] }).state, 'done');
+
+    const flags = (input) => byId({ ...empty, ...input }).flags;
+    assert.match(flags({ sources: [{ name: 'LD', tokens: [{}] }, { name: 'Unused', tokens: [] }] }).hint, /first message from LD \(/);
+    assert.strictEqual(flags({ sources: [{ name: 'LD', tokens: [] }] }).state, 'todo', 'a source without a token can\'t send anything');
+    assert.strictEqual(flags({ sources: [{ name: 'LD', tokens: [{}] }], flagList: [{ key: 'a' }] }).state, 'done');
+    assert.strictEqual(flags({ sources: { error: 'nope' } }).state, 'problem');
+    assert.strictEqual(byId({ ...empty, workspace: { members: [{}], invitations: [{}] } }).team.state, 'waiting');
+    assert.strictEqual(byId({ ...empty, workspace: { members: [{}, {}], invitations: null } }).team.state, 'done');
+});
+
+test('getting started: the checklist renders progress; once GitHub is done it can be hidden, and comes back on request', async () => {
+    ui.settingsState.tenantId = TENANT;
+    const step = (id, state, optional = false, extra = {}) => ({ id, title: `Step ${id}`, state, optional, hint: `<b>${id}</b>`, href: '#x', cta: 'Do it', ...extra });
+    const fresh = str(ui.renderGettingStarted({ steps: [step('a', 'done'), step('b', 'todo'), step('c', 'waiting', true), step('d', 'unavailable', true)] }));
+    assert.match(fresh, /id="getting-started"/);
+    assert.match(fresh, /1 of 3 done\./, 'steps off on this server are not counted');
+    assert.match(fresh, /<li class="checklist-step todo">[\s\S]*?<a class="btn btn-primary" href="#x">Do it<\/a>/);
+    assert.ok(!/<li class="checklist-step done">[^]*?Do it[^]*?<\/li>\s*<li class="checklist-step todo"/.test(fresh), 'a done step has no button');
+    assert.match(fresh, /&lt;b&gt;a&lt;\/b&gt;/, 'hints are escaped');
+    assert.ok(!/hide-checklist/.test(fresh), 'not hideable before the dashboard has data');
+
+    const ready = [step('a', 'done'), step('b', 'done'), step('c', 'todo', true)];
+    const readyHtml = str(ui.renderGettingStarted({ steps: ready }));
+    assert.match(readyHtml, /2 of 3 done — the dashboard is ready/);
+    assert.match(readyHtml, /data-action="hide-checklist"/);
+    assert.strictEqual(str(ui.renderGettingStarted({ steps: ready, hidden: true })), '');
+    assert.match(str(ui.renderGettingStarted({ steps: [step('a', 'todo')], hidden: true })), /id="getting-started"/, 'hidden only once GitHub is done');
+    assert.match(str(ui.renderGettingStarted({ steps: [step('a', 'done'), step('c', 'done', true)] })), /All set/);
+
+    const stored = {};
+    global.localStorage = { getItem: (k) => stored[k] ?? null, setItem: (k, v) => { stored[k] = v; }, removeItem: (k) => { delete stored[k]; } };
+    try {
+        await ui.runAction('hide-checklist', button({}, 'getting-started'));
+        assert.deepStrictEqual(stored, { [`shipscope.checklistHidden.${TENANT}`]: '1' }, 'per workspace, in this browser');
+    } finally {
+        delete global.localStorage;
+    }
+});
+
+test('invitation page: what an invitee sees -- join, already a member, or a link that no longer works', () => {
+    const { invitationView } = require('../ui/invite.js');
+    const tenant = { id: 't1', name: 'Acme <Corp>' };
+    assert.deepStrictEqual(invitationView({ tenant, role: 'member', status: 'pending', alreadyMember: false }),
+        { title: 'Join Acme <Corp>', text: 'You are invited to join Acme <Corp> on ShipScope as a member (you see everything; admins change settings).', accept: true, open: null });
+    assert.match(invitationView({ tenant, role: 'admin', status: 'pending', alreadyMember: false }).text, /as an admin/);
+    assert.deepStrictEqual(invitationView({ tenant, role: 'member', status: 'pending', alreadyMember: true }),
+        { title: 'Acme <Corp>', text: 'You are already a member of Acme <Corp>.', accept: false, open: '/t/t1/' });
+    for (const [status, text] of [['accepted', /already been used/], ['revoked', /withdrawn/], ['expired', /expired/]]) {
+        const view = invitationView({ tenant, role: 'member', status, alreadyMember: false });
+        assert.deepStrictEqual([view.accept, view.open], [false, null], status);
+        assert.match(view.text, text);
+        assert.match(view.text, /Ask an admin of Acme <Corp> for a new link/);
+    }
+});
+
 test('settings page: form values, including a group of checkboxes', () => {
     assert.deepStrictEqual(ui.formValues(form([['boardIds', '10', true], ['boardIds', '11', false], ['boardIds', '12', true], ['note', 'x'], ['', 'ignored']])),
         { boardIds: ['10', '12'], note: 'x' });
@@ -322,9 +411,9 @@ test('settings assets: only the listed ui/ files are ever read, whatever else th
     const { loadUiAssets } = require('../lib/dashboard-assets');
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ui-'));
     t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
-    for (const name of ['settings.js', 'secret.js', '.env', 'settings.html', 'notes.md']) fs.writeFileSync(path.join(dir, name), name);
+    for (const name of ['settings.js', 'secret.js', '.env', 'settings.html', 'invite.html', 'invite.js', 'notes.md']) fs.writeFileSync(path.join(dir, name), name);
     const shared = new Map([['style.css', { body: 'css', type: 'text/css' }], ['app-data.js', { body: 'x', type: 'text/javascript' }]]);
-    assert.deepStrictEqual([...loadUiAssets(dir, shared).keys()].sort(), ['settings.html', 'settings.js', 'style.css']);
+    assert.deepStrictEqual([...loadUiAssets(dir, shared).keys()].sort(), ['invite.html', 'invite.js', 'settings.html', 'settings.js', 'style.css']);
     assert.deepStrictEqual([...loadUiAssets(path.join(dir, 'missing'), shared).keys()], ['style.css']);
 });
 
@@ -349,6 +438,36 @@ async function setup(t, options = {}) {
     return { app, alice, tenantId };
 }
 
+test('invitation link: a browser gets the page to join, other clients the JSON; signed out it goes through sign-in and back', async (t) => {
+    const { app, alice, tenantId } = await setup(t);
+    const link = new URL((await app.inject({ method: 'POST', url: `/tenants/${tenantId}/invitations`, cookies: { sid: alice }, payload: { role: 'member' } })).json().url).pathname;
+    const browser = { accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8' };
+
+    const anonymous = await app.inject({ method: 'GET', url: link, headers: browser });
+    assert.strictEqual(anonymous.headers.location, `/auth/github/login?returnTo=${encodeURIComponent(link)}`);
+    assert.strictEqual((await signInWithRedirect(app, 'bob', anonymous.headers.location)).location, link, 'back to the invitation after sign-in');
+
+    const bob = await signIn(app, 'bob');
+    const page = await app.inject({ method: 'GET', url: link, headers: browser, cookies: { sid: bob } });
+    assert.strictEqual(page.statusCode, 200);
+    assert.match(page.headers['content-type'], /^text\/html/);
+    assert.strictEqual(page.headers['referrer-policy'], 'same-origin', 'the token in the URL never leaves the site');
+    assert.match(page.body, /<script src="\/ui\/invite\.js"><\/script>/);
+    assert.ok(!page.body.includes('Acme'), 'the page itself holds nothing of the invitation; it asks for it');
+
+    const json = await app.inject({ method: 'GET', url: link, headers: { accept: 'application/json' }, cookies: { sid: bob } });
+    assert.deepStrictEqual(json.json(), { tenant: { id: tenantId, name: 'Acme' }, role: 'member', status: 'pending', alreadyMember: false });
+    assert.strictEqual((await app.inject({ method: 'GET', url: link, cookies: { sid: bob } })).json().status, 'pending', 'no accept header: JSON');
+    const accepted = await app.inject({ method: 'POST', url: `${link}/accept`, headers: { accept: 'application/json' }, cookies: { sid: bob } });
+    assert.strictEqual(accepted.statusCode, 201);
+    assert.deepStrictEqual(accepted.json(), { tenant: { id: tenantId, name: 'Acme' }, role: 'member' });
+
+    // An unknown link: the page loads and then says so (it reads the 404 below).
+    const unknown = `/invitations/${'A'.repeat(32)}`;
+    assert.strictEqual((await app.inject({ method: 'GET', url: unknown, headers: browser, cookies: { sid: bob } })).statusCode, 200);
+    assert.strictEqual((await app.inject({ method: 'GET', url: unknown, headers: { accept: 'application/json' }, cookies: { sid: bob } })).statusCode, 404);
+});
+
 test('settings page route: members only (any role), signed-out users go through sign-in and come back', async (t) => {
     const { app, alice, tenantId } = await setup(t);
     const page = `/t/${tenantId}/settings`;
@@ -372,7 +491,7 @@ test('settings page route: members only (any role), signed-out users go through 
 
 test('settings assets: only the page\'s own scripts and styles, plus the dashboard files they reuse', async (t) => {
     const { app } = await setup(t);
-    for (const [name, type] of [['settings.js', /javascript/], ['start.js', /javascript/], ['theme.js', /javascript/], ['settings.css', /css/], ['style.css', /css/], ['app-html.js', /javascript/], ['favicon.svg', /svg/]]) {
+    for (const [name, type] of [['settings.js', /javascript/], ['start.js', /javascript/], ['invite.js', /javascript/], ['theme.js', /javascript/], ['settings.css', /css/], ['style.css', /css/], ['app-html.js', /javascript/], ['favicon.svg', /svg/]]) {
         const res = await app.inject({ method: 'GET', url: `/ui/${name}` });
         assert.strictEqual(res.statusCode, 200, name);
         assert.match(res.headers['content-type'], type, name);

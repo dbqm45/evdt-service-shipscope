@@ -76,9 +76,11 @@ test('sync: records, issue keys from the commit range, rollback, skips, and a cu
             ? { status: 'behind', commits: [] }
             : { status: 'ahead', commits: [{ commit: { message: 'feat(x): ABC-3' } }, { commit: { message: 'ABC-4 and ABC-3' } }] }),
     };
-    const { sync, rows, calls } = await setup(t, { 'acme/web': web, 'acme/api': emptyRepo() });
+    const { sync, rows, calls, app, alice, tenantId } = await setup(t, { 'acme/web': web, 'acme/api': emptyRepo() });
 
     assert.deepStrictEqual(await sync(), { repos: 2, inserted: 4, failed: 0, deferred: 0 });
+    const listed = (await app.inject({ method: 'GET', url: `/tenants/${tenantId}/github`, cookies: { sid: alice } })).json().repos;
+    assert.deepStrictEqual(listed.map((r) => [r.fullName, r.deployments]), [['acme/api', 0], ['acme/web', 4]], 'what the setup checklist reads');
 
     const deps = await rows('SELECT deployment_id, environment, status, related_issues, rollback_to_sha, commit_url, deployed_by_login, duration_ms, workflow_run_url FROM deployments ORDER BY deployment_id');
     assert.deepStrictEqual(deps.map((d) => [Number(d.deployment_id), d.environment, d.status]), [

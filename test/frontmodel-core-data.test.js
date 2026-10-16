@@ -294,6 +294,23 @@ test('API mode: one request to the tenant API, live badge with the last sync tim
     assert.equal(boxes.statusBadgeLabel.textContent, 'Live');
     assert.match(boxes.statusBadgeTime.textContent, /^synced \d\d:\d\d · source: ShipScope API$/);
     assert.equal(boxes.settingsLink.hidden, false, 'the server\'s settings page is linked');
+    assert.equal(boxes.setupBanner.hidden, true, 'data: no "finish setting up" banner');
+});
+
+test('API mode: a workspace with no data yet points at its setup checklist; any data hides the banner', async () => {
+    for (const [body, hidden] of [
+        [{}, false],
+        [{ deployments: [], flagsMeta: {}, jiraIndex: { currentPi: null, pis: [] } }, false],
+        [{ flagsMeta: { newCheckout: {} } }, true],
+        [{ jiraIndex: { currentPi: 'PI-1', pis: [{ pi: 'PI-1' }] } }, true],
+    ]) {
+        const { boxes, run } = loadApp({ fetchImpl: () => jsonResponse(body), loc: apiLocation() });
+        await run('loadData()');
+        assert.equal(boxes.setupBanner.hidden, hidden, JSON.stringify(body));
+    }
+    const off = loadApp({ fetchImpl: () => jsonResponse({}, 500), loc: apiLocation() });
+    await off.run('loadData()');
+    assert.equal(off.boxes.setupBanner, undefined, 'an error is not "no data yet"');
 });
 
 test('API mode: one PI\'s issues come from the tenant API, never from data/jira-issues/*.json', async () => {

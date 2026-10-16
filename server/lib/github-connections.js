@@ -51,7 +51,7 @@ async function linkInstallation(pool, { tenantId, actorUserId, installation }) {
  *
  * @param {import('pg').Pool} pool
  * @param {{ tenantId: string, actorUserId: string }} input
- * @returns {Promise<{ installations: Array<{ installationId: number, accountLogin: string, accountType: string }>, repos: Array<{ repoId: number, fullName: string, installationId: number, lastSyncedAt: Date|null, lastSyncError: string|null, rateLimitedUntil: Date|null, versionFile: string|null, driftIgnorePaths: string[] }> }>}
+ * @returns {Promise<{ installations: Array<{ installationId: number, accountLogin: string, accountType: string }>, repos: Array<{ repoId: number, fullName: string, installationId: number, lastSyncedAt: Date|null, lastSyncError: string|null, rateLimitedUntil: Date|null, deployments: number, versionFile: string|null, driftIgnorePaths: string[] }> }>}
  */
 async function listConnections(pool, { tenantId, actorUserId }) {
     return withScope(pool, { tenantId }, async (client) => {
@@ -62,7 +62,8 @@ async function listConnections(pool, { tenantId, actorUserId }) {
         );
         const { rows: repos } = await client.query(
             `SELECT r.repo_id, r.full_name, r.installation_id, r.last_synced_at, r.last_sync_error, r.version_file, r.drift_ignore_paths,
-                    CASE WHEN i.rate_limited_until > now() THEN i.rate_limited_until END AS rate_limited_until
+                    CASE WHEN i.rate_limited_until > now() THEN i.rate_limited_until END AS rate_limited_until,
+                    (SELECT count(*) FROM deployments d WHERE d.tenant_id = r.tenant_id AND d.repo_id = r.repo_id)::int AS deployments
              FROM tracked_repos r
              LEFT JOIN github_installations i ON i.tenant_id = r.tenant_id AND i.installation_id = r.installation_id
              WHERE r.tenant_id = $1 ORDER BY r.full_name`,
@@ -77,6 +78,7 @@ async function listConnections(pool, { tenantId, actorUserId }) {
                 lastSyncedAt: r.last_synced_at,
                 lastSyncError: r.last_sync_error,
                 rateLimitedUntil: r.rate_limited_until,
+                deployments: r.deployments,
                 versionFile: r.version_file,
                 driftIgnorePaths: r.drift_ignore_paths,
             })),

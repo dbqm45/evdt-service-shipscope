@@ -29,7 +29,7 @@ function loadDashboardAssets(dir) {
 }
 
 // The server's own pages (ui/: settings, get started) and the dashboard files they reuse, served at /ui/<name>.
-const UI_PATTERN = /^(settings\.html|start\.html|settings\.js|start\.js|theme\.js|settings\.css)$/;
+const UI_PATTERN = /^(settings\.html|start\.html|invite\.html|settings\.js|start\.js|invite\.js|theme\.js|settings\.css)$/;
 const UI_SHARED = ['style.css', 'favicon.svg', 'app-html.js'];
 
 /**

@@ -129,6 +129,10 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
 .settings-link { color:var(--muted); font-size:12px; text-decoration:none; border:1px solid var(--border); border-radius:6px; padding:4px 10px; }
 .settings-link:hover, .settings-link:focus-visible { color:var(--text); border-color:var(--muted); }
 .settings-link[hidden] { display:none; }
+.setup-banner { margin:0 0 16px; padding:10px 14px; border:1px solid var(--run); border-radius:8px; font-size:13px; color:var(--text); }
+.setup-banner a { color:var(--run); font-weight:600; text-decoration:none; }
+.setup-banner a:hover, .setup-banner a:focus-visible { text-decoration:underline; }
+.setup-banner[hidden] { display:none; }
 header { display:flex; align-items:center; justify-content:space-between; margin-bottom:16px; flex-wrap:wrap; gap:10px; padding-bottom:16px; border-bottom:1px solid transparent; }
 .brand { display:flex; align-items:center; gap:11px; }
 .mark { width:36px; height:36px; box-sizing:border-box; border-radius:10px; flex:none; background:var(--brand-tile-bg); border:1px solid var(--brand-tile-border); color:var(--brand-accent); display:flex; align-items:center; justify-content:center; }

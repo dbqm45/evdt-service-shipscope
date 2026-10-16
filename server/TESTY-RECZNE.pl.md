@@ -244,16 +244,18 @@ Dwie umiejętności, które się przydadzą:
     samą stronę.
 22. W ustawieniach, sekcja **Workspace** → wybierz rolę `member` → **Create invitation link**. Powinien pojawić się
     link w żółtej ramce z napisem „shown only once”. Skopiuj go, potem kliknij **Done, I copied it**. Ramka znika.
-23. Otwórz ten link drugim kontem GitHub (okno incognito). Po zalogowaniu wklej w konsoli przeglądarki:
-
-    ```
-    fetch(location.pathname + '/accept', { method: 'POST' }).then(r => r.json()).then(console.log)
-    ```
-
-    Powinno być: w konsoli informacja o dołączeniu. Drugie konto, po otwarciu `<adres>`, widzi dashboard. Ustawienia
-    widzi bez przycisków zmian. U Ciebie w sekcji **Workspace** widać nowego członka.
+23. Otwórz ten link drugim kontem GitHub (okno incognito). Po zalogowaniu powinna pojawić się strona „Join Acme”
+    z opisem roli i przyciskiem **Join the workspace**. Kliknij go. Powinno przenieść na dashboard workspace'u.
+    Drugie konto widzi ustawienia bez przycisków zmian. U Ciebie w sekcji **Workspace** widać nowego członka.
+    Ponowne otwarcie tego samego linku pokazuje „You are already a member”.
 24. Jako jedyny admin kliknij **Leave** przy sobie. Powinien pojawić się czerwony komunikat, a Ty zostajesz w
     workspace (ostatniego admina nie da się usunąć).
+
+23a. Utwórz nowy workspace (`<adres>/start`) i otwórz jego dashboard. Powinien pojawić się pomarańczowy pasek
+    „This workspace has no data yet. Finish setting it up →”. Kliknij go: otwiera się **Getting started** w
+    ustawieniach z listą kroków (GitHub, repozytoria, pierwsze deploye, a dalej opcjonalnie Jira, tablice, flagi,
+    zespół). Przy każdym niezrobionym kroku jest przycisk, który prowadzi tam, gdzie się go robi. Po zrobieniu
+    kroków GitHuba pojawia się **Hide this checklist**; po ukryciu lista wraca z menu (**Getting started**).
 
 ### Repozytoria i deploye (GitHub)
 

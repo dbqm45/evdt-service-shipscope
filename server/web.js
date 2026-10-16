@@ -119,6 +119,8 @@ function splitCookie(value, first, second) {
  * @returns {import('fastify').FastifyInstance}
  */
 function buildApp({ pool, auth, githubApp = null, atlassian = null, fetch: fetchFn = fetch, logger = false, dashboardDir = DEFAULT_DASHBOARD_DIR }) {
+    // Set once the server's own pages are loaded (registerDashboardRoutes); routes registered earlier use it at request time.
+    let sendUiPage = null;
     const app = Fastify({
         // Fastify's defaults silently strip unknown body fields and coerce types (42 -> "42"). External
         // input is rejected instead of rewritten (CLAUDE.md: validate every external boundary).
@@ -378,10 +380,15 @@ function buildApp({ pool, auth, githubApp = null, atlassian = null, fetch: fetch
         return reply.code(204).send();
     });
 
+    // One URL, two answers: a browser opening the link it was sent gets the page to accept it (ui/invite.html,
+    // which reads the JSON below with `accept: application/json`); any other client gets the JSON preview.
     app.get('/invitations/:token', {
         preHandler: requireUserOrSignIn,
         schema: { params: { type: 'object', required: ['token'], properties: { token: TOKEN_PARAM } } },
-    }, async (request) => previewInvitation(pool, { token: request.params.token, userId: request.user.id }));
+    }, async (request, reply) => {
+        if (/\btext\/html\b/.test(request.headers.accept || '') && sendUiPage) return sendUiPage(reply, 'invite.html');
+        return previewInvitation(pool, { token: request.params.token, userId: request.user.id });
+    });
 
     app.post('/invitations/:token/accept', {
         preHandler: requireUser,
@@ -787,6 +794,7 @@ function buildApp({ pool, auth, githubApp = null, atlassian = null, fetch: fetch
             if (!page) return reply.code(503).send({ error: 'Settings files are not deployed' });
             return reply.headers({ ...DASHBOARD_HEADERS, 'content-type': page.type }).send(page.body);
         };
+        if (ui.has('invite.html')) sendUiPage = sendUi;
         app.get('/start', { preHandler: requireUserOrSignIn }, async (request, reply) => sendUi(reply, 'start.html'));
         app.get('/t/:tenantId/settings', {
             preHandler: requireUserOrSignIn,

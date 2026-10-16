@@ -456,6 +456,13 @@ async function loadApiData(tenantId){
         ? `synced ${new Date(data.lastSyncedAt).toLocaleTimeString('pl-PL', {hour:'2-digit', minute:'2-digit'})} · source: ShipScope API`
         : 'source: ShipScope API';
 
+    // A new workspace's dashboard is empty: point at what's left to set up rather than a blank page.
+    const nothingYet = !(data.deployments || []).length && !Object.keys(data.flagsMeta || {}).length && !((data.jiraIndex || {}).pis || []).length;
+    const setupBanner = document.getElementById('setupBanner');
+    if (setupBanner) {
+        setupBanner.hidden = !nothingYet;
+    }
+
     return { ...emptyDashboardData(), ...data, isFallback: false };
 }
 
