@@ -11,9 +11,13 @@ const AUTHORIZE_URL = 'https://auth.atlassian.com/authorize';
 const TOKEN_URL = 'https://auth.atlassian.com/oauth/token';
 const RESOURCES_URL = 'https://api.atlassian.com/oauth/token/accessible-resources';
 const API_BASE = 'https://api.atlassian.com/ex/jira';
-// Read-only: issues, users (assignees), boards and sprints (PI/sprint resolution); offline_access for a refresh
-// token, so the worker can sync without the user present.
-const SCOPES = ['read:jira-work', 'read:jira-user', 'read:board-scope:jira-software', 'read:sprint:jira-software', 'offline_access'];
+// Read-only: issues, users (assignees), boards and sprints (PI/sprint resolution), and the board's project (the
+// Agile board list needs read:project:jira besides read:board-scope); offline_access for a refresh token, so the
+// worker can sync without the user present. The authorize URL asks for exactly these: a scope only added in the
+// developer console is not granted.
+const SCOPES = [
+    'read:jira-work', 'read:jira-user', 'read:board-scope:jira-software', 'read:sprint:jira-software', 'read:project:jira', 'offline_access',
+];
 const REQUIRED_SITE_SCOPE = 'read:jira-work';
 const MAX_PAGES = 20;
 

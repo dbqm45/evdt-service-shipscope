@@ -171,14 +171,16 @@ widoczna dla użytkownika na ekranie zgody Atlassian.
 
 | Ustawienie | Wartość |
 |---|---|
-| Permissions → Jira API | `read:jira-work`, `read:jira-user` |
+| Permissions → Jira API | `read:jira-work`, `read:jira-user`, `read:project:jira` (ten ostatni wśród uprawnień szczegółowych / granular; bez niego lista tablic zwraca 401) |
 | Permissions → Jira Software (jeśli konsola pokazuje ją osobno) | `read:board-scope:jira-software`, `read:sprint:jira-software` |
 | Authorization → Callback URL | `<adres>/auth/atlassian/callback` (lokalnie `http://localhost:3000/auth/atlassian/callback`) |
 | Settings → Client ID / Secret | do `ATLASSIAN_CLIENT_ID` / `ATLASSIAN_CLIENT_SECRET` |
 | Dostęp / dystrybucja | do pracy lokalnej: prywatna (tylko Ty); do wdrożenia: udostępniona (inne firmy łączą swoje Jiry) — Atlassian wymaga wtedy danych dostawcy i polityki prywatności |
 
 `offline_access` (odświeżanie dostępu bez obecności użytkownika) ShipScope prosi sam przy łączeniu — w konsoli się
-go nie zaznacza. Wszystkie uprawnienia są tylko do odczytu.
+go nie zaznacza. Wszystkie uprawnienia są tylko do odczytu. ShipScope prosi dokładnie o zakresy z listy w kodzie
+(`SCOPES` w `server/lib/atlassian.js`) — sama zmiana w konsoli nic nie da, a po dodaniu nowego zakresu do kodu
+każdy tenant musi połączyć Jirę ponownie, żeby udzielić zgody na nowy zakres.
 
 Połączenie (admin tenanta): otwórz `/tenants/<id>/jira/connect`, zaakceptuj dostęp w Atlassian. Jeśli konto ma
 kilka witryn Jira, wybierz jedną: `PUT /tenants/<id>/jira/site` z `{ "cloudId": "..." }` (lista w

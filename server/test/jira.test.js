@@ -40,6 +40,7 @@ test('atlassian client: authorize URL asks for read scopes plus offline access; 
         state: 's1', response_type: 'code', prompt: 'consent',
     });
     assert.ok(SCOPES.includes('offline_access') && SCOPES.every((s) => s.startsWith('read:') || s === 'offline_access'), 'read-only');
+    assert.ok(SCOPES.includes('read:project:jira'), 'the Agile board list needs it');
 
     const reject = (status, body) => async () => json(body, status);
     await assert.rejects(exchangeCode({ clientId: 'c', clientSecret: 's', code: 'x', redirectUri: 'r', fetch: reject(200, { token_type: 'Bearer' }) }), /no access_token/);
