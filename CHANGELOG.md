@@ -7,6 +7,12 @@ dashboard, not a published package), so entries are grouped by date instead. See
 ShipScope is, `CLAUDE.md` for the technical reference, and `FAQ.md` for how specific numbers/badges are
 calculated.
 
+## [0.1.19] - 2026-10-16
+
+### Added
+
+- **SHP:** manage flags in settings and link them to Jira issues three ways (#30)
+
 ## [0.1.18] - 2026-10-16
 
 ### Added
