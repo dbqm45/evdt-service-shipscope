@@ -496,7 +496,7 @@ function buildApp({ pool, auth, githubApp = null, atlassian = null, fetch: fetch
             return reply.code(204).send();
         });
 
-        // FR-008: which Scrum boards to sync (a board's sprints define the PIs and scope the issues to its team).
+        // FR-008: which boards to sync (a board's sprints define the PIs and scope the issues to its team).
         app.get('/tenants/:tenantId/jira/boards', {
             preHandler: requireUser,
             schema: { params: tenantParams },

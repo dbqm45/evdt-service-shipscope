@@ -189,8 +189,10 @@ odwołany w Atlassian albo wygaśnie, `GET /tenants/<id>/jira` pokaże `lastErro
 
 Synchronizacja zadań (admin tenanta):
 
-1. Lista tablic Scrum z witryny: `GET /tenants/<id>/jira/boards`. Tablice Kanban się nie pojawiają — nie mają
-   sprintów, więc nie da się z nich wyznaczyć PI.
+1. Lista tablic z witryny: `GET /tenants/<id>/jira/boards`, z typem każdej: `scrum` (projekt company-managed),
+   `simple` (projekt team-managed) albo `kanban`. Wybrać można każdą oprócz kanban — ta nie ma sprintów, więc nie da
+   się z niej wyznaczyć PI. W projekcie team-managed sprinty muszą być włączone (w Jirze: ustawienia projektu →
+   Funkcje → Sprinty); tablica bez nich nic nie wnosi do synchronizacji.
 2. Wybór tablic: `PUT /tenants/<id>/jira/boards` z `{ "boardIds": [10, 11] }`. Tablica wyznacza zespół: synchronizowane
    są tylko zadania z jej sprintów.
 3. Synchronizacja od razu: `POST /tenants/<id>/jira/sync` (worker i tak robi to co przebieg, domyślnie co 15 minut).

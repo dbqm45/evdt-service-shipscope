@@ -6,7 +6,7 @@ const json = (body, status = 200) => new Response(JSON.stringify(body), { status
  * Fake Atlassian (auth.atlassian.com + api.atlassian.com).
  * - `codes`: authorization code -> the sites its grant covers ([{ id, url, name, scopes }]).
  * - Refresh tokens rotate: each refresh invalidates the token used and issues a new one.
- * - `jira`: cloudId -> { boards: [{ id, name, type, location }], sprints: { [boardId]: [...] }, fields: [...], issues: [raw] },
+ * - `jira`: cloudId -> { boards: [{ id, name, type, location }], sprints: { [boardId]: [...] } (a board missing here answers 400, as one without sprints does), fields: [...], issues: [raw] },
  *   served by the Agile board/sprint lists, /rest/api/3/field and /rest/api/3/search/jql (JQL: `sprint in (ids)` or
  *   `key in (keys)`, sprint ids matched against the `customfield_10020` entries). `pageSize` makes every list page short.
  * - `fail`: path substring -> HTTP status to answer with.
@@ -58,11 +58,15 @@ function fakeAtlassian({ codes = {}, offline = true, jira = {}, pageSize = 50, f
             return json(page(all, url));
         }
         if (path === '/rest/agile/1.0/board') {
-            assert.strictEqual(new URL(url).searchParams.get('type'), 'scrum');
-            return json(page((site.boards || []).filter((b) => b.type === 'scrum'), url));
+            const type = new URL(url).searchParams.get('type'); // like Atlassian: an optional filter on the board type
+            return json(page((site.boards || []).filter((b) => !type || b.type === type), url));
         }
         let sub = path.match(/^\/rest\/agile\/1\.0\/board\/(\d+)\/sprint$/);
-        if (sub) return json(page((site.sprints || {})[sub[1]] || [], url));
+        if (sub) {
+            // Like Atlassian: a board that doesn't use sprints answers 400.
+            const sprints = (site.sprints || {})[sub[1]];
+            return sprints ? json(page(sprints, url)) : json({ errorMessages: ['The board does not support sprints'] }, 400);
+        }
         if (path === '/rest/api/3/field') return json(site.fields || []);
         if (path === '/rest/api/3/search/jql') {
             const params = new URL(url).searchParams;

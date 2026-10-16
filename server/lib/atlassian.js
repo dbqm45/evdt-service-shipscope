@@ -22,10 +22,11 @@ const REQUIRED_SITE_SCOPE = 'read:jira-work';
 const MAX_PAGES = 20;
 
 class AtlassianError extends Error {
-    /** @param {string} message @param {{ reconnect?: boolean }} [options] reconnect: the stored grant is no longer valid */
-    constructor(message, { reconnect = false } = {}) {
+    /** @param {string} message @param {{ reconnect?: boolean, status?: number|null }} [options] reconnect: the stored grant is no longer valid; status: Atlassian's HTTP status */
+    constructor(message, { reconnect = false, status = null } = {}) {
         super(message);
         this.reconnect = reconnect;
+        this.status = status;
     }
 }
 
@@ -96,7 +97,7 @@ async function getJson(url, accessToken, fetchFn) {
     } catch (err) {
         throw new AtlassianError(`GET ${new URL(url).pathname} failed: ${err.message}`);
     }
-    if (!res.ok) throw new AtlassianError(`GET ${new URL(url).pathname} failed with HTTP ${res.status}`, { reconnect: res.status === 401 });
+    if (!res.ok) throw new AtlassianError(`GET ${new URL(url).pathname} failed with HTTP ${res.status}`, { reconnect: res.status === 401, status: res.status });
     return res.json();
 }
 
@@ -160,18 +161,21 @@ async function agilePages(url, accessToken, fetchFn, pick) {
 }
 
 /**
- * The site's Scrum boards (kanban boards have no sprints, so no PI).
+ * The site's boards with their type: `scrum` (company-managed), `simple` (a team-managed project's board, which may
+ * or may not use sprints) or `kanban` (no sprints). Not filtered by type: asking for `type=scrum` alone hides every
+ * team-managed project's board, sprints or not.
  *
  * @param {{ accessToken: string, cloudId: string, fetch?: typeof fetch }} input
- * @returns {Promise<Array<{ boardId: number, name: string, projectKey: string|null, projectName: string|null }>>}
+ * @returns {Promise<Array<{ boardId: number, name: string, type: string|null, projectKey: string|null, projectName: string|null }>>}
  * @throws {AtlassianError}
  */
 function fetchBoards({ accessToken, cloudId, fetch: fetchFn = fetch }) {
-    return agilePages(`${API_BASE}/${encodeURIComponent(cloudId)}/rest/agile/1.0/board?type=scrum`, accessToken, fetchFn, (b) => (
+    return agilePages(`${API_BASE}/${encodeURIComponent(cloudId)}/rest/agile/1.0/board`, accessToken, fetchFn, (b) => (
         Number.isSafeInteger(b?.id) && b.id > 0 && typeof b.name === 'string'
             ? {
                 boardId: b.id,
                 name: b.name.slice(0, 200),
+                type: typeof b.type === 'string' ? b.type.slice(0, 20) : null,
                 projectKey: typeof b.location?.projectKey === 'string' ? b.location.projectKey : null,
                 projectName: typeof b.location?.projectName === 'string' ? b.location.projectName.slice(0, 200) : null,
             }
@@ -182,13 +186,23 @@ function fetchBoards({ accessToken, cloudId, fetch: fetchFn = fetch }) {
 const isDate = (v) => typeof v === 'string' && !Number.isNaN(Date.parse(v));
 
 /**
- * Every sprint of a board (active, future and closed).
+ * Every sprint of a board (active, future and closed); none for a board that doesn't use sprints (Atlassian answers
+ * 400 for a kanban board, or a team-managed one with sprints turned off).
  *
  * @param {{ accessToken: string, cloudId: string, boardId: number, fetch?: typeof fetch }} input
  * @returns {Promise<Array<{ id: number, name: string, state: 'active'|'future'|'closed', startDate: string|null, endDate: string|null }>>}
  * @throws {AtlassianError}
  */
-function fetchSprints({ accessToken, cloudId, boardId, fetch: fetchFn = fetch }) {
+async function fetchSprints({ accessToken, cloudId, boardId, fetch: fetchFn = fetch }) {
+    try {
+        return await sprintPages({ accessToken, cloudId, boardId, fetchFn });
+    } catch (err) {
+        if (err instanceof AtlassianError && err.status === 400) return [];
+        throw err;
+    }
+}
+
+function sprintPages({ accessToken, cloudId, boardId, fetchFn }) {
     return agilePages(`${API_BASE}/${encodeURIComponent(cloudId)}/rest/agile/1.0/board/${boardId}/sprint`, accessToken, fetchFn, (sp) => (
         Number.isSafeInteger(sp?.id) && typeof sp.name === 'string' && ['active', 'future', 'closed'].includes(sp.state)
             ? { id: sp.id, name: sp.name.slice(0, 200), state: sp.state, startDate: isDate(sp.startDate) ? sp.startDate : null, endDate: isDate(sp.endDate) ? sp.endDate : null }
