@@ -4,7 +4,7 @@
 
 ShipScope ma jeden numer wersji zgodny z [Semantic Versioning 2.0.0](https://semver.org/lang/pl/)
 (`MAJOR.MINOR.PATCH`), zapisany w `package.json`, `server/package.json` i `server/package-lock.json` (`server/`
-wdraża się osobno, z `rootDir: server`, więc sam przechowuje numer). Wydaną wersję oznacza tag git `vX.Y.Z`, a do
+to osobna granica zależności z własnym `package.json`, więc sam przechowuje numer). Wydaną wersję oznacza tag git `vX.Y.Z`, a do
 każdego tagu powstaje [GitHub Release](https://github.com/dbqm45/evdt-service-shipscope/releases) z wpisem z
 `CHANGELOG.md`. Działający serwer podaje numer w `GET /health` (`version`).
 

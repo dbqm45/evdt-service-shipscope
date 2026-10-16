@@ -313,14 +313,24 @@ generated key pair whose public half the fake GitHub uses to verify every App JW
 
 ## Deployment
 
-Declared as Render Blueprint services in `@render.yaml` at the repo root (`rootDir: server` for both the Web
-Service and the Background Worker). The Web Service refuses to start without `GITHUB_APP_CLIENT_ID`,
-`GITHUB_APP_CLIENT_SECRET` and `PUBLIC_BASE_URL` (or with only some of `GITHUB_APP_ID`, `GITHUB_APP_SLUG`,
-`GITHUB_APP_PRIVATE_KEY`); set them in Render's environment settings (they're declared
-with `sync: false`, so Render asks for them and never reads them from the repo). The dashboard files are read from `../docs` (override with `DASHBOARD_DIR`); with `rootDir: server`, check
-after the first deploy that `/t/<tenantId>/` doesn't answer 503 (the log says "dashboard files not found" if
-Render's build doesn't include the repo's `docs/`). For instant updates set `GITHUB_APP_WEBHOOK_SECRET` (web) and `PUBLIC_BASE_URL` on the worker too (it registers the
-Jira webhooks). Migrations are not run
-automatically on deploy yet: run `npm run migrate` against the Render database after a deploy that adds one.
+Declared as a Render Blueprint in `@render.yaml` at the repo root: the Web Service, the Background Worker and the
+Postgres database. Step-by-step setup (in Polish): `SETUP.pl.md`, section 6.
+
+- **Both services build and start from the repo root** (`npm ci --prefix server`, `node server/web.js` /
+  `node server/worker.js`), not with `rootDir: server`: Render makes files outside a service's root directory
+  unavailable at build and run time, and the Web Service serves the dashboard and settings pages from `docs/`
+  (read from `../docs`, override with `DASHBOARD_DIR`). `buildFilter` limits auto-deploys to `server/**` (plus the
+  dashboard's own `docs/*.{html,css,js,svg}` for the web service), so data commits never redeploy.
+- **Migrations run before every deploy** (`preDeployCommand: node server/scripts/migrate.js` on both services).
+  `lib/migrate.js` holds a Postgres advisory lock, so the two services' pre-deploys never apply a file twice; a
+  migration that fails stops that deploy and the previous version keeps serving. Migrations are forward-only.
+- **Configuration**: every secret is `sync: false` (Render asks for it; it never comes from the file). The Web
+  Service refuses to start without `GITHUB_APP_CLIENT_ID`, `GITHUB_APP_CLIENT_SECRET` and `PUBLIC_BASE_URL` (or with
+  only some of a group: `GITHUB_APP_ID`/`SLUG`/`PRIVATE_KEY`, `ATLASSIAN_*`/`TOKEN_ENCRYPTION_KEY`). For instant
+  updates set `GITHUB_APP_WEBHOOK_SECRET` (web) and `PUBLIC_BASE_URL` on the worker too (it registers the Jira
+  webhooks). `server/test/render-blueprint.test.js` checks the file against the code: no `rootDir`, the commands,
+  the build filter, every variable the config reads declared on the service that reads it, secrets never inline.
+- **Health**: `GET /health` (Render's health check, also reports the version) and `GET /health/db`.
+
 See `@context/foundation/infrastructure.md`'s "Getting Started" and "Operational Story" sections for the full
 deploy/rollback/secrets workflow.
