@@ -29,6 +29,14 @@ services:
         sync: false
       - key: GITHUB_APP_PRIVATE_KEY
         sync: false
+      # Connecting Jira (FR-007): the Atlassian OAuth 2.0 (3LO) app and the key that encrypts stored Jira
+      # tokens (openssl rand -base64 32). All three, or none. Changing the key makes every tenant reconnect Jira.
+      - key: ATLASSIAN_CLIENT_ID
+        sync: false
+      - key: ATLASSIAN_CLIENT_SECRET
+        sync: false
+      - key: TOKEN_ENCRYPTION_KEY
+        sync: false
 
   - type: worker
     name: shipscope-worker

@@ -3,7 +3,9 @@ const path = require('path');
 const Fastify = require('fastify');
 const cookie = require('@fastify/cookie');
 const { createPool, checkConnection } = require('./lib/db');
-const { loadAuthConfig, loadGitHubAppConfig } = require('./lib/config');
+const { loadAuthConfig, loadGitHubAppConfig, loadAtlassianConfig } = require('./lib/config');
+const { AtlassianError, buildAuthorizeUrl: buildAtlassianAuthorizeUrl, exchangeCode: exchangeAtlassianCode, fetchJiraSites } = require('./lib/atlassian');
+const { JiraNotConnectedError, JiraSiteError, saveConnection, getConnection, selectSite, disconnect, listProjects } = require('./lib/jira-connections');
 const { APP_VERSION } = require('./lib/version');
 const { buildAuthorizeUrl, exchangeCode, fetchGitHubUser, GitHubOAuthError } = require('./lib/github-oauth');
 const { createSession, getSessionUser, deleteSession } = require('./lib/sessions');
@@ -37,6 +39,8 @@ const RETURN_TO_COOKIE = 'oauth_return_to';
 // /github/setup through a fresh sign-in to the callback, where the user's own token proves access.
 const INSTALL_COOKIE = 'gh_install';
 const LINK_COOKIE = 'gh_link';
+// FR-007: the Jira OAuth state plus the tenant, from /tenants/:id/jira/connect to /auth/atlassian/callback.
+const JIRA_CONNECT_COOKIE = 'jira_connect';
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const DASHBOARD_HEADERS = {
     'cache-control': 'no-cache',
@@ -72,6 +76,9 @@ const ERROR_STATUS = [
     [IngestPayloadError, 400],
     [FlagSourceNotFoundError, 404],
     [FlagSourceConflictError, 409],
+    [JiraNotConnectedError, 409],
+    [JiraSiteError, 400],
+    [AtlassianError, 502],
 ];
 
 /** Drops the query string and masks invitation tokens, which work like passwords until accepted. */
@@ -98,10 +105,10 @@ function splitCookie(value, first, second) {
  *
  * The dashboard (docs/) is served at /t/<tenantId>/ from `dashboardDir`.
  *
- * @param {{ pool: import('pg').Pool, auth?: ReturnType<typeof loadAuthConfig>, githubApp?: ReturnType<typeof loadGitHubAppConfig>, fetch?: typeof fetch, logger?: boolean|object, dashboardDir?: string }} options
+ * @param {{ pool: import('pg').Pool, auth?: ReturnType<typeof loadAuthConfig>, githubApp?: ReturnType<typeof loadGitHubAppConfig>, atlassian?: ReturnType<typeof loadAtlassianConfig>, fetch?: typeof fetch, logger?: boolean|object, dashboardDir?: string }} options
  * @returns {import('fastify').FastifyInstance}
  */
-function buildApp({ pool, auth, githubApp = null, fetch: fetchFn = fetch, logger = false, dashboardDir = DEFAULT_DASHBOARD_DIR }) {
+function buildApp({ pool, auth, githubApp = null, atlassian = null, fetch: fetchFn = fetch, logger = false, dashboardDir = DEFAULT_DASHBOARD_DIR }) {
     const app = Fastify({
         // Fastify's defaults silently strip unknown body fields and coerce types (42 -> "42"). External
         // input is rejected instead of rewritten (CLAUDE.md: validate every external boundary).
@@ -121,7 +128,11 @@ function buildApp({ pool, auth, githubApp = null, fetch: fetchFn = fetch, logger
         const mapped = ERROR_STATUS.find(([type]) => err instanceof type);
         if (mapped) {
             if (err instanceof GitHubApiError) request.log.warn({ err: err.message }, 'GitHub API call failed');
-            const body = { error: err instanceof GitHubApiError ? 'GitHub request failed; please try again' : err.message };
+            if (err instanceof AtlassianError) request.log.warn({ err: err.message }, 'Atlassian API call failed');
+            const body = {
+                error: err instanceof GitHubApiError ? 'GitHub request failed; please try again'
+                    : err instanceof AtlassianError ? 'Jira request failed; please try again' : err.message,
+            };
             if (err instanceof InvitationUnusableError) body.status = err.status;
             return reply.code(mapped[1]).send(body);
         }
@@ -397,6 +408,99 @@ function buildApp({ pool, auth, githubApp = null, fetch: fetchFn = fetch, logger
     registerFlagRoutes();
     registerDashboardRoutes();
     if (githubApp) registerGitHubRoutes();
+    if (atlassian) registerJiraRoutes();
+
+    // FR-007: connecting the tenant's Jira Cloud through Atlassian OAuth 2.0 (3LO), admins only. The OAuth state
+    // round-trips through a cookie that also names the tenant, so the callback knows where the grant belongs and
+    // a crafted callback URL can't attach someone's grant to another tenant.
+    function registerJiraRoutes() {
+        const tenantParams = { type: 'object', required: ['tenantId'], properties: { tenantId: UUID_PARAM } };
+        const jiraCookie = { ...baseCookie, path: '/auth/atlassian', maxAge: STATE_TTL_SECONDS };
+        const jiraRedirectUri = `${auth.publicBaseUrl}/auth/atlassian/callback`;
+
+        app.get('/tenants/:tenantId/jira/connect', {
+            preHandler: requireUser,
+            schema: { params: tenantParams },
+        }, async (request, reply) => {
+            await assertAdminOf(request.params.tenantId, request.user.id);
+            const state = crypto.randomBytes(16).toString('base64url');
+            reply.setCookie(JIRA_CONNECT_COOKIE, `${state}.${request.params.tenantId}`, jiraCookie);
+            return reply.redirect(buildAtlassianAuthorizeUrl({ clientId: atlassian.clientId, redirectUri: jiraRedirectUri, state }));
+        });
+
+        app.get('/auth/atlassian/callback', {
+            preHandler: requireUser,
+            schema: {
+                querystring: {
+                    type: 'object',
+                    required: ['state'],
+                    properties: {
+                        code: { type: 'string', minLength: 1, maxLength: 2048 },
+                        state: { type: 'string', minLength: 1, maxLength: 64 },
+                        error: { type: 'string', maxLength: 200 },
+                    },
+                },
+            },
+        }, async (request, reply) => {
+            const pending = splitCookie(request.cookies[JIRA_CONNECT_COOKIE], /^[A-Za-z0-9_-]{22}$/, UUID_PATTERN);
+            reply.clearCookie(JIRA_CONNECT_COOKIE, jiraCookie);
+            if (!pending || !safeEqual(pending[0], request.query.state)) {
+                return reply.code(400).send({ error: 'Invalid or expired Jira connection attempt; please start again from ShipScope' });
+            }
+            const tenantId = pending[1];
+            // The user declined on Atlassian's consent screen (or Atlassian refused): nothing to store.
+            if (request.query.error || !request.query.code) {
+                return reply.code(400).send({ error: 'Jira was not connected (access was not granted)' });
+            }
+            await assertAdminOf(tenantId, request.user.id);
+            const tokens = await exchangeAtlassianCode({
+                clientId: atlassian.clientId, clientSecret: atlassian.clientSecret, code: request.query.code, redirectUri: jiraRedirectUri, fetch: fetchFn,
+            });
+            if (!tokens.refreshToken) {
+                return reply.code(502).send({ error: 'Atlassian did not grant offline access; check the app\'s permissions and connect again' });
+            }
+            const sites = await fetchJiraSites({ accessToken: tokens.accessToken, fetch: fetchFn });
+            if (!sites.length) return reply.code(400).send({ error: 'This Atlassian account has no Jira site ShipScope can read' });
+            await saveConnection(pool, {
+                tenantId, actorUserId: request.user.id, refreshToken: tokens.refreshToken, scopes: tokens.scopes, sites, encryptionKey: atlassian.encryptionKey,
+            });
+            return reply.redirect(`/tenants/${tenantId}/jira`);
+        });
+
+        app.get('/tenants/:tenantId/jira', {
+            preHandler: requireUser,
+            schema: { params: tenantParams },
+        }, async (request) => getConnection(pool, { tenantId: request.params.tenantId, actorUserId: request.user.id }));
+
+        app.put('/tenants/:tenantId/jira/site', {
+            preHandler: requireUser,
+            schema: {
+                params: tenantParams,
+                body: {
+                    type: 'object',
+                    required: ['cloudId'],
+                    additionalProperties: false,
+                    properties: { cloudId: { type: 'string', pattern: '^[A-Za-z0-9-]{1,64}$' } },
+                },
+            },
+        }, async (request) => selectSite(pool, { tenantId: request.params.tenantId, actorUserId: request.user.id, cloudId: request.body.cloudId }));
+
+        app.delete('/tenants/:tenantId/jira', {
+            preHandler: requireUser,
+            schema: { params: tenantParams },
+        }, async (request, reply) => {
+            const removed = await disconnect(pool, { tenantId: request.params.tenantId, actorUserId: request.user.id });
+            if (!removed) return reply.code(404).send({ error: 'Jira is not connected' });
+            return reply.code(204).send();
+        });
+
+        app.get('/tenants/:tenantId/jira/projects', {
+            preHandler: requireUser,
+            schema: { params: tenantParams },
+        }, async (request) => ({
+            projects: await listProjects(pool, { tenantId: request.params.tenantId, actorUserId: request.user.id, atlassian, fetch: fetchFn }),
+        }));
+    }
 
     // Feature flags, pushed from outside (lib/flags.js, contract schemaVersion 2): admins name the tenant's flag
     // sources ("LaunchDarkly", "Frontend CI", ...) and each sends the full state of its flags with its own token.
@@ -722,8 +826,9 @@ function buildApp({ pool, auth, githubApp = null, fetch: fetchFn = fetch, logger
 if (require.main === module) {
     const auth = loadAuthConfig(process.env);
     const githubApp = loadGitHubAppConfig(process.env);
+    const atlassian = loadAtlassianConfig(process.env);
     const pool = createPool();
-    const app = buildApp({ pool, auth, githubApp, logger: true, dashboardDir: process.env.DASHBOARD_DIR || DEFAULT_DASHBOARD_DIR });
+    const app = buildApp({ pool, auth, githubApp, atlassian, logger: true, dashboardDir: process.env.DASHBOARD_DIR || DEFAULT_DASHBOARD_DIR });
     const port = Number(process.env.PORT) || 3000;
     app.listen({ port, host: '0.0.0.0' }).catch((err) => {
         console.error(err);
