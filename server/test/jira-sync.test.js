@@ -1,7 +1,10 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const crypto = require('crypto');
-const { piOfSprint, currentPiOf, previousPiOf, issueType, mapIssue, comparePiDesc, compileTemplate, rhythmOf, RhythmTemplateError } = require('../lib/jira-model');
+const {
+    piOfSprint, currentPiOf, previousPiOf, issueType, mapIssue, comparePiDesc, compileTemplate, rhythmOf, RhythmTemplateError,
+    releaseName, currentReleaseOf, previousReleaseOf, flowMonth, releaseJql, flowJql,
+} = require('../lib/jira-model');
 
 const FIELD_IDS = { sprintFieldId: 'customfield_10020', epicLinkFieldId: 'customfield_10014', flaggedFieldId: 'customfield_10021' };
 const sp = (id, name, state, startDate = null, endDate = null) => ({ id, name, state, startDate, endDate });
@@ -57,6 +60,41 @@ test('jira model: rhythms -- SAFe PIs, every sprint on its own, auto-detected, o
     assert.ok(Date.now() - t0 < 1000);
 });
 
+test('jira model: boards without sprints -- releases by fixVersion, or Kanban flow by calendar month', () => {
+    const auto = { rhythm: 'auto', piTemplate: null };
+    const v = (id, name, released, releaseDate = null, startDate = null) => ({ id, name, released, releaseDate, startDate });
+    assert.strictEqual(rhythmOf(auto, [], [v('1', '1.0', false)]).kind, 'release', 'no sprints, an unreleased version: releases');
+    assert.strictEqual(rhythmOf(auto, [], [v('1', '1.0', true)]).kind, 'flow', 'only past releases: nothing to follow but the flow');
+    assert.strictEqual(rhythmOf(auto, []).kind, 'flow');
+    assert.strictEqual(rhythmOf(auto, [sp(1, 'Sprint 1', 'active')], [v('1', '1.0', false)]).kind, 'sprint', 'sprints win over versions');
+    assert.strictEqual(rhythmOf({ rhythm: 'release', piTemplate: null }, [sp(1, 'Sparks 27.3.1', 'active')]).kind, 'release');
+    assert.strictEqual(rhythmOf({ rhythm: 'flow', piTemplate: null }, []).kind, 'flow');
+
+    const versions = [v('10', '1.0', true, '2026-07-01'), v('11', '1.1', true, '2026-09-01'), v('13', '2.0', false), v('12', '1.2', false, '2026-11-01')];
+    assert.strictEqual(currentReleaseOf(versions).name, '1.2', 'the unreleased one due first; one without a date after it');
+    assert.strictEqual(previousReleaseOf(versions, currentReleaseOf(versions)).name, '1.1', 'the newest released');
+    const shipped = versions.filter((x) => x.released);
+    assert.strictEqual(currentReleaseOf(shipped).name, '1.1', 'everything released: the last one');
+    assert.strictEqual(previousReleaseOf(shipped, currentReleaseOf(shipped)).name, '1.0');
+    assert.strictEqual(previousReleaseOf(shipped, shipped[0]), null);
+    assert.strictEqual(currentReleaseOf([v('1', 'Beta', false), v('2', 'Alpha', false)]).name, 'Alpha', 'undated: by name');
+    assert.strictEqual(currentReleaseOf([v('1', '2.5', false), v('2', '3.0', false, '2026-11-01')]).name, '3.0', 'a due date comes before name order');
+    assert.strictEqual(currentReleaseOf([]), null);
+    assert.deepStrictEqual([releaseName('PAY', '1.2'), releaseName('PAY', 'pay-2026.10')], ['PAY 1.2', 'pay-2026.10']);
+
+    assert.deepStrictEqual(flowMonth(new Date('2026-10-16T12:00:00Z')), { name: 'Flow 2026-10', start: '2026-10-01', end: '2026-11-01' });
+    assert.deepStrictEqual(flowMonth(new Date('2026-01-31T23:00:00Z'), -1), { name: 'Flow 2025-12', start: '2025-12-01', end: '2026-01-01' });
+    assert.deepStrictEqual(flowMonth(new Date('2026-12-05T00:00:00Z')).end, '2027-01-01');
+    const month = flowMonth(new Date('2026-10-16T12:00:00Z'));
+    assert.strictEqual(flowJql('SUP', month, true), 'project = "SUP" AND (statusCategory = "In Progress" OR resolved >= "2026-10-01" AND resolved < "2026-11-01") ORDER BY key');
+    assert.strictEqual(flowJql('SUP', month, false), 'project = "SUP" AND (resolved >= "2026-10-01" AND resolved < "2026-11-01") ORDER BY key');
+    assert.strictEqual(releaseJql('PAY', '10012'), 'project = "PAY" AND fixVersion = 10012 ORDER BY key');
+    for (const bad of [() => releaseJql('PAY" OR x', '1'), () => releaseJql('PAY', '1 OR 1=1'), () => flowJql('sup', month, true)]) assert.throws(bad);
+
+    const issue = mapIssue(raw('SUP-1', 'Task'), FIELD_IDS, { pi: 'Flow 2026-10', sprintsInScope: new Map(), sprint: 'Flow 2026-10' });
+    assert.strictEqual(issue.sprint, 'Flow 2026-10', 'a release or a flow month is its own sprint');
+});
+
 test('jira model: an issue mapped to the dashboard shape, its sprint taken from the board being synced', () => {
     const scope = { pi: 'PI-27.3', sprintsInScope: new Map([[2, sp(2, 'Sparks 27.3.1', 'closed')], [3, sp(3, 'Sparks 27.3.2', 'active')]]) };
     const issue = mapIssue(raw('ABC-1', 'Story', [{ id: 2, name: 'Sparks 27.3.1' }, { id: 3, name: 'Sparks 27.3.2' }, { id: 99, name: 'Rocket 27.3.9' }], {
@@ -106,7 +144,7 @@ function siteData() {
         boards: [
             { id: 10, name: 'Sparks', type: 'scrum', location: { projectKey: 'ABC', projectName: 'eMobility Sparks' } },
             { id: 11, name: 'Rocket', type: 'scrum', location: { projectKey: 'ABC', projectName: 'eMobility Sparks' } },
-            { id: 12, name: 'Support', type: 'kanban' },
+            { id: 12, name: 'Support', type: 'kanban', location: { projectKey: 'SUP', projectName: 'Support' } },
             { id: 13, name: 'Labs board', type: 'simple', location: { projectKey: 'LAB', projectName: 'Labs' } },
             { id: 14, name: 'Ops board', type: 'simple', location: { projectKey: 'OPS', projectName: 'Ops' } },
         ],
@@ -154,23 +192,23 @@ async function setup(t, { sites = [SITE_A], pageSize = 50 } = {}) {
     return { pool, app, alice, tenantId, call, api, rows, jira, atlassian, fetch };
 }
 
-test('FR-008: admins see every board of the site with its type and choose which to sync; kanban boards and unknown ids are refused', async (t) => {
+test('FR-008: admins see every board of the site with its type and choose which to sync (kanban too); unknown ids are refused', async (t) => {
     const { app, tenantId, call } = await setup(t, { pageSize: 1 });
     const boards = await call('GET', '/jira/boards');
     assert.strictEqual(boards.statusCode, 200, boards.body);
     assert.deepStrictEqual(boards.json().boards, [
         { boardId: 10, name: 'Sparks', type: 'scrum', projectKey: 'ABC', projectName: 'eMobility Sparks', selected: false },
         { boardId: 11, name: 'Rocket', type: 'scrum', projectKey: 'ABC', projectName: 'eMobility Sparks', selected: false },
-        { boardId: 12, name: 'Support', type: 'kanban', projectKey: null, projectName: null, selected: false },
+        { boardId: 12, name: 'Support', type: 'kanban', projectKey: 'SUP', projectName: 'Support', selected: false },
         { boardId: 13, name: 'Labs board', type: 'simple', projectKey: 'LAB', projectName: 'Labs', selected: false },
         { boardId: 14, name: 'Ops board', type: 'simple', projectKey: 'OPS', projectName: 'Ops', selected: false },
     ], 'team-managed (simple) boards are listed too: filtering on type=scrum hid them');
 
     assert.strictEqual((await call('PUT', '/jira/boards', { boardIds: [10] })).statusCode, 200);
     assert.deepStrictEqual((await call('GET', '/jira/boards')).json().boards.filter((b) => b.selected).map((b) => b.boardId), [10]);
-    const kanban = await call('PUT', '/jira/boards', { boardIds: [10, 12] });
-    assert.match(kanban.json().error, /kanban board: it has no sprints/);
-    for (const [payload, code] of [[{ boardIds: [12] }, 400], [{ boardIds: [999] }, 400], [{ boardIds: ['10'] }, 400], [{ boardIds: [10, 10] }, 400], [{}, 400]]) {
+    assert.strictEqual((await call('PUT', '/jira/boards', { boardIds: [10, 12] })).statusCode, 200, 'a kanban board syncs as a flow');
+    assert.match((await call('PUT', '/jira/boards', { boardIds: [10, 999] })).json().error, /Board 999 is not on the connected Jira site/);
+    for (const [payload, code] of [[{ boardIds: [999] }, 400], [{ boardIds: ['10'] }, 400], [{ boardIds: [10, 10] }, 400], [{}, 400]]) {
         assert.strictEqual((await call('PUT', '/jira/boards', payload)).statusCode, code, JSON.stringify(payload));
     }
 
@@ -254,12 +292,13 @@ test('FR-009: the worker syncs every connected tenant; a failing one is recorded
     assert.strictEqual((await pool.query('SELECT * FROM jira_issues')).rows.length, 0, 'RLS: unscoped reads see nothing');
 });
 
-test('FR-009: a team-managed board with sprints syncs by sprint; one with sprints turned off adds nothing and fails nothing', async (t) => {
+test('FR-009: a team-managed board with sprints syncs by sprint; one with sprints turned off is a (here empty) flow and fails nothing', async (t) => {
     const { call, api } = await setup(t);
     assert.strictEqual((await call('PUT', '/jira/boards', { boardIds: [13, 14] })).statusCode, 200);
     const sync = await call('POST', '/jira/sync');
     assert.strictEqual(sync.statusCode, 200, sync.body);
-    assert.deepStrictEqual(sync.json(), { boards: 2, issues: 1, currentPi: 'Sprint 7' }, 'sprints not named after a PI are their own increment; the previous one (Sprint 6) is empty');
+    assert.deepStrictEqual(sync.json(), { boards: 2, issues: 1, currentPi: 'Sprint 7' },
+        'sprints not named after a PI are their own increment; the previous one (Sprint 6) is empty; an empty flow month is not "now"');
     assert.deepStrictEqual((await api('/jira-issues?pi=Sprint 7')).map((i) => [i.key, i.sprint]), [['LAB-1', 'Sprint 7']]);
     assert.strictEqual((await call('GET', '/jira')).json().lastError, null);
 });
@@ -306,6 +345,8 @@ test('board rhythm: an admin sets it per board (with an own PI naming); a change
     for (const [boardId, payload] of [
         [13, { rhythm: 'pi', piTemplate: 'no placeholder' }],
         [13, { rhythm: 'sprint', piTemplate: 'Sprint {pi}' }],
+        [13, { rhythm: 'release', piTemplate: 'Sprint {pi}' }],
+        [13, { rhythm: 'flow', piTemplate: 'Sprint {pi}' }],
         [11, { rhythm: 'pi', piTemplate: null }],
         [13, { rhythm: 'weekly', piTemplate: null }],
         [13, { rhythm: 'pi' }],
@@ -318,3 +359,57 @@ test('board rhythm: an admin sets it per board (with an own PI naming); a change
     assert.strictEqual((await put(13, { rhythm: 'auto', piTemplate: null }, bob)).statusCode, 403);
 });
 
+
+test('releases: a board in the release rhythm syncs its project\'s current fixVersion (and the last released one, first time)', async (t) => {
+    const { call, api, jira } = await setup(t);
+    const site = jira['cloud-a'];
+    const version = (id, name, released, releaseDate, archived = false) => ({ id, name, released, releaseDate, archived, self: 'x' });
+    site.versions = { ABC: [version('10', '1.0', true, '2026-07-01'), version('11', '1.1', true, '2026-09-01'), version('12', '1.2', false, '2026-11-01'),
+        version('9', '1.3', false, '2026-10-20', true)] };
+    const fix = (id) => ({ fixVersions: [{ id }], project: { key: 'ABC', name: 'eMobility Sparks' } });
+    site.issues.push(raw('ABC-20', 'Story', [], fix('12')), raw('ABC-21', 'Bug', [], fix('11')), raw('ABC-22', 'Task', [], fix('10')), raw('ABC-23', 'Task', [], fix('9')));
+
+    await call('PUT', '/jira/boards', { boardIds: [11] });
+    assert.strictEqual((await call('PUT', '/jira/boards/11', { rhythm: 'release', piTemplate: null })).statusCode, 200);
+    assert.deepStrictEqual((await call('POST', '/jira/sync')).json(), { boards: 1, issues: 2, currentPi: 'ABC 1.2' }, 'the archived 1.3 is not a release to follow');
+
+    const { jiraIndex } = await api('/dashboard-data');
+    assert.deepStrictEqual(jiraIndex.pis.map((p) => [p.pi, p.kind, p.sprints]), [
+        ['ABC 1.2', 'release', [{ name: 'ABC 1.2', startDate: null, endDate: '2026-11-01' }]],
+        ['ABC 1.1', 'release', [{ name: 'ABC 1.1', startDate: null, endDate: '2026-09-01' }]],
+    ]);
+    assert.deepStrictEqual((await api('/jira-issues?pi=ABC 1.2')).map((i) => [i.key, i.pi, i.sprint]), [['ABC-20', 'ABC 1.2', 'ABC 1.2']]);
+
+    // 1.2 ships: the next one due is current; the board has issues, so the previous release is not fetched again.
+    site.versions.ABC[2].released = true;
+    site.versions.ABC.push(version('14', '1.4', false, '2026-12-01'));
+    site.issues.push(raw('ABC-24', 'Story', [], fix('14')));
+    assert.deepStrictEqual((await call('POST', '/jira/sync')).json(), { boards: 1, issues: 1, currentPi: 'ABC 1.4' });
+});
+
+test('flow: a kanban board syncs by calendar month -- resolved in it, plus what is in progress now -- and joins the others on "Now"', async (t) => {
+    const { call, api, jira } = await setup(t);
+    const site = jira['cloud-a'];
+    const thisMonth = flowMonth(new Date());
+    const lastMonth = flowMonth(new Date(), -1);
+    const twoAgo = flowMonth(new Date(), -2);
+    const sup = (key, status, resolutiondate = null) => raw(key, 'Task', [], {
+        project: { key: 'SUP', name: 'Support' }, resolutiondate,
+        status: { name: status, statusCategory: { key: { Done: 'done', 'In Progress': 'indeterminate', 'To Do': 'new' }[status] } },
+    });
+    site.issues.push(sup('SUP-1', 'In Progress'), sup('SUP-2', 'Done', `${thisMonth.start}T10:00:00.000+0000`), sup('SUP-3', 'Done', `${lastMonth.start}T10:00:00.000+0000`),
+        sup('SUP-4', 'To Do'), sup('SUP-5', 'Done', `${twoAgo.start}T10:00:00.000+0000`));
+
+    await call('PUT', '/jira/boards', { boardIds: [10, 12] });
+    const sync = (await call('POST', '/jira/sync')).json();
+    assert.deepStrictEqual(sync, { boards: 2, issues: 9, currentPi: '@now' }, 'PI-27.3 (3) + PI-27.2 (3) + this month (SUP-1, SUP-2) + last month (SUP-3)');
+
+    const { jiraIndex } = await api('/dashboard-data');
+    assert.deepStrictEqual(jiraIndex.pis.filter((p) => p.kind === 'flow').map((p) => [p.pi, p.sprints]), [
+        [thisMonth.name, [{ name: thisMonth.name, startDate: `${thisMonth.start}T00:00:00.000Z`, endDate: `${thisMonth.end}T00:00:00.000Z` }]],
+        [lastMonth.name, [{ name: lastMonth.name, startDate: `${lastMonth.start}T00:00:00.000Z`, endDate: `${lastMonth.end}T00:00:00.000Z` }]],
+    ]);
+    assert.deepStrictEqual(jiraIndex.pis[0].includes, [thisMonth.name, 'PI-27.3']);
+    assert.deepStrictEqual((await api(`/jira-issues?pi=${thisMonth.name}`)).map((i) => [i.key, i.sprint]), [['SUP-1', thisMonth.name], ['SUP-2', thisMonth.name]]);
+    assert.deepStrictEqual((await api(`/jira-issues?pi=${lastMonth.name}`)).map((i) => i.key), ['SUP-3']);
+});

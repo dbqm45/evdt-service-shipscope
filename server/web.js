@@ -521,8 +521,8 @@ function buildApp({ pool, auth, githubApp = null, atlassian = null, fetch: fetch
             }),
         }));
 
-        // How a selected board's sprints group into increments: SAFe PIs (optionally the admin's own PI naming), every
-        // sprint on its own, or detected from the sprint names (lib/jira-model.js rhythmOf()).
+        // How a selected board's work groups into increments: SAFe PIs (optionally the admin's own PI naming), every
+        // sprint on its own, releases (fixVersion), calendar months (Kanban flow), or detected (lib/jira-model.js rhythmOf()).
         app.put('/tenants/:tenantId/jira/boards/:boardId', {
             preHandler: requireUser,
             schema: {
@@ -532,7 +532,7 @@ function buildApp({ pool, auth, githubApp = null, atlassian = null, fetch: fetch
                     required: ['rhythm', 'piTemplate'],
                     additionalProperties: false,
                     properties: {
-                        rhythm: { type: 'string', enum: ['auto', 'pi', 'sprint'] },
+                        rhythm: { type: 'string', enum: ['auto', 'pi', 'sprint', 'release', 'flow'] },
                         piTemplate: { anyOf: [{ type: 'null' }, { type: 'string', minLength: 1, maxLength: 100 }] },
                     },
                 },

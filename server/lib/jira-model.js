@@ -41,19 +41,96 @@ function compileTemplate(template) {
 }
 
 /**
- * How a board's sprints group into increments. `pi`: by the PI in their names (the admin's template, else the SAFe
- * default), a sprint without one being its own increment; `sprint`: every sprint on its own; `auto`: `pi` when any
- * of the board's sprints follows the PI naming.
+ * How a board's work groups into increments. `pi`: sprints by the PI in their names (the admin's template, else the
+ * SAFe default), a sprint without one being its own increment; `sprint`: every sprint on its own; `release`: the
+ * board project's versions (fixVersion); `flow`: calendar months (Kanban, no sprints). `auto`: `pi` when any sprint
+ * follows the PI naming, else `sprint` when the board has sprints, else `release` when its project has an unreleased
+ * version, else `flow`.
  *
- * @param {{ rhythm: 'auto'|'pi'|'sprint', piTemplate: string|null }} board
+ * @param {{ rhythm: 'auto'|'pi'|'sprint'|'release'|'flow', piTemplate: string|null }} board
  * @param {Array<{ name: string }>} sprints
- * @returns {{ kind: 'pi'|'sprint', pattern: RegExp|null }}
+ * @param {Array<{ released: boolean }>} [versions] the project's versions (only read by `auto` on a board without sprints)
+ * @returns {{ kind: 'pi'|'sprint'|'release'|'flow', pattern: RegExp|null }}
  */
-function rhythmOf({ rhythm, piTemplate }, sprints) {
-    if (rhythm === 'sprint') return { kind: 'sprint', pattern: null };
+function rhythmOf({ rhythm, piTemplate }, sprints, versions = []) {
+    if (rhythm === 'sprint' || rhythm === 'release' || rhythm === 'flow') return { kind: rhythm, pattern: null };
     const pattern = piTemplate ? compileTemplate(piTemplate) : DEFAULT_PI_PATTERN;
     if (rhythm === 'pi' || sprints.some((s) => pattern.test(s.name))) return { kind: 'pi', pattern };
-    return { kind: 'sprint', pattern: null };
+    if (sprints.length) return { kind: 'sprint', pattern: null };
+    return { kind: versions.some((v) => !v.released) ? 'release' : 'flow', pattern: null };
+}
+
+const PROJECT_KEY = /^[A-Z][A-Z0-9_]*$/;
+
+/** A release's increment name: the version's own name, prefixed with the project key unless it already starts with it
+ * (two projects' "1.0" are different releases). */
+function releaseName(projectKey, versionName) {
+    return versionName.toUpperCase().startsWith(projectKey.toUpperCase()) ? versionName : `${projectKey} ${versionName}`;
+}
+
+const versionTime = (v) => {
+    const t = Date.parse(v.releaseDate || v.startDate || '');
+    return Number.isNaN(t) ? null : t;
+};
+
+/**
+ * A project's current release: the unreleased version due first (one without a date after every dated one), else the
+ * last one released. Archived versions are not passed in.
+ *
+ * @param {Array<{ id: string, name: string, released: boolean, startDate: string|null, releaseDate: string|null }>} versions
+ * @returns {object|null} the version
+ */
+function currentReleaseOf(versions) {
+    const due = (v) => versionTime(v) ?? Infinity;
+    const unreleased = versions.filter((v) => !v.released).sort((a, b) => (due(a) - due(b)) || compareNumbers(a.name, b.name) || a.name.localeCompare(b.name));
+    if (unreleased.length) return unreleased[0];
+    return releasedNewestFirst(versions)[0] || null;
+}
+
+function releasedNewestFirst(versions) {
+    const at = (v) => versionTime(v) ?? -Infinity;
+    return versions.filter((v) => v.released).sort((a, b) => (at(b) - at(a)) || comparePiDesc(a.name, b.name));
+}
+
+/**
+ * The release before `current`: the newest released version other than it (after it in that order, when it was
+ * released itself).
+ *
+ * @param {Array<{ id: string, name: string, released: boolean }>} versions
+ * @param {{ id: string }} current
+ * @returns {object|null}
+ */
+function previousReleaseOf(versions, current) {
+    const released = releasedNewestFirst(versions);
+    const i = released.findIndex((v) => v.id === current.id);
+    return released[i + 1] || null;
+}
+
+/**
+ * The calendar month (UTC) a Kanban board's flow increment covers, `offset` months from `now`'s.
+ *
+ * @param {Date} now
+ * @param {number} [offset]
+ * @returns {{ name: string, start: string, end: string }} name "Flow 2026-10"; start/end "YYYY-MM-DD", end exclusive
+ */
+function flowMonth(now, offset = 0) {
+    const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + offset, 1));
+    const end = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth() + 1, 1));
+    const day = (d) => d.toISOString().slice(0, 10);
+    return { name: `Flow ${day(start).slice(0, 7)}`, start: day(start), end: day(end) };
+}
+
+/** JQL for a release: the project's issues with that fixVersion. */
+function releaseJql(projectKey, versionId) {
+    if (!PROJECT_KEY.test(projectKey) || !/^\d+$/.test(versionId)) throw new Error('invalid project key or version id');
+    return `project = "${projectKey}" AND fixVersion = ${versionId} ORDER BY key`;
+}
+
+/** JQL for a flow month: issues resolved in it, plus -- for the current month -- everything in progress now. */
+function flowJql(projectKey, month, current) {
+    if (!PROJECT_KEY.test(projectKey)) throw new Error('invalid project key');
+    const resolved = `resolved >= "${month.start}" AND resolved < "${month.end}"`;
+    return `project = "${projectKey}" AND (${current ? `statusCategory = "In Progress" OR ${resolved}` : resolved}) ORDER BY key`;
 }
 
 /**
@@ -68,16 +145,21 @@ function piOfSprint(name, rhythm = { kind: 'pi', pattern: DEFAULT_PI_PATTERN }) 
     return (rhythm.kind === 'pi' && extractPiFromSprintName(name, rhythm.pattern)) || name;
 }
 
-/** Descending by every embedded number, left to right ("PI-27.3" before "PI-27.2"); same as comparePiDesc in scripts/. */
-function comparePiDesc(a, b) {
+/** Ascending by every embedded number, left to right; 0 when they are all equal. */
+function compareNumbers(a, b) {
     const nums = (s) => (String(s).match(/\d+/g) || []).map(Number);
     const na = nums(a);
     const nb = nums(b);
     for (let i = 0; i < Math.max(na.length, nb.length); i++) {
-        const diff = (nb[i] || 0) - (na[i] || 0);
+        const diff = (na[i] || 0) - (nb[i] || 0);
         if (diff) return diff;
     }
-    return String(a).localeCompare(String(b));
+    return 0;
+}
+
+/** Descending by every embedded number, left to right ("PI-27.3" before "PI-27.2"); same as comparePiDesc in scripts/. */
+function comparePiDesc(a, b) {
+    return compareNumbers(b, a) || String(a).localeCompare(String(b));
 }
 
 /**
@@ -149,10 +231,11 @@ const str = (v, max = 500) => (typeof v === 'string' ? v.slice(0, max) : null);
  *
  * @param {object} raw a /search/jql issue
  * @param {{ sprintFieldId: string|null, epicLinkFieldId: string|null, flaggedFieldId: string|null }} fieldIds
- * @param {{ pi: string, sprintsInScope: Map<number, { name: string, state: string }> }} scope the PI being synced and its board's sprints in it
+ * @param {{ pi: string, sprintsInScope: Map<number, { name: string, state: string }>, sprint?: string|null }} scope the PI being synced and
+ *   its board's sprints in it; `sprint`: the name to use when none of those is the issue's (a release or flow month is its own "sprint")
  * @returns {object|null}
  */
-function mapIssue(raw, fieldIds, { pi, sprintsInScope }) {
+function mapIssue(raw, fieldIds, { pi, sprintsInScope, sprint: fallbackSprint = null }) {
     const f = raw?.fields;
     if (typeof raw?.key !== 'string' || !/^[A-Z][A-Z0-9_]*-\d+$/.test(raw.key) || !f) return null;
     const type = issueType(f.issuetype);
@@ -187,7 +270,7 @@ function mapIssue(raw, fieldIds, { pi, sprintsInScope }) {
         type,
         title: str(f.summary) || raw.key,
         pi,
-        sprint: sprint ? sprint.name : null,
+        sprint: sprint ? sprint.name : fallbackSprint,
         status: str(f.status?.name, 100),
         statusCategory: ['new', 'indeterminate', 'done'].includes(statusCategory) ? statusCategory : null,
         dependencyBlocked: blockers.length > 0,
@@ -204,5 +287,6 @@ function mapIssue(raw, fieldIds, { pi, sprintsInScope }) {
 }
 
 module.exports = {
-    RhythmTemplateError, extractPiFromSprintName, compileTemplate, rhythmOf, piOfSprint, comparePiDesc, currentPiOf, previousPiOf, issueType, issueFields, mapIssue,
+    RhythmTemplateError, extractPiFromSprintName, compileTemplate, rhythmOf, piOfSprint, comparePiDesc, currentPiOf, previousPiOf,
+    releaseName, currentReleaseOf, previousReleaseOf, flowMonth, releaseJql, flowJql, issueType, issueFields, mapIssue,
 };

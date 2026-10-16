@@ -55,8 +55,8 @@ Each deploy also records whether its GitHub Actions run was started by hand (`ma
   access tokens are minted per use under a row lock, since Atlassian rotates refresh tokens. One Jira site per
   tenant (an admin picks it when the grant covers several). A revoked or expired grant shows up as `lastError`.
 
-- **Jira issues** (FR-008/FR-009, `lib/jira-sync.js` + `lib/jira-model.js`): an admin picks boards that use sprints
-  (company-managed `scrum` or team-managed `simple`); a board's
+- **Jira issues** (FR-008/FR-009, `lib/jira-sync.js` + `lib/jira-model.js`): an admin picks boards of any type
+  (company-managed `scrum`, team-managed `simple`, `kanban`); a board's
   sprints define the PIs (`Sparks 27.3.2` -> `PI-27.3`; a team that doesn't name sprints after a PI gets each sprint
   as its increment) and scope the sync to its team (only issues in that board's sprints). Each worker pass fully
   re-syncs every board's current PI (plus the Epics its issues belong to) and replaces what was stored for it; a
@@ -66,8 +66,17 @@ Each deploy also records whether its GitHub Actions run was started by hand (`ma
 - Each board has its own rhythm, so SAFe and non-SAFe teams can share a tenant: `auto` (default: PIs when any of the
   board's sprints follows the PI naming, else every sprint on its own), `pi` (sprints grouped by PI; an admin's
   template such as `PI {pi} / Iteration {n}` replaces the default `27.3.1` naming -- `{pi}` dotted digits, `{n}` a
-  number, `*` any text, the rest literal, never a raw regex) or `sprint`. Increments are ordered by when their sprints
-  started (names need not contain numbers). When the selected boards are in more than one current increment, the index
+  number, `*` any text, the rest literal, never a raw regex), `sprint`, `release` or `flow`. Increments are ordered by
+  when their sprints started (names need not contain numbers).
+  - `release`: the increment is a version of the board's project (`fixVersion`, named `<project key> <version>` unless
+    the version already starts with the key): the unreleased one due first is current (else the last released one),
+    and its issues are the project's issues with that fixVersion. Archived versions are ignored.
+  - `flow` (Kanban): the increment is a calendar month (`Flow 2026-10`, UTC): issues resolved in it and, while it is the
+    current month, everything in progress. A board's first sync also takes the previous month.
+  - `auto` on a board without sprints (a kanban board, or a team-managed one with sprints off) picks `release` when its
+    project has an unreleased version, else `flow`. Both are scoped by the board's project (its `location`), not its
+    filter. A release or flow month is its own single "sprint" in the index and on its issues, so the dashboard's
+    sprint filter and charts need no special case. Versions are read with `read:jira-work`: no new consent. When the selected boards are in more than one current increment, the index
   starts with `@now` (`kind: "now"`, `label: "Now: PI-27.3, Sprint 7"`, `includes`), the default, whose issues are every
   board's current increment together.
 
@@ -136,8 +145,8 @@ Jira (only when the `ATLASSIAN_*` variables and `TOKEN_ENCRYPTION_KEY` are set):
 | `GET /tenants/:tenantId/jira` | session + member | `{ connected: false }` or `{ connected: true, site: { cloudId, url, name } \| null, sites?, connectedAt, lastError }` (`sites` only while none is chosen). Never a token. |
 | `PUT /tenants/:tenantId/jira/site` | session + admin | Body `{ "cloudId": "..." }`, one of the sites the grant covers. Choosing another site drops the chosen boards and synced issues (board ids belong to one site). |
 | `GET /tenants/:tenantId/jira/boards` | session + admin | Every board of the site `{ boards: [{ boardId, name, type, projectKey, projectName, selected }] }`; `type` is `scrum`, `simple` (a team-managed project's board) or `kanban`. |
-| `PUT /tenants/:tenantId/jira/boards` | session + admin | Body `{ "boardIds": [10, 11] }` (at most 50): the boards to sync, replacing the selection; each must be a board of the site and not a kanban board (no sprints, so no PI; else 400). A team-managed board with sprints turned off is accepted but contributes nothing. Issues of boards no longer selected are removed. |
-| `PUT /tenants/:tenantId/jira/boards/:boardId` | session + admin | Body `{ "rhythm": "auto" \| "pi" \| "sprint", "piTemplate": null \| "PI {pi} / Iteration {n}" }` (both required): how a selected board's sprints group into increments. A template only goes with `pi`/`auto` and must contain `{pi}` once (else 400). A change drops the board's stored issues; the next sync takes them again in the new rhythm. `GET .../jira/boards` returns `rhythm`, `piTemplate` and `currentIncrement` for selected boards. |
+| `PUT /tenants/:tenantId/jira/boards` | session + admin | Body `{ "boardIds": [10, 11] }` (at most 50): the boards to sync, replacing the selection; each must be a board of the site (else 400); any type -- a kanban board syncs in the `flow` (or `release`) rhythm. Issues of boards no longer selected are removed. |
+| `PUT /tenants/:tenantId/jira/boards/:boardId` | session + admin | Body `{ "rhythm": "auto" \| "pi" \| "sprint" \| "release" \| "flow", "piTemplate": null \| "PI {pi} / Iteration {n}" }` (both required): how a selected board's work groups into increments. A template only goes with `pi`/`auto` and must contain `{pi}` once (else 400). A change drops the board's stored issues; the next sync takes them again in the new rhythm. `GET .../jira/boards` returns `rhythm`, `piTemplate` and `currentIncrement` for selected boards. |
 | `POST /tenants/:tenantId/jira/sync` | session + admin | Syncs now (the worker also does every pass). Returns `{ boards, issues, currentPi }`. |
 | `GET /tenants/:tenantId/jira/projects` | session + admin | The chosen site's projects `{ projects: [{ id, key, name }] }`; proves the connection works. 409 when not connected, no site is chosen, or the grant was revoked. |
 | `DELETE /tenants/:tenantId/jira` | session + admin | Forgets the connection and its token. 204, or 404. |

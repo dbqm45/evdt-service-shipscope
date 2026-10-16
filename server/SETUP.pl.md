@@ -190,29 +190,34 @@ odwołany w Atlassian albo wygaśnie, `GET /tenants/<id>/jira` pokaże `lastErro
 Synchronizacja zadań (admin tenanta):
 
 1. Lista tablic z witryny: `GET /tenants/<id>/jira/boards`, z typem każdej: `scrum` (projekt company-managed),
-   `simple` (projekt team-managed) albo `kanban`. Wybrać można każdą oprócz kanban — ta nie ma sprintów, więc nie da
-   się z niej wyznaczyć PI. W projekcie team-managed sprinty muszą być włączone (w Jirze: ustawienia projektu →
-   Funkcje → Sprinty); tablica bez nich nic nie wnosi do synchronizacji.
+   `simple` (projekt team-managed) albo `kanban`. Wybrać można każdą; tablica bez sprintów (kanban albo team-managed
+   z wyłączonymi sprintami) synchronizuje się według wydań albo miesięcy (rytmy niżej).
 2. Wybór tablic: `PUT /tenants/<id>/jira/boards` z `{ "boardIds": [10, 11] }`. Tablica wyznacza zespół: synchronizowane
-   są tylko zadania z jej sprintów.
+   są tylko zadania z jej sprintów (w rytmach `release` i `flow` — z jej projektu).
 3. Synchronizacja od razu: `POST /tenants/<id>/jira/sync` (worker i tak robi to co przebieg, domyślnie co 15 minut).
-   Pierwsza synchronizacja tablicy pobiera bieżące i poprzednie PI, kolejne tylko bieżące.
+   Pierwsza synchronizacja tablicy pobiera bieżący i poprzedni przyrost, kolejne tylko bieżący.
 
 Rytm tablicy (każda tablica osobno, więc zespoły SAFe i nie-SAFe mogą być w jednym tenancie):
 `PUT /tenants/<id>/jira/boards/<boardId>` z `{ "rhythm": "...", "piTemplate": null }`.
 
 | `rhythm` | Działanie |
 |---|---|
-| `auto` (domyślnie) | Jeśli któryś sprint tablicy ma nazwę w konwencji PI (`Sparks 27.3.2` → `PI-27.3`), sprinty są grupowane w PI; w przeciwnym razie każdy sprint jest osobnym przyrostem. |
+| `auto` (domyślnie) | Jeśli któryś sprint tablicy ma nazwę w konwencji PI (`Sparks 27.3.2` → `PI-27.3`), sprinty są grupowane w PI; w przeciwnym razie każdy sprint jest osobnym przyrostem. Tablica bez sprintów: `release`, jeśli projekt ma niewydaną wersję, inaczej `flow`. |
 | `pi` | Sprinty grupowane w PI według szablonu nazwy (albo domyślnej konwencji `27.3.1`). Sprint niepasujący do szablonu jest osobnym przyrostem. |
 | `sprint` | Każdy sprint osobno (Scrum), nawet gdy nazwy wyglądają jak PI. |
+| `release` | Przyrostem jest wersja projektu tablicy (Fix Version), np. `PAY 1.2`: bieżąca to najbliższa niewydana (według daty wydania), a gdy wszystkie wydane — ostatnia wydana. Zadania: te z tą wersją w projekcie. Wersje zarchiwizowane są pomijane. |
+| `flow` | Kanban: przyrostem jest miesiąc kalendarzowy (`Flow 2026-10`): zadania rozwiązane w tym miesiącu, a w bieżącym miesiącu także wszystkie w toku. |
 
-`piTemplate` — własna konwencja nazw PI, np. `PI {pi} / Iteration {n}` albo `Release {pi} (week {n})`: `{pi}` (wymagane,
+W rytmach `release` i `flow` zakresem jest projekt tablicy (ten, który Jira podaje jako jej lokalizację), a nie jej
+filtr; nie są potrzebne nowe uprawnienia ani ponowne połączenie Jiry.
+
+`piTemplate` (tylko z `pi` albo `auto`) — własna konwencja nazw PI, np. `PI {pi} / Iteration {n}` albo `Release {pi} (week {n})`: `{pi}` (wymagane,
 dokładnie raz) to numer PI z kropkami, `{n}` numer sprintu, `*` dowolny tekst, reszta dosłownie, bez rozróżniania
 wielkości liter. Zmiana rytmu usuwa zapisane zadania tablicy; następna synchronizacja pobiera je ponownie.
 
 Gdy wybrane tablice są w różnych bieżących przyrostach (np. jeden zespół w `PI-27.3`, drugi w `Sprint 7`), dashboard
-otwiera się na „Now: PI-27.3, Sprint 7” — zadaniach bieżącego przyrostu każdej tablicy razem. Pozostałe przyrosty
+otwiera się na „Now: PI-27.3, Sprint 7” — zadaniach bieżącego przyrostu każdej tablicy razem (pusty przyrost, np. miesiąc
+bez zadań, się nie liczy). Pozostałe przyrosty
 są dalej do wyboru w selektorze. Zmiana witryny Jira usuwa wybrane tablice i pobrane zadania.
 Worker potrzebuje tych samych trzech zmiennych (`ATLASSIAN_*`, `TOKEN_ENCRYPTION_KEY`) co serwis web.
 
