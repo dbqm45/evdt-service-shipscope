@@ -21,12 +21,14 @@ test('runMigrations: applies cleanly from empty and creates the expected tables'
     assert.ok(tableNames.includes('users'));
     assert.ok(tableNames.includes('memberships'));
     assert.ok(tableNames.includes('sessions'));
+    assert.ok(tableNames.includes('invitations'));
     assert.ok(tableNames.includes('schema_migrations'));
 
     const { rows: migrationRows } = await pool.query('SELECT filename FROM schema_migrations ORDER BY filename');
     assert.deepStrictEqual(migrationRows.map((r) => r.filename), [
         '001_create_tenants_users_memberships.sql',
         '002_sessions_and_scoped_rls.sql',
+        '003_invitations.sql',
     ]);
 });
 

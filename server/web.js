@@ -6,12 +6,41 @@ const { loadAuthConfig } = require('./lib/config');
 const { APP_VERSION } = require('./lib/version');
 const { buildAuthorizeUrl, exchangeCode, fetchGitHubUser, GitHubOAuthError } = require('./lib/github-oauth');
 const { createSession, getSessionUser, deleteSession } = require('./lib/sessions');
-const { upsertUser, createTenantWithOwner, listTenantsForUser, listMembersIfMember } = require('./lib/tenants');
+const {
+    upsertUser, createTenantWithOwner, listTenantsForUser, listMembersIfMember, removeMember,
+    TenantNotFoundError, AlreadyMemberError, ForbiddenError, LastAdminError,
+} = require('./lib/tenants');
+const {
+    createInvitation, listPendingInvitations, revokeInvitation, previewInvitation, acceptInvitation,
+    InvitationNotFoundError, InvitationUnusableError, TOKEN_PATTERN,
+} = require('./lib/invitations');
 
 const SESSION_COOKIE = 'sid';
 const STATE_COOKIE = 'oauth_state';
+const RETURN_TO_COOKIE = 'oauth_return_to';
 const STATE_TTL_SECONDS = 600;
 const POST_LOGIN_REDIRECT = '/me'; // no frontend yet; land on the JSON identity endpoint
+// Where sign-in may send the user back to. An allowlist, not "any relative path": a looser check (e.g.
+// "starts with /") still lets "//evil.example" through as a protocol-relative open redirect.
+const RETURN_TO_PATTERN = new RegExp(`^/invitations/${TOKEN_PATTERN.source.slice(1, -1)}$`);
+
+const UUID_PARAM = { type: 'string', format: 'uuid' };
+const TOKEN_PARAM = { type: 'string', pattern: TOKEN_PATTERN.source };
+
+/** Domain errors from lib/ and the HTTP status each one means. */
+const ERROR_STATUS = [
+    [TenantNotFoundError, 404],
+    [InvitationNotFoundError, 404],
+    [ForbiddenError, 403],
+    [AlreadyMemberError, 409],
+    [LastAdminError, 409],
+    [InvitationUnusableError, 410],
+];
+
+/** Drops the query string and masks invitation tokens, which work like passwords until accepted. */
+function redactUrl(url) {
+    return url.split('?')[0].replace(/\/invitations\/[^/]+/, '/invitations/:token');
+}
 
 function safeEqual(a, b) {
     const bufA = Buffer.from(String(a));
@@ -36,13 +65,19 @@ function buildApp({ pool, auth, fetch: fetchFn = fetch, logger = false }) {
             // The default serializer logs the full URL; the OAuth callback's query string carries the
             // one-time authorization code and state, which must never reach logs (prd.md: credential hygiene).
             serializers: {
-                req: (req) => ({ method: req.method, url: req.url.split('?')[0], remoteAddress: req.ip }),
+                req: (req) => ({ method: req.method, url: redactUrl(req.url), remoteAddress: req.ip }),
             },
         },
     });
 
     // Unexpected errors keep their detail in the log only; clients get a generic 500.
     app.setErrorHandler((err, request, reply) => {
+        const mapped = ERROR_STATUS.find(([type]) => err instanceof type);
+        if (mapped) {
+            const body = { error: err.message };
+            if (err instanceof InvitationUnusableError) body.status = err.status;
+            return reply.code(mapped[1]).send(body);
+        }
         if (err.statusCode && err.statusCode < 500) return reply.code(err.statusCode).send({ error: err.message });
         request.log.error(err);
         return reply.code(500).send({ error: 'Internal Server Error' });
@@ -70,9 +105,26 @@ function buildApp({ pool, auth, fetch: fetchFn = fetch, logger = false }) {
         if (!request.user) return reply.code(401).send({ error: 'Not signed in' });
     }
 
-    app.get('/auth/github/login', async (request, reply) => {
+    // For links people open in a browser (invitations): send them through sign-in and back, instead of a 401.
+    async function requireUserOrSignIn(request, reply) {
+        request.user = await getSessionUser(pool, request.cookies[SESSION_COOKIE]);
+        if (!request.user) return reply.redirect(`/auth/github/login?returnTo=${encodeURIComponent(request.url.split('?')[0])}`);
+    }
+
+    app.get('/auth/github/login', {
+        schema: {
+            querystring: {
+                type: 'object',
+                additionalProperties: false,
+                properties: { returnTo: { type: 'string', pattern: RETURN_TO_PATTERN.source } },
+            },
+        },
+    }, async (request, reply) => {
         const state = crypto.randomBytes(16).toString('base64url');
-        reply.setCookie(STATE_COOKIE, state, { ...baseCookie, path: '/auth/github', maxAge: STATE_TTL_SECONDS });
+        const stateCookie = { ...baseCookie, path: '/auth/github', maxAge: STATE_TTL_SECONDS };
+        reply.setCookie(STATE_COOKIE, state, stateCookie);
+        if (request.query.returnTo) reply.setCookie(RETURN_TO_COOKIE, request.query.returnTo, stateCookie);
+        else reply.clearCookie(RETURN_TO_COOKIE, { ...baseCookie, path: '/auth/github' });
         return reply.redirect(buildAuthorizeUrl({ clientId: auth.githubClientId, redirectUri, state }));
     });
 
@@ -86,7 +138,9 @@ function buildApp({ pool, auth, fetch: fetchFn = fetch, logger = false }) {
         },
     }, async (request, reply) => {
         const expectedState = request.cookies[STATE_COOKIE];
+        const returnTo = request.cookies[RETURN_TO_COOKIE];
         reply.clearCookie(STATE_COOKIE, { ...baseCookie, path: '/auth/github' });
+        reply.clearCookie(RETURN_TO_COOKIE, { ...baseCookie, path: '/auth/github' });
         // CSRF: the state must round-trip through this browser's own cookie, or anyone could log a
         // victim into the attacker's account by getting them to open a crafted callback URL.
         if (!expectedState || !safeEqual(expectedState, request.query.state)) {
@@ -112,7 +166,8 @@ function buildApp({ pool, auth, fetch: fetchFn = fetch, logger = false }) {
         const user = await upsertUser(pool, identity);
         const session = await createSession(pool, user.id);
         reply.setCookie(SESSION_COOKIE, session.token, { ...baseCookie, path: '/', expires: session.expiresAt });
-        return reply.redirect(POST_LOGIN_REDIRECT);
+        // The cookie was validated when set, but it's client-controlled: check it again before redirecting.
+        return reply.redirect(returnTo && RETURN_TO_PATTERN.test(returnTo) ? returnTo : POST_LOGIN_REDIRECT);
     });
 
     // POST (not GET) plus SameSite=Lax keeps a cross-site page from signing users out.
@@ -159,6 +214,72 @@ function buildApp({ pool, auth, fetch: fetchFn = fetch, logger = false }) {
         const members = await listMembersIfMember(pool, { tenantId: request.params.tenantId, userId: request.user.id });
         if (!members) return reply.code(404).send({ error: 'Tenant not found' });
         return { members };
+    });
+
+    // Admin removes a member, or a member leaves (their own userId). Never the last admin.
+    app.delete('/tenants/:tenantId/members/:userId', {
+        preHandler: requireUser,
+        schema: {
+            params: { type: 'object', required: ['tenantId', 'userId'], properties: { tenantId: UUID_PARAM, userId: UUID_PARAM } },
+        },
+    }, async (request, reply) => {
+        await removeMember(pool, { tenantId: request.params.tenantId, actorUserId: request.user.id, targetUserId: request.params.userId });
+        return reply.code(204).send();
+    });
+
+    // FR-003: invitations. The link (with its token) is returned once, here; afterwards only its id is listed.
+    app.post('/tenants/:tenantId/invitations', {
+        preHandler: requireUser,
+        schema: {
+            params: { type: 'object', required: ['tenantId'], properties: { tenantId: UUID_PARAM } },
+            body: {
+                type: 'object',
+                required: ['role'],
+                additionalProperties: false,
+                properties: { role: { type: 'string', enum: ['admin', 'member'] } },
+            },
+        },
+    }, async (request, reply) => {
+        const invitation = await createInvitation(pool, {
+            tenantId: request.params.tenantId, actorUserId: request.user.id, role: request.body.role,
+        });
+        return reply.code(201).send({
+            invitation: { id: invitation.id, role: invitation.role, expiresAt: invitation.expiresAt },
+            url: `${auth.publicBaseUrl}/invitations/${invitation.token}`,
+        });
+    });
+
+    app.get('/tenants/:tenantId/invitations', {
+        preHandler: requireUser,
+        schema: { params: { type: 'object', required: ['tenantId'], properties: { tenantId: UUID_PARAM } } },
+    }, async (request) => ({
+        invitations: await listPendingInvitations(pool, { tenantId: request.params.tenantId, actorUserId: request.user.id }),
+    }));
+
+    app.delete('/tenants/:tenantId/invitations/:invitationId', {
+        preHandler: requireUser,
+        schema: {
+            params: { type: 'object', required: ['tenantId', 'invitationId'], properties: { tenantId: UUID_PARAM, invitationId: UUID_PARAM } },
+        },
+    }, async (request, reply) => {
+        const revoked = await revokeInvitation(pool, {
+            tenantId: request.params.tenantId, actorUserId: request.user.id, invitationId: request.params.invitationId,
+        });
+        if (!revoked) return reply.code(404).send({ error: 'No pending invitation with that id' });
+        return reply.code(204).send();
+    });
+
+    app.get('/invitations/:token', {
+        preHandler: requireUserOrSignIn,
+        schema: { params: { type: 'object', required: ['token'], properties: { token: TOKEN_PARAM } } },
+    }, async (request) => previewInvitation(pool, { token: request.params.token, userId: request.user.id }));
+
+    app.post('/invitations/:token/accept', {
+        preHandler: requireUser,
+        schema: { params: { type: 'object', required: ['token'], properties: { token: TOKEN_PARAM } } },
+    }, async (request, reply) => {
+        const result = await acceptInvitation(pool, { token: request.params.token, userId: request.user.id });
+        return reply.code(201).send(result);
     });
 
     return app;
