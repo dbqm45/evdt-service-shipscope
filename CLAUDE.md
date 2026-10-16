@@ -106,7 +106,10 @@ and `lib/retention.js` daily, each behind a Postgres advisory lock; the pure rul
 a port of `scripts/lib/deployment-records.js` (server/ can't require from scripts/ -- Render deploys `server/`
 alone), so a fix to one of those rules belongs in both until the file-based sync is retired. Retention is per
 tenant (`tenants.deployment_retention_days`, default 90, 7-730) and always keeps each repo/environment's latest
-and latest successful deployment. Dependencies, all scoped to
+and latest successful deployment. The dashboard is served by the Web Service at `/t/<tenantId>/` (an allowlist of
+`docs/` files only, `lib/dashboard-assets.js`); there `docs/app-data.js`'s `API_TENANT_ID` switches `loadData()` to
+`/api/tenants/<tenantId>/dashboard-data` (`lib/dashboard-data.js`, the same `data/*.json` shapes), and never to the
+built-in `FALLBACK` sample data. Off that path (GitHub Pages, `file://`) nothing changed. Dependencies, all scoped to
 `server/package.json` (the rest of the repo remains dependency-free): `pg`, `fastify`, `@fastify/cookie`.
 Fastify was chosen for its built-in JSON-schema validation of request input; it runs with
 `removeAdditional: false, coerceTypes: false`, so unknown fields and wrong types are a 400, never silently

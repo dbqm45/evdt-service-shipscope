@@ -115,11 +115,11 @@ async function signInWithRedirect(app, code, loginUrl = '/auth/github/login', ex
     return { sid: sid.value, location: callback.headers.location, callback };
 }
 
-/** Signs in and asserts the default landing on /me. Returns the session cookie value. */
+/** Signs in and asserts the default landing on / (which forwards to a dashboard). Returns the session cookie value. */
 async function signIn(app, code) {
     const { sid, location, callback } = await signInWithRedirect(app, code);
     assert.strictEqual(callback.statusCode, 302, callback.body);
-    assert.strictEqual(location, '/me');
+    assert.strictEqual(location, '/');
     return sid;
 }
 

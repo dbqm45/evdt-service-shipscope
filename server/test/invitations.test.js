@@ -236,5 +236,5 @@ test('sign-in ignores a tampered return-to cookie', async (t) => {
         cookies: { oauth_state: state, oauth_return_to: '//evil.example/invitations/x' },
     });
     assert.strictEqual(callback.statusCode, 302);
-    assert.strictEqual(callback.headers.location, '/me');
+    assert.strictEqual(callback.headers.location, '/');
 });

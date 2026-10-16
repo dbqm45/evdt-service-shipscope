@@ -398,7 +398,65 @@ function buildFallbackData(){
 // FALLBACK itself is initialised in app-main.js (right before init()): buildFallbackData() calls helpers from
 // later scripts (e.g. compareVersionDesc in app-model.js), which don't exist yet while this file loads.
 
+/**
+ * SaaS mode: when the ShipScope server serves this page at /t/<tenantId>/, the data comes from its API for that
+ * tenant, in one request and in the same shapes as the data/*.json files loaded below. Null everywhere else
+ * (GitHub Pages, a static file server, file://), where loadData() works exactly as it always has.
+ */
+const API_TENANT_ID = (() => {
+    const pathname = (typeof location !== 'undefined' && location.pathname) || '';
+    const match = /^\/t\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\//i.exec(pathname);
+    return match ? match[1] : null;
+})();
+
+const emptyDashboardData = () => ({
+    deployments: [], flagsMeta: {}, flagStates: {}, jiraIndex: { currentPi: null, pis: [] }, flagStateHistory: [],
+    componentsOrder: [], issueStatusIndex: {}, issueDeployments: {}, summary: { components: {} },
+});
+
+/**
+ * loadData() in SaaS mode. Unlike the file-based path it never falls back to the built-in sample data: on a
+ * real tenant's page, sample deployments would read as that tenant's own. Signed out (401) it goes through
+ * sign-in and back; any other failure shows an empty dashboard with an error badge.
+ */
+async function loadApiData(tenantId){
+    const badge = document.getElementById('statusBadge');
+    let res = null;
+
+    try {
+        res = await fetch(`/api/tenants/${tenantId}/dashboard-data`, { credentials: 'same-origin' });
+    } catch (e) {
+        res = null;
+    }
+
+    if (res && res.status === 401) {
+        location.assign(`/auth/github/login?returnTo=${encodeURIComponent(location.pathname)}`);
+        return new Promise(() => {}); // the page is navigating away; render nothing in the meantime
+    }
+
+    if (!res || !res.ok) {
+        badge.classList.add('fallback');
+        badge.title = 'Could not load this tenant\'s data — reload the page to try again';
+        document.getElementById('statusBadgeLabel').textContent = 'Error';
+        document.getElementById('statusBadgeTime').textContent = 'source: ShipScope API';
+
+        return { ...emptyDashboardData(), isFallback: false };
+    }
+
+    const data = await res.json();
+    badge.classList.remove('fallback');
+    badge.title = '';
+    document.getElementById('statusBadgeLabel').textContent = 'Live';
+    document.getElementById('statusBadgeTime').textContent = data.lastSyncedAt
+        ? `synced ${new Date(data.lastSyncedAt).toLocaleTimeString('pl-PL', {hour:'2-digit', minute:'2-digit'})} · source: ShipScope API`
+        : 'source: ShipScope API';
+
+    return { ...emptyDashboardData(), ...data, isFallback: false };
+}
+
 async function loadData(){
+    if (API_TENANT_ID) return loadApiData(API_TENANT_ID);
+
     try {
         const [deployments, flagsMeta, flagStates, jiraIndex] = await Promise.all([
             fetch('data/deployments.json').then(r=>{ if(!r.ok) throw new Error(); return r.json(); }),

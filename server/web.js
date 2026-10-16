@@ -1,4 +1,5 @@
 const crypto = require('crypto');
+const path = require('path');
 const Fastify = require('fastify');
 const cookie = require('@fastify/cookie');
 const { createPool, checkConnection } = require('./lib/db');
@@ -8,7 +9,7 @@ const { buildAuthorizeUrl, exchangeCode, fetchGitHubUser, GitHubOAuthError } = r
 const { createSession, getSessionUser, deleteSession } = require('./lib/sessions');
 const {
     upsertUser, createTenantWithOwner, listTenantsForUser, listMembersIfMember, removeMember,
-    assertAdmin, TenantNotFoundError, AlreadyMemberError, ForbiddenError, LastAdminError,
+    assertAdmin, roleOf, TenantNotFoundError, AlreadyMemberError, ForbiddenError, LastAdminError,
 } = require('./lib/tenants');
 const { withScope } = require('./lib/scope');
 const {
@@ -21,6 +22,8 @@ const {
     InstallationNotFoundError, InstallationTakenError,
 } = require('./lib/github-connections');
 const { listDeployments, getSettings, updateSettings, MAX_LIMIT } = require('./lib/deployments');
+const { buildDashboardData } = require('./lib/dashboard-data');
+const { loadDashboardAssets, ASSET_PATTERN } = require('./lib/dashboard-assets');
 
 const SESSION_COOKIE = 'sid';
 const STATE_COOKIE = 'oauth_state';
@@ -31,11 +34,20 @@ const RETURN_TO_COOKIE = 'oauth_return_to';
 const INSTALL_COOKIE = 'gh_install';
 const LINK_COOKIE = 'gh_link';
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const DASHBOARD_HEADERS = {
+    'cache-control': 'no-cache',
+    'x-content-type-options': 'nosniff',
+    'x-frame-options': 'DENY',
+    'referrer-policy': 'same-origin',
+};
 const STATE_TTL_SECONDS = 600;
-const POST_LOGIN_REDIRECT = '/me'; // no frontend yet; land on the JSON identity endpoint
-// Where sign-in may send the user back to. An allowlist, not "any relative path": a looser check (e.g.
-// "starts with /") still lets "//evil.example" through as a protocol-relative open redirect.
-const RETURN_TO_PATTERN = new RegExp(`^/invitations/${TOKEN_PATTERN.source.slice(1, -1)}$`);
+const POST_LOGIN_REDIRECT = '/'; // which redirects on to the user's first tenant's dashboard
+const UUID_SOURCE = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
+// Where sign-in may send the user back to: an invitation link or a tenant's dashboard. An allowlist, not
+// "any relative path": a looser check (e.g. "starts with /") still lets "//evil.example" through as a
+// protocol-relative open redirect.
+const RETURN_TO_PATTERN = new RegExp(`^(/invitations/${TOKEN_PATTERN.source.slice(1, -1)}|/t/${UUID_SOURCE}/)$`);
+const DEFAULT_DASHBOARD_DIR = path.join(__dirname, '..', 'docs');
 
 const UUID_PARAM = { type: 'string', format: 'uuid' };
 const TOKEN_PARAM = { type: 'string', pattern: TOKEN_PATTERN.source };
@@ -76,10 +88,12 @@ function splitCookie(value, first, second) {
  * exercise sign-in); the real entry point below always passes a validated config. Without `githubApp`,
  * sign-in works but the repo-connection routes (FR-004/FR-006) don't exist.
  *
- * @param {{ pool: import('pg').Pool, auth?: ReturnType<typeof loadAuthConfig>, githubApp?: ReturnType<typeof loadGitHubAppConfig>, fetch?: typeof fetch, logger?: boolean|object }} options
+ * The dashboard (docs/) is served at /t/<tenantId>/ from `dashboardDir`.
+ *
+ * @param {{ pool: import('pg').Pool, auth?: ReturnType<typeof loadAuthConfig>, githubApp?: ReturnType<typeof loadGitHubAppConfig>, fetch?: typeof fetch, logger?: boolean|object, dashboardDir?: string }} options
  * @returns {import('fastify').FastifyInstance}
  */
-function buildApp({ pool, auth, githubApp = null, fetch: fetchFn = fetch, logger = false }) {
+function buildApp({ pool, auth, githubApp = null, fetch: fetchFn = fetch, logger = false, dashboardDir = DEFAULT_DASHBOARD_DIR }) {
     const app = Fastify({
         // Fastify's defaults silently strip unknown body fields and coerce types (42 -> "42"). External
         // input is rejected instead of rewritten (CLAUDE.md: validate every external boundary).
@@ -372,7 +386,61 @@ function buildApp({ pool, auth, githubApp = null, fetch: fetchFn = fetch, logger
         }),
     }));
 
+    registerDashboardRoutes();
     if (githubApp) registerGitHubRoutes();
+
+    // The dashboard for one tenant: the existing docs/ page, whose app-data.js recognizes /t/<tenantId>/ and
+    // loads its data from /api/tenants/<tenantId>/dashboard-data instead of data/*.json.
+    function registerDashboardRoutes() {
+        const assets = loadDashboardAssets(dashboardDir);
+        if (!assets.has('index.html')) app.log.warn(`dashboard files not found in ${dashboardDir}; /t/:tenantId/ will answer 503`);
+        const tenantParams = { type: 'object', required: ['tenantId'], properties: { tenantId: UUID_PARAM } };
+
+        app.get('/', async (request, reply) => {
+            const user = await getSessionUser(pool, request.cookies[SESSION_COOKIE]);
+            if (!user) return reply.redirect('/auth/github/login');
+            const tenants = await listTenantsForUser(pool, user.id);
+            return reply.redirect(tenants.length ? `/t/${tenants[0].id}/` : '/me');
+        });
+
+        // Relative asset URLs in index.html only resolve under the trailing slash.
+        app.get('/t/:tenantId', { schema: { params: tenantParams } }, async (request, reply) => reply.redirect(`/t/${request.params.tenantId}/`));
+
+        app.get('/t/:tenantId/', {
+            preHandler: requireUserOrSignIn,
+            schema: { params: tenantParams },
+        }, async (request, reply) => {
+            await assertMemberOf(request.params.tenantId, request.user.id);
+            const page = assets.get('index.html');
+            if (!page) return reply.code(503).send({ error: 'Dashboard files are not deployed' });
+            return reply.headers({ ...DASHBOARD_HEADERS, 'content-type': page.type }).send(page.body);
+        });
+
+        // Scripts, stylesheet, icon: the same public code GitHub Pages serves, so no session needed.
+        app.get('/t/:tenantId/:asset', {
+            schema: {
+                params: { type: 'object', required: ['tenantId', 'asset'], properties: { tenantId: UUID_PARAM, asset: { type: 'string', pattern: ASSET_PATTERN.source } } },
+            },
+        }, async (request, reply) => {
+            const asset = assets.get(request.params.asset);
+            if (!asset || request.params.asset === 'index.html') return reply.code(404).send({ error: 'Not found' });
+            return reply.headers({ ...DASHBOARD_HEADERS, 'content-type': asset.type }).send(asset.body);
+        });
+
+        app.get('/api/tenants/:tenantId/dashboard-data', {
+            preHandler: requireUser,
+            schema: { params: tenantParams },
+        }, async (request, reply) => {
+            reply.header('cache-control', 'no-store');
+            return buildDashboardData(pool, { tenantId: request.params.tenantId, actorUserId: request.user.id });
+        });
+    }
+
+    async function assertMemberOf(tenantId, userId) {
+        await withScope(pool, { tenantId }, async (client) => {
+            if (!(await roleOf(client, { tenantId, userId }))) throw new TenantNotFoundError('Tenant not found');
+        });
+    }
 
     // FR-004/FR-006: connecting a tenant to GitHub through the App, and choosing tracked repos.
     function registerGitHubRoutes() {
@@ -503,7 +571,7 @@ if (require.main === module) {
     const auth = loadAuthConfig(process.env);
     const githubApp = loadGitHubAppConfig(process.env);
     const pool = createPool();
-    const app = buildApp({ pool, auth, githubApp, logger: true });
+    const app = buildApp({ pool, auth, githubApp, logger: true, dashboardDir: process.env.DASHBOARD_DIR || DEFAULT_DASHBOARD_DIR });
     const port = Number(process.env.PORT) || 3000;
     app.listen({ port, host: '0.0.0.0' }).catch((err) => {
         console.error(err);
