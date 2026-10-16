@@ -106,7 +106,14 @@ and `lib/retention.js` daily, each behind a Postgres advisory lock; the pure rul
 a port of `scripts/lib/deployment-records.js` (server/ can't require from scripts/ -- Render deploys `server/`
 alone), so a fix to one of those rules belongs in both until the file-based sync is retired. Retention is per
 tenant (`tenants.deployment_retention_days`, default 90, 7-730) and always keeps each repo/environment's latest
-and latest successful deployment. The dashboard is served by the Web Service at `/t/<tenantId>/` (an allowlist of
+and latest successful deployment. Version resolution (`lib/version-resolution.js`: release -> tag -> version file -> commit-message label;
+compares use only a verified release/tag or the sha, stored as `deployments.resolved_ref`) and environment drift
+(`lib/env-drift.js` + `lib/tree-diff.js`, a copy of `scripts/lib/tree-diff.js`; stored per tracked repo in
+`tracked_repos.drift = { inputs, failed, envs }`, recomputed only when a latest successful deploy changed or the
+last attempt failed, a failed comparison keeps the previous value) are ported too, same both-places rule; the
+per-repo `version_file`/`drift_ignore_paths` (what `docs/components.json` holds for the file-based sync) are set
+by an admin via `PUT /tenants/:tenantId/github/repos/:repoId/settings`. The dashboard data puts `driftBehind`
+on each environment's latest successful record. The dashboard is served by the Web Service at `/t/<tenantId>/` (an allowlist of
 `docs/` files only, `lib/dashboard-assets.js`); there `docs/app-data.js`'s `API_TENANT_ID` switches `loadData()` to
 `/api/tenants/<tenantId>/dashboard-data` (`lib/dashboard-data.js`, the same `data/*.json` shapes), and never to the
 built-in `FALLBACK` sample data. Off that path (GitHub Pages, `file://`) nothing changed. Dependencies, all scoped to

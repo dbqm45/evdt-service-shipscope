@@ -121,6 +121,26 @@ test('dashboard-data: the tenant\'s deployments in the data/*.json shapes the vi
     assert.strictEqual((await app.inject({ method: 'GET', url: `/api/tenants/${tenantId}/dashboard-data` })).statusCode, 401);
 });
 
+test('dashboard-data: version, resolved ref and drift on each environment\'s latest successful record only', async (t) => {
+    const { pool, app, alice, tenantId } = await setup(t);
+    const drift = { behindEnv: 'qa', commitCount: 3, diff: { files: 1, paths: ['a.js'], ignored: 0 } };
+    await withScope(pool, { tenantId }, async (c) => {
+        await c.query("INSERT INTO github_installations (tenant_id, installation_id, account_login, account_type) VALUES ($1, 9, 'acme', 'Organization')", [tenantId]);
+        await c.query("INSERT INTO tracked_repos (tenant_id, repo_id, installation_id, full_name, drift) VALUES ($1, 1, 9, 'acme/web', $2)",
+            [tenantId, JSON.stringify({ inputs: {}, failed: [], envs: { prod: drift } })]);
+        await c.query(`INSERT INTO deployments (tenant_id, repo_id, deployment_id, environment, status, sha, deployed_at, version, resolved_ref, rollback_to_sha)
+                       VALUES ($1, 1, 1, 'prod', 'success', 'aaaaaaaaaaaaaaaaaaaa', '2026-10-14T10:00:00Z', NULL, NULL, NULL),
+                              ($1, 1, 2, 'prod', 'success', 'bbbbbbbbbbbbbbbbbbbb', '2026-10-15T10:00:00Z', 'v1.2.0', 'v1.2.0', 'v1.2.0'),
+                              ($1, 1, 3, 'prod', 'failed', 'cccccccccccccccccccc', '2026-10-16T10:00:00Z', 'v1.3.0', 'v1.3.0', NULL)`, [tenantId]);
+    });
+    const data = (await app.inject({ method: 'GET', url: `/api/tenants/${tenantId}/dashboard-data`, cookies: { sid: alice } })).json();
+    assert.deepStrictEqual(data.deployments.map((d) => [d.id, d.version, d.resolvedRef, d.rollback, d.driftBehind]), [
+        ['gh-3', 'v1.3.0', 'v1.3.0', null, undefined],
+        ['gh-2', 'v1.2.0', 'v1.2.0', { toRef: 'v1.2.0' }, drift],
+        ['gh-1', 'aaaaaaaaaaaa', null, null, undefined],
+    ]);
+});
+
 test('two tracked repos with the same short name keep their full names as component names', async (t) => {
     const { pool, app, alice, tenantId } = await setup(t);
     await withScope(pool, { tenantId }, async (c) => {

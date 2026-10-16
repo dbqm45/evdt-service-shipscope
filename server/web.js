@@ -18,7 +18,7 @@ const {
 } = require('./lib/invitations');
 const { getInstallation, userCanAccessInstallation, listInstallationRepos, GitHubApiError } = require('./lib/github-app');
 const {
-    linkInstallation, listConnections, trackedRepoIdsForAdmin, trackRepo, untrackRepo, unlinkInstallation,
+    linkInstallation, listConnections, trackedRepoIdsForAdmin, trackRepo, untrackRepo, updateRepoSettings, unlinkInstallation,
     InstallationNotFoundError, InstallationTakenError,
 } = require('./lib/github-connections');
 const { listDeployments, getSettings, updateSettings, MAX_LIMIT } = require('./lib/deployments');
@@ -546,6 +546,34 @@ function buildApp({ pool, auth, githubApp = null, fetch: fetchFn = fetch, logger
             const repo = (await listInstallationRepos({ app: githubApp, installationId, fetch: fetchFn })).find((r) => r.id === repoId);
             if (!repo) return reply.code(404).send({ error: 'That repository is not part of this installation' });
             return trackRepo(pool, { tenantId, actorUserId: request.user.id, installationId, repo });
+        });
+
+        // Version file and drift-ignore patterns: repo-relative, never absolute or with a `..` segment. Only
+        // ever sent to GitHub's API as a path inside the repo, but rejected here rather than trusted there.
+        const repoPath = (chars) => ({ type: 'string', minLength: 1, maxLength: 200, pattern: `^(?!/)(?!(.*/)?\\.\\.(/|$))${chars}$` });
+        app.put('/tenants/:tenantId/github/repos/:repoId/settings', {
+            preHandler: requireUser,
+            schema: {
+                params: repoParams,
+                body: {
+                    type: 'object',
+                    required: ['versionFile', 'driftIgnorePaths'],
+                    additionalProperties: false,
+                    properties: {
+                        versionFile: { anyOf: [{ type: 'null' }, repoPath('[A-Za-z0-9._/-]*[A-Za-z0-9._-]')] }, // a file: no trailing /
+                        driftIgnorePaths: { type: 'array', maxItems: 50, uniqueItems: true, items: repoPath('[A-Za-z0-9._*/-]+') },
+                    },
+                },
+            },
+        }, async (request, reply) => {
+            const updated = await updateRepoSettings(pool, {
+                tenantId: request.params.tenantId,
+                actorUserId: request.user.id,
+                repoId: Number(request.params.repoId),
+                ...request.body,
+            });
+            if (!updated) return reply.code(404).send({ error: 'That repository is not tracked' });
+            return updated;
         });
 
         app.delete('/tenants/:tenantId/github/repos/:repoId', {

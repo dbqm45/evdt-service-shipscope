@@ -51,7 +51,7 @@ async function linkInstallation(pool, { tenantId, actorUserId, installation }) {
  *
  * @param {import('pg').Pool} pool
  * @param {{ tenantId: string, actorUserId: string }} input
- * @returns {Promise<{ installations: Array<{ installationId: number, accountLogin: string, accountType: string }>, repos: Array<{ repoId: number, fullName: string, installationId: number, lastSyncedAt: Date|null, lastSyncError: string|null }> }>}
+ * @returns {Promise<{ installations: Array<{ installationId: number, accountLogin: string, accountType: string }>, repos: Array<{ repoId: number, fullName: string, installationId: number, lastSyncedAt: Date|null, lastSyncError: string|null, versionFile: string|null, driftIgnorePaths: string[] }> }>}
  */
 async function listConnections(pool, { tenantId, actorUserId }) {
     return withScope(pool, { tenantId }, async (client) => {
@@ -61,7 +61,8 @@ async function listConnections(pool, { tenantId, actorUserId }) {
             [tenantId]
         );
         const { rows: repos } = await client.query(
-            'SELECT repo_id, full_name, installation_id, last_synced_at, last_sync_error FROM tracked_repos WHERE tenant_id = $1 ORDER BY full_name',
+            `SELECT repo_id, full_name, installation_id, last_synced_at, last_sync_error, version_file, drift_ignore_paths
+             FROM tracked_repos WHERE tenant_id = $1 ORDER BY full_name`,
             [tenantId]
         );
         return {
@@ -72,6 +73,8 @@ async function listConnections(pool, { tenantId, actorUserId }) {
                 installationId: Number(r.installation_id),
                 lastSyncedAt: r.last_synced_at,
                 lastSyncError: r.last_sync_error,
+                versionFile: r.version_file,
+                driftIgnorePaths: r.drift_ignore_paths,
             })),
         };
     });
@@ -137,6 +140,27 @@ async function untrackRepo(pool, { tenantId, actorUserId, repoId }) {
 }
 
 /**
+ * A tracked repo's version/drift settings (what docs/components.json's `versionFile`/`driftIgnorePaths` are for the
+ * file-based sync). Clears the stored drift, so the next sync recomputes it under the new settings. Admins only.
+ *
+ * @param {import('pg').Pool} pool
+ * @param {{ tenantId: string, actorUserId: string, repoId: number, versionFile: string|null, driftIgnorePaths: string[] }} input
+ * @returns {Promise<{ repoId: number, versionFile: string|null, driftIgnorePaths: string[] }|null>} null if it isn't tracked
+ */
+async function updateRepoSettings(pool, { tenantId, actorUserId, repoId, versionFile, driftIgnorePaths }) {
+    return withScope(pool, { tenantId }, async (client) => {
+        await assertAdmin(client, { tenantId, userId: actorUserId });
+        const { rows } = await client.query(
+            `UPDATE tracked_repos SET version_file = $3, drift_ignore_paths = $4, drift = '{}'
+             WHERE tenant_id = $1 AND repo_id = $2 RETURNING version_file, drift_ignore_paths`,
+            [tenantId, repoId, versionFile, driftIgnorePaths]
+        );
+        if (!rows.length) return null;
+        return { repoId, versionFile: rows[0].version_file, driftIgnorePaths: rows[0].drift_ignore_paths };
+    });
+}
+
+/**
  * Unlinks an installation from the tenant (and stops tracking its repos). It stays installed on GitHub;
  * uninstalling is the organization's own action there. Admins only.
  *
@@ -161,6 +185,7 @@ module.exports = {
     trackedRepoIdsForAdmin,
     trackRepo,
     untrackRepo,
+    updateRepoSettings,
     unlinkInstallation,
     InstallationNotFoundError,
     InstallationTakenError,

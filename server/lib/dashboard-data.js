@@ -27,22 +27,26 @@ function toLegacyRecord(row, component) {
         id: `gh-${row.deployment_id}`,
         component,
         environment: row.environment,
-        // Version resolution from releases/tags isn't ported yet (see lib/deployment-sync.js): the short sha
-        // is exactly what the file-based sync shows when nothing better resolves.
-        version: row.sha.slice(0, 12),
+        // The short sha is what the file-based sync shows when no release/tag/version file/message resolved.
+        version: row.version || row.sha.slice(0, 12),
         commitUrl: row.commit_url,
         workflowRunUrl: row.workflow_run_url,
         durationMs: row.duration_ms === null ? null : Number(row.duration_ms),
         manual: false,
-        rollback: row.rollback_to_sha ? { toRef: row.rollback_to_sha.slice(0, 12) } : null,
+        rollback: row.rollback_to_sha ? { toRef: shortRef(row.rollback_to_sha) } : null,
         deployedAt: row.deployed_at.toISOString(),
         deployedBy: row.deployed_by_login || 'unknown',
         deployedByLogin: row.deployed_by_login,
         status: row.status,
         relatedIssues: row.related_issues,
         issueCommitTypes: row.issue_commit_types,
-        resolvedRef: null,
+        resolvedRef: row.resolved_ref,
     };
+}
+
+/** A commit sha shortened for display; a tag/release name as is. */
+function shortRef(ref) {
+    return /^[0-9a-f]+$/.test(ref) ? ref.slice(0, 12) : ref;
 }
 
 /**
@@ -58,7 +62,7 @@ async function buildDashboardData(pool, { tenantId, actorUserId }) {
         if (!(await roleOf(client, { tenantId, userId: actorUserId }))) throw new TenantNotFoundError('Tenant not found');
 
         const { rows: repos } = await client.query(
-            'SELECT repo_id, full_name, last_synced_at FROM tracked_repos WHERE tenant_id = $1 ORDER BY created_at, full_name',
+            'SELECT repo_id, full_name, last_synced_at, drift FROM tracked_repos WHERE tenant_id = $1 ORDER BY created_at, full_name',
             [tenantId]
         );
         const names = componentNames(repos);
@@ -78,9 +82,24 @@ async function buildDashboardData(pool, { tenantId, actorUserId }) {
             byComponent[names.get(Number(f.repo_id))] = { deployedAt: f.first_deployed_at.toISOString(), commitUrl: f.commit_url };
         }
 
+        // Drift belongs on each environment's latest successful record, where currentVersion() finds it
+        // (rows are newest first, so the first success per repo/environment is that record).
+        const driftByRepo = new Map(repos.map((r) => [Number(r.repo_id), r.drift?.envs || {}]));
+        const seen = new Set();
+        const records = deployments.map((row) => {
+            const record = toLegacyRecord(row, names.get(Number(row.repo_id)));
+            const key = `${row.repo_id}/${row.environment}`;
+            if (row.status === 'success' && !seen.has(key)) {
+                seen.add(key);
+                const drift = driftByRepo.get(Number(row.repo_id))[row.environment];
+                if (drift) record.driftBehind = drift;
+            }
+            return record;
+        });
+
         const synced = repos.map((r) => r.last_synced_at).filter(Boolean).sort((a, b) => b - a);
         return {
-            deployments: deployments.map((row) => toLegacyRecord(row, names.get(Number(row.repo_id)))),
+            deployments: records,
             flagsMeta: {},
             flagStates: {},
             flagStateHistory: [],

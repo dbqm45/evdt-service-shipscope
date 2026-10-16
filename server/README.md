@@ -21,12 +21,21 @@ The SaaS-pivot backend scoped by `@context/foundation/prd.md`, deployed to Rende
   Jira issue keys from each deploy's commit range and rollback detection. A daily cleanup applies the tenant's
   retention (`lib/retention.js`).
 
+- **Versions and environment drift** (`lib/version-resolution.js`, `lib/env-drift.js`, `lib/tree-diff.js`): each
+  deploy's version comes from a GitHub Release or tag on its commit, else the repo's version file (`version=<ref>`
+  at the deployed commit, for repos whose QA/PROD deploy trigger commits), else a version-like string in the
+  commit message; commit ranges are compared between real refs only (a release/tag name or a sha, never that
+  free-text label). After each pass the latest successful deploys of test -> qa -> prod are compared: commit
+  counts are kept as context, the git trees decide (same tree, or a difference only in the repo's
+  drift-ignore patterns, means no drift; a comparison that can't be trusted is "unknown", never "same"). Drift
+  is stored on the tracked repo and only recomputed when a latest deploy changed or the last attempt failed.
+  An admin sets the version file and ignore patterns per repo (`PUT .../github/repos/:repoId/settings`).
+
 - **Dashboard** (`docs/`, served by the Web Service at `/t/<tenantId>/`): the existing page, whose
   `app-data.js` recognizes that path and loads the tenant's data from `/api/tenants/<tenantId>/dashboard-data`
   (same shapes as the file-based `data/*.json`) instead of static files.
 
-Not yet: version from releases/tags/`versionFile`, environment drift (so the dashboard's "in sync" tiles have
-nothing to flag yet), the `manual` flag and display names (the file-based sync has them; every record keeps its
+Not yet: the `manual` flag and display names (the file-based sync has them; every record keeps its
 sha so they can be added later), flags and Jira data in the database (those dashboard panels are empty), GitHub
 webhooks, Jira OAuth.
 
@@ -63,6 +72,7 @@ GitHub App routes (only when the `GITHUB_APP_*` variables are set):
 | `GET /tenants/:tenantId/github/installations/:installationId/repositories` | session + admin | The installation's repos from GitHub, each with `tracked`. |
 | `PUT /tenants/:tenantId/github/repos/:repoId` | session + admin | Body `{ "installationId": 123 }`. Tracks the repo if GitHub lists it for that installation. Idempotent. |
 | `DELETE /tenants/:tenantId/github/repos/:repoId` | session + admin | Stops tracking. 204, or 404. |
+| `PUT /tenants/:tenantId/github/repos/:repoId/settings` | session + admin | Body `{ "versionFile": "trigger.properties" \| null, "driftIgnorePaths": [".github/", "README.md"] }` (repo-relative, no leading `/` or `..`; at most 50 patterns; pattern rules as `driftIgnorePaths` in `docs/components.json`). Clears the stored drift so the next sync recomputes it. 404 if the repo isn't tracked. |
 | `DELETE /tenants/:tenantId/github/installations/:installationId` | session + admin | Unlinks the installation and its tracked repos (it stays installed on GitHub). 204, or 404. |
 
 Dashboard:
@@ -72,7 +82,7 @@ Dashboard:
 | `GET /` | — | Signed out: to sign-in. Signed in: to the first tenant's dashboard, or `/me` without a tenant. |
 | `GET /t/:tenantId/` | session + member (else sign-in and back) | The dashboard page (`docs/index.html`, minus its `data/*.json` preload hints). |
 | `GET /t/:tenantId/:asset` | — | `style.css`, `favicon.svg`, `app-*.js` only (the same public code GitHub Pages serves). |
-| `GET /api/tenants/:tenantId/dashboard-data` | session + member | Everything the page loads, in the `data/*.json` shapes: `deployments` (repo short name as `component`, short sha as `version`), `issueDeployments`, `componentsOrder` (tracked repos), `lastSyncedAt`; flags and Jira parts empty for now. |
+| `GET /api/tenants/:tenantId/dashboard-data` | session + member | Everything the page loads, in the `data/*.json` shapes: `deployments` (repo short name as `component`; `version` is the resolved release/tag/version-file/message label, else the short sha; `driftBehind` on each environment's latest successful deploy), `issueDeployments`, `componentsOrder` (tracked repos), `lastSyncedAt`; flags and Jira parts empty for now. |
 
 Deployments and settings:
 
@@ -167,7 +177,7 @@ not stripped or coerced).
    - **Request user authorization (OAuth) during installation**: leave unticked (ShipScope signs the user in
      itself after the setup redirect, to verify the installation)
    - **Repository permissions**: Metadata, **Deployments** and **Contents**, all read-only (Contents for the
-     commit range of each deploy)
+     commit range of each deploy, tags, releases, the version file and the git trees compared for drift)
    - **Where can this GitHub App be installed?**: Any account, so other organizations can install it
    - Put the **App ID**, the App's URL name (**slug**, the last part of its public page URL) and a generated
      **private key** (the `.pem` file's contents) into `.env` as `GITHUB_APP_ID`, `GITHUB_APP_SLUG` and

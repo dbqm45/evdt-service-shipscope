@@ -35,6 +35,7 @@ test('runMigrations: applies cleanly from empty and creates the expected tables'
         '003_invitations.sql',
         '004_github_connections.sql',
         '005_deployments.sql',
+        '006_versions_and_drift.sql',
     ]);
 });
 
