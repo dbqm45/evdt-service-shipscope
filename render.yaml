@@ -22,6 +22,13 @@ services:
         sync: false
       - key: PUBLIC_BASE_URL # the service's public https URL, e.g. https://shipscope-web.onrender.com
         sync: false
+      # Connecting repos (FR-004): the App's ID, URL name and private key (PEM). All three, or none.
+      - key: GITHUB_APP_ID
+        sync: false
+      - key: GITHUB_APP_SLUG
+        sync: false
+      - key: GITHUB_APP_PRIVATE_KEY
+        sync: false
 
   - type: worker
     name: shipscope-worker

@@ -12,7 +12,11 @@ The SaaS-pivot backend scoped by `@context/foundation/prd.md`, deployed to Rende
 - **Invitations and member management** (FR-003, `lib/invitations.js`): admins create one-time invitation
   links; the invitee signs in and accepts. Admins remove members, members can leave, a tenant always keeps an admin.
 
-Not yet: installing the GitHub App on repos, Jira OAuth, any dashboard data.
+- **GitHub App connection** (FR-004/FR-006, `lib/github-app.js` + `lib/github-connections.js`): an admin
+  installs the ShipScope GitHub App on their organization's repos, links that installation to the tenant and
+  chooses which of its repos to track.
+
+Not yet: ingesting deployment data from tracked repos (FR-005), GitHub webhooks, Jira OAuth, any dashboard data.
 
 This directory is a separate dependency boundary from the repo root: its own `package.json` and the **only
 place in this repo with third-party dependencies** (`pg`, `fastify`, `@fastify/cookie` — see `@CLAUDE.md`'s
@@ -37,6 +41,18 @@ place in this repo with third-party dependencies** (`pg`, `fastify`, `@fastify/c
 | `GET /invitations/:token` | session (else sign-in and back) | `{ tenant, role, status, alreadyMember }`; `status` is `pending`, `accepted`, `revoked` or `expired`. |
 | `POST /invitations/:token/accept` | session | Joins the tenant with the invitation's role. 201; 404 unknown, 410 no longer pending (with `status`), 409 already a member. |
 
+GitHub App routes (only when the `GITHUB_APP_*` variables are set):
+
+| Route | Auth | What it does |
+|---|---|---|
+| `GET /tenants/:tenantId/github` | session + member | `{ installations: [{ installationId, accountLogin, accountType }], repos: [{ repoId, fullName, installationId }] }`. |
+| `GET /tenants/:tenantId/github/install` | session + admin | Redirects to GitHub to install the App (state cookie). |
+| `GET /github/setup` | session | The App's Setup URL. Checks the state, then signs the user in again so the callback can verify the installation (below) and link it; ends on `/tenants/:tenantId/github`. `setup_action=request` (an org owner must approve) returns 202. |
+| `GET /tenants/:tenantId/github/installations/:installationId/repositories` | session + admin | The installation's repos from GitHub, each with `tracked`. |
+| `PUT /tenants/:tenantId/github/repos/:repoId` | session + admin | Body `{ "installationId": 123 }`. Tracks the repo if GitHub lists it for that installation. Idempotent. |
+| `DELETE /tenants/:tenantId/github/repos/:repoId` | session + admin | Stops tracking. 204, or 404. |
+| `DELETE /tenants/:tenantId/github/installations/:installationId` | session + admin | Unlinks the installation and its tracked repos (it stays installed on GitHub). 204, or 404. |
+
 A member who isn't an admin gets 403 on admin routes; someone outside the tenant gets 404, same as for a
 tenant that doesn't exist.
 
@@ -57,12 +73,20 @@ not stripped or coerced).
   can't both join. Opening a link signed out goes through sign-in and back; the return path is checked
   against an allowlist (`/invitations/<token>` only) both when it's set and before redirecting, so it can't be
   turned into an open redirect.
+- **GitHub App installations**: the `installation_id` in GitHub's setup redirect comes back through the
+  browser, so it can't be trusted on its own (installation ids are sequential numbers). The setup step
+  sends the user through sign-in once more, and the callback links the installation only if
+  `GET /user/installations`, called with that user's own token, lists it. An installation can be linked to
+  one tenant only (a database-wide unique constraint), and a tracked repo can only reference an installation
+  of its own tenant (a composite foreign key). The App authenticates with a JWT signed by its private key
+  (RS256, `node:crypto`); installation tokens are minted per request and never stored.
 - **Tenant isolation (RLS)**: every `memberships` query runs through `lib/scope.js`'s `withScope()`, which
   sets `app.current_tenant_id` / `app.current_user_id` with `set_config(..., true)` inside one transaction.
   Those settings end with the transaction, so a pooled connection can't carry a tenant into the next request.
   Policies (migration `002`): read your tenant's rows or your own rows; write only into the scoped tenant.
   `invitations` (migration `003`) is tenant-scoped the same way, plus a read-only policy for exactly one
   invitation whose token hash is set as `app.invite_token_hash` (how a not-yet-member reads the link).
+  `github_installations` and `tracked_repos` (migration `004`) are tenant-scoped the same way.
   An unscoped query fails closed: zero rows, or an RLS error for a write.
 
 ## Running locally
@@ -87,6 +111,17 @@ not stripped or coerced).
 
    Use a separate GitHub App (or add a second callback URL) for the deployed environment.
 
+   To connect repos (FR-004), configure the same App further and add its server-to-server credentials:
+   - **Setup URL**: `http://localhost:3000/github/setup`, with **Redirect on update** ticked
+   - **Request user authorization (OAuth) during installation**: leave unticked (ShipScope signs the user in
+     itself after the setup redirect, to verify the installation)
+   - **Repository permissions**: Metadata (read-only, the default) is enough to list repos for now; FR-005 will
+     add Deployments and Contents (read-only)
+   - **Where can this GitHub App be installed?**: Any account, so other organizations can install it
+   - Put the **App ID**, the App's URL name (**slug**, the last part of its public page URL) and a generated
+     **private key** (the `.pem` file's contents) into `.env` as `GITHUB_APP_ID`, `GITHUB_APP_SLUG` and
+     `GITHUB_APP_PRIVATE_KEY`. Without these three, sign-in still works and the GitHub routes are off.
+
 3. `npm run dev`, then open `http://localhost:3000/auth/github/login`. After GitHub you land on `/me`.
    Create a tenant with e.g. `fetch('/tenants', { method: 'POST', headers: { 'content-type':
    'application/json' }, body: JSON.stringify({ name: 'Acme' }) })` from the browser console on that page.
@@ -98,7 +133,7 @@ Other commands: `npm start` (Web Service, env from the process), `npm run worker
 
 `npm test` runs this directory's `node:test` suite. Unit tests (mocked pool, mocked GitHub via an injected
 `fetch`, Fastify's `app.inject()` — no network, no credentials) always run. The real-Postgres tests
-(`migrate`, `tenants`, `rls`, `auth-flow`, `invitations`) are skipped unless `TEST_DATABASE_URL` is set:
+(`migrate`, `tenants`, `rls`, `auth-flow`, `invitations`, `github`) are skipped unless `TEST_DATABASE_URL` is set:
 
 ```bash
 docker run -d --name shipscope-pg -e POSTGRES_PASSWORD=postgres -p 5432:5432 postgres:16-alpine
@@ -111,13 +146,15 @@ the container's superuser) so `FORCE ROW LEVEL SECURITY` is genuinely exercised,
 single app role experiences it in production. Each test file gets its own ephemeral schema (migrated fresh,
 dropped on teardown), so test files can run in parallel. CI (`.github/workflows/server-test.yml`) does the
 same against a `postgres:16-alpine` service container. `auth-flow.test.js` drives the whole sign-in flow
-against a fake GitHub, so CI needs no GitHub credentials.
+against a fake GitHub, so CI needs no GitHub credentials; `github.test.js` does the same for the App flow, with a
+generated key pair whose public half the fake GitHub uses to verify every App JWT.
 
 ## Deployment
 
 Declared as Render Blueprint services in `@render.yaml` at the repo root (`rootDir: server` for both the Web
 Service and the Background Worker). The Web Service refuses to start without `GITHUB_APP_CLIENT_ID`,
-`GITHUB_APP_CLIENT_SECRET` and `PUBLIC_BASE_URL`; set them in Render's environment settings (they're declared
+`GITHUB_APP_CLIENT_SECRET` and `PUBLIC_BASE_URL` (or with only some of `GITHUB_APP_ID`, `GITHUB_APP_SLUG`,
+`GITHUB_APP_PRIVATE_KEY`); set them in Render's environment settings (they're declared
 with `sync: false`, so Render asks for them and never reads them from the repo). Migrations are not run
 automatically on deploy yet: run `npm run migrate` against the Render database after a deploy that adds one.
 See `@context/foundation/infrastructure.md`'s "Getting Started" and "Operational Story" sections for the full

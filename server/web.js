@@ -2,22 +2,34 @@ const crypto = require('crypto');
 const Fastify = require('fastify');
 const cookie = require('@fastify/cookie');
 const { createPool, checkConnection } = require('./lib/db');
-const { loadAuthConfig } = require('./lib/config');
+const { loadAuthConfig, loadGitHubAppConfig } = require('./lib/config');
 const { APP_VERSION } = require('./lib/version');
 const { buildAuthorizeUrl, exchangeCode, fetchGitHubUser, GitHubOAuthError } = require('./lib/github-oauth');
 const { createSession, getSessionUser, deleteSession } = require('./lib/sessions');
 const {
     upsertUser, createTenantWithOwner, listTenantsForUser, listMembersIfMember, removeMember,
-    TenantNotFoundError, AlreadyMemberError, ForbiddenError, LastAdminError,
+    assertAdmin, TenantNotFoundError, AlreadyMemberError, ForbiddenError, LastAdminError,
 } = require('./lib/tenants');
+const { withScope } = require('./lib/scope');
 const {
     createInvitation, listPendingInvitations, revokeInvitation, previewInvitation, acceptInvitation,
     InvitationNotFoundError, InvitationUnusableError, TOKEN_PATTERN,
 } = require('./lib/invitations');
+const { getInstallation, userCanAccessInstallation, listInstallationRepos, GitHubApiError } = require('./lib/github-app');
+const {
+    linkInstallation, listConnections, trackedRepoIdsForAdmin, trackRepo, untrackRepo, unlinkInstallation,
+    InstallationNotFoundError, InstallationTakenError,
+} = require('./lib/github-connections');
 
 const SESSION_COOKIE = 'sid';
 const STATE_COOKIE = 'oauth_state';
 const RETURN_TO_COOKIE = 'oauth_return_to';
+// FR-004: GitHub App installation round trip. INSTALL_COOKIE carries the install state + tenant from
+// /tenants/:id/github/install to /github/setup; LINK_COOKIE carries the installation to verify from
+// /github/setup through a fresh sign-in to the callback, where the user's own token proves access.
+const INSTALL_COOKIE = 'gh_install';
+const LINK_COOKIE = 'gh_link';
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const STATE_TTL_SECONDS = 600;
 const POST_LOGIN_REDIRECT = '/me'; // no frontend yet; land on the JSON identity endpoint
 // Where sign-in may send the user back to. An allowlist, not "any relative path": a looser check (e.g.
@@ -26,6 +38,7 @@ const RETURN_TO_PATTERN = new RegExp(`^/invitations/${TOKEN_PATTERN.source.slice
 
 const UUID_PARAM = { type: 'string', format: 'uuid' };
 const TOKEN_PARAM = { type: 'string', pattern: TOKEN_PATTERN.source };
+const GITHUB_ID_PARAM = { type: 'string', pattern: '^[1-9][0-9]{0,14}$' };
 
 /** Domain errors from lib/ and the HTTP status each one means. */
 const ERROR_STATUS = [
@@ -35,6 +48,9 @@ const ERROR_STATUS = [
     [AlreadyMemberError, 409],
     [LastAdminError, 409],
     [InvitationUnusableError, 410],
+    [InstallationNotFoundError, 404],
+    [InstallationTakenError, 409],
+    [GitHubApiError, 502],
 ];
 
 /** Drops the query string and masks invitation tokens, which work like passwords until accepted. */
@@ -48,14 +64,21 @@ function safeEqual(a, b) {
     return bufA.length === bufB.length && crypto.timingSafeEqual(bufA, bufB);
 }
 
+/** Parses "<a>.<b>" cookie values; null unless both parts match. */
+function splitCookie(value, first, second) {
+    const [a, b, ...rest] = String(value || '').split('.');
+    return !rest.length && first.test(a || '') && second.test(b || '') ? [a, b] : null;
+}
+
 /**
  * Builds the Web Service. Without `auth`, only the health routes exist (used by tests that don't
- * exercise sign-in); the real entry point below always passes a validated config.
+ * exercise sign-in); the real entry point below always passes a validated config. Without `githubApp`,
+ * sign-in works but the repo-connection routes (FR-004/FR-006) don't exist.
  *
- * @param {{ pool: import('pg').Pool, auth?: ReturnType<typeof loadAuthConfig>, fetch?: typeof fetch, logger?: boolean|object }} options
+ * @param {{ pool: import('pg').Pool, auth?: ReturnType<typeof loadAuthConfig>, githubApp?: ReturnType<typeof loadGitHubAppConfig>, fetch?: typeof fetch, logger?: boolean|object }} options
  * @returns {import('fastify').FastifyInstance}
  */
-function buildApp({ pool, auth, fetch: fetchFn = fetch, logger = false }) {
+function buildApp({ pool, auth, githubApp = null, fetch: fetchFn = fetch, logger = false }) {
     const app = Fastify({
         // Fastify's defaults silently strip unknown body fields and coerce types (42 -> "42"). External
         // input is rejected instead of rewritten (CLAUDE.md: validate every external boundary).
@@ -74,7 +97,8 @@ function buildApp({ pool, auth, fetch: fetchFn = fetch, logger = false }) {
     app.setErrorHandler((err, request, reply) => {
         const mapped = ERROR_STATUS.find(([type]) => err instanceof type);
         if (mapped) {
-            const body = { error: err.message };
+            if (err instanceof GitHubApiError) request.log.warn({ err: err.message }, 'GitHub API call failed');
+            const body = { error: err instanceof GitHubApiError ? 'GitHub request failed; please try again' : err.message };
             if (err instanceof InvitationUnusableError) body.status = err.status;
             return reply.code(mapped[1]).send(body);
         }
@@ -139,8 +163,10 @@ function buildApp({ pool, auth, fetch: fetchFn = fetch, logger = false }) {
     }, async (request, reply) => {
         const expectedState = request.cookies[STATE_COOKIE];
         const returnTo = request.cookies[RETURN_TO_COOKIE];
+        const link = githubApp && splitCookie(request.cookies[LINK_COOKIE], /^[1-9][0-9]{0,14}$/, UUID_PATTERN);
         reply.clearCookie(STATE_COOKIE, { ...baseCookie, path: '/auth/github' });
         reply.clearCookie(RETURN_TO_COOKIE, { ...baseCookie, path: '/auth/github' });
+        reply.clearCookie(LINK_COOKIE, { ...baseCookie, path: '/auth/github' });
         // CSRF: the state must round-trip through this browser's own cookie, or anyone could log a
         // victim into the attacker's account by getting them to open a crafted callback URL.
         if (!expectedState || !safeEqual(expectedState, request.query.state)) {
@@ -148,8 +174,9 @@ function buildApp({ pool, auth, fetch: fetchFn = fetch, logger = false }) {
         }
 
         let identity;
+        let accessToken;
         try {
-            const accessToken = await exchangeCode({
+            accessToken = await exchangeCode({
                 clientId: auth.githubClientId,
                 clientSecret: auth.githubClientSecret,
                 code: request.query.code,
@@ -166,6 +193,20 @@ function buildApp({ pool, auth, fetch: fetchFn = fetch, logger = false }) {
         const user = await upsertUser(pool, identity);
         const session = await createSession(pool, user.id);
         reply.setCookie(SESSION_COOKIE, session.token, { ...baseCookie, path: '/', expires: session.expiresAt });
+
+        if (link) {
+            const [installationIdText, tenantId] = link;
+            const installationId = Number(installationIdText);
+            // The installation_id came back through the browser, so anyone could have edited it. Link it only
+            // if GitHub confirms, with this user's own token, that they can access that installation.
+            if (!(await userCanAccessInstallation({ accessToken, installationId, fetch: fetchFn }))) {
+                return reply.code(403).send({ error: 'You do not have access to that GitHub installation' });
+            }
+            const installation = await getInstallation({ app: githubApp, installationId, fetch: fetchFn });
+            await linkInstallation(pool, { tenantId, actorUserId: user.id, installation });
+            return reply.redirect(`/tenants/${tenantId}/github`);
+        }
+
         // The cookie was validated when set, but it's client-controlled: check it again before redirecting.
         return reply.redirect(returnTo && RETURN_TO_PATTERN.test(returnTo) ? returnTo : POST_LOGIN_REDIRECT);
     });
@@ -282,13 +323,138 @@ function buildApp({ pool, auth, fetch: fetchFn = fetch, logger = false }) {
         return reply.code(201).send(result);
     });
 
+    if (githubApp) registerGitHubRoutes();
+
+    // FR-004/FR-006: connecting a tenant to GitHub through the App, and choosing tracked repos.
+    function registerGitHubRoutes() {
+        const tenantParams = { type: 'object', required: ['tenantId'], properties: { tenantId: UUID_PARAM } };
+        const installCookie = { ...baseCookie, path: '/github', maxAge: STATE_TTL_SECONDS };
+
+        app.get('/tenants/:tenantId/github', {
+            preHandler: requireUser,
+            schema: { params: tenantParams },
+        }, async (request) => listConnections(pool, { tenantId: request.params.tenantId, actorUserId: request.user.id }));
+
+        // Step 1: an admin starts the installation on GitHub.
+        app.get('/tenants/:tenantId/github/install', {
+            preHandler: requireUser,
+            schema: { params: tenantParams },
+        }, async (request, reply) => {
+            await assertAdminOf(request.params.tenantId, request.user.id);
+            const state = crypto.randomBytes(16).toString('base64url');
+            reply.setCookie(INSTALL_COOKIE, `${state}.${request.params.tenantId}`, installCookie);
+            return reply.redirect(`https://github.com/apps/${githubApp.slug}/installations/new?state=${state}`);
+        });
+
+        // Step 2: GitHub's "Setup URL" redirect after installing (or reconfiguring) the App.
+        app.get('/github/setup', {
+            preHandler: requireUser,
+            schema: {
+                querystring: {
+                    type: 'object',
+                    required: ['state', 'setup_action'],
+                    properties: {
+                        installation_id: GITHUB_ID_PARAM,
+                        setup_action: { type: 'string', enum: ['install', 'update', 'request'] },
+                        state: { type: 'string', minLength: 1, maxLength: 64 },
+                    },
+                },
+            },
+        }, async (request, reply) => {
+            const pending = splitCookie(request.cookies[INSTALL_COOKIE], /^[A-Za-z0-9_-]{22}$/, UUID_PATTERN);
+            reply.clearCookie(INSTALL_COOKIE, installCookie);
+            if (!pending || !safeEqual(pending[0], request.query.state)) {
+                return reply.code(400).send({ error: 'Invalid or expired installation attempt; please start again from ShipScope' });
+            }
+            const tenantId = pending[1];
+            // An organization member without owner rights can only request the installation; nothing to link yet.
+            if (request.query.setup_action === 'request') {
+                return reply.code(202).send({ status: 'pending-approval', message: 'An organization owner has to approve the installation on GitHub' });
+            }
+            if (!request.query.installation_id) return reply.code(400).send({ error: 'installation_id is missing' });
+            await assertAdminOf(tenantId, request.user.id);
+
+            // Step 3: a fresh sign-in, so the callback holds this user's token and can verify the installation.
+            reply.setCookie(LINK_COOKIE, `${request.query.installation_id}.${tenantId}`, { ...baseCookie, path: '/auth/github', maxAge: STATE_TTL_SECONDS });
+            return reply.redirect('/auth/github/login');
+        });
+
+        const installationParams = {
+            type: 'object',
+            required: ['tenantId', 'installationId'],
+            properties: { tenantId: UUID_PARAM, installationId: GITHUB_ID_PARAM },
+        };
+
+        // The installation's repos as GitHub reports them now, each marked tracked or not. Admins only.
+        app.get('/tenants/:tenantId/github/installations/:installationId/repositories', {
+            preHandler: requireUser,
+            schema: { params: installationParams },
+        }, async (request) => {
+            const installationId = Number(request.params.installationId);
+            const tracked = await trackedRepoIdsForAdmin(pool, { tenantId: request.params.tenantId, actorUserId: request.user.id, installationId });
+            const repos = await listInstallationRepos({ app: githubApp, installationId, fetch: fetchFn });
+            return { repositories: repos.map((repo) => ({ ...repo, tracked: tracked.has(repo.id) })) };
+        });
+
+        app.delete('/tenants/:tenantId/github/installations/:installationId', {
+            preHandler: requireUser,
+            schema: { params: installationParams },
+        }, async (request, reply) => {
+            const removed = await unlinkInstallation(pool, {
+                tenantId: request.params.tenantId, actorUserId: request.user.id, installationId: Number(request.params.installationId),
+            });
+            if (!removed) return reply.code(404).send({ error: 'No such installation in this tenant' });
+            return reply.code(204).send();
+        });
+
+        const repoParams = { type: 'object', required: ['tenantId', 'repoId'], properties: { tenantId: UUID_PARAM, repoId: GITHUB_ID_PARAM } };
+
+        // Track a repo. Only a repo GitHub lists for one of the tenant's own installations can be tracked.
+        app.put('/tenants/:tenantId/github/repos/:repoId', {
+            preHandler: requireUser,
+            schema: {
+                params: repoParams,
+                body: {
+                    type: 'object',
+                    required: ['installationId'],
+                    additionalProperties: false,
+                    properties: { installationId: { type: 'integer', minimum: 1 } },
+                },
+            },
+        }, async (request, reply) => {
+            const { tenantId } = request.params;
+            const repoId = Number(request.params.repoId);
+            const { installationId } = request.body;
+            await trackedRepoIdsForAdmin(pool, { tenantId, actorUserId: request.user.id, installationId });
+            const repo = (await listInstallationRepos({ app: githubApp, installationId, fetch: fetchFn })).find((r) => r.id === repoId);
+            if (!repo) return reply.code(404).send({ error: 'That repository is not part of this installation' });
+            return trackRepo(pool, { tenantId, actorUserId: request.user.id, installationId, repo });
+        });
+
+        app.delete('/tenants/:tenantId/github/repos/:repoId', {
+            preHandler: requireUser,
+            schema: { params: repoParams },
+        }, async (request, reply) => {
+            const removed = await untrackRepo(pool, {
+                tenantId: request.params.tenantId, actorUserId: request.user.id, repoId: Number(request.params.repoId),
+            });
+            if (!removed) return reply.code(404).send({ error: 'That repository is not tracked' });
+            return reply.code(204).send();
+        });
+    }
+
+    async function assertAdminOf(tenantId, userId) {
+        await withScope(pool, { tenantId }, (client) => assertAdmin(client, { tenantId, userId }));
+    }
+
     return app;
 }
 
 if (require.main === module) {
     const auth = loadAuthConfig(process.env);
+    const githubApp = loadGitHubAppConfig(process.env);
     const pool = createPool();
-    const app = buildApp({ pool, auth, logger: true });
+    const app = buildApp({ pool, auth, githubApp, logger: true });
     const port = Number(process.env.PORT) || 3000;
     app.listen({ port, host: '0.0.0.0' }).catch((err) => {
         console.error(err);

@@ -97,11 +97,14 @@ tenant data model (FR-002/FR-003, `lib/tenants.js`, migrations in `server/migrat
 hand-rolled `lib/migrate.js`) and GitHub sign-in (FR-001): Fastify routes in `web.js`, the GitHub App's
 user-authorization flow in `lib/github-oauth.js`, server-side sessions in `lib/sessions.js` (only a SHA-256 of
 the cookie token is stored; the GitHub user token is never stored), and invitation links plus member removal
-(FR-003, `lib/invitations.js`; one-time hashed tokens, single-use claim by conditional `UPDATE`, last-admin guard). Dependencies, all scoped to
+(FR-003, `lib/invitations.js`; one-time hashed tokens, single-use claim by conditional `UPDATE`, last-admin guard).
+GitHub App connection (FR-004/FR-006, `lib/github-app.js` for App JWT/installation-token calls, `lib/github-connections.js`
+for the data): an installation is linked only after the user's own token shows they can access it (`GET
+/user/installations` in the sign-in callback) -- never on the `installation_id` from GitHub's setup redirect alone. Dependencies, all scoped to
 `server/package.json` (the rest of the repo remains dependency-free): `pg`, `fastify`, `@fastify/cookie`.
 Fastify was chosen for its built-in JSON-schema validation of request input; it runs with
 `removeAdditional: false, coerceTypes: false`, so unknown fields and wrong types are a 400, never silently
-fixed. **Every query on an RLS table (`memberships`, `invitations`) must go through `lib/scope.js`'s `withScope()`**, which
+fixed. **Every query on an RLS table (`memberships`, `invitations`, `github_installations`, `tracked_repos`) must go through `lib/scope.js`'s `withScope()`**, which
 sets `app.current_tenant_id`/`app.current_user_id` with transaction-local `set_config(..., true)`; an unscoped
 read returns zero rows and an unscoped write is an RLS error (migration `002`). Run `npm install && npm test`
 inside `server/`; see `@server/README.md` for routes, the security model, local sign-in with a dev GitHub App,
