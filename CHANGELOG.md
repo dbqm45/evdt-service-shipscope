@@ -7,6 +7,12 @@ dashboard, not a published package), so entries are grouped by date instead. See
 ShipScope is, `CLAUDE.md` for the technical reference, and `FAQ.md` for how specific numbers/badges are
 calculated.
 
+## [0.1.5] - 2026-10-16
+
+### Added
+
+- **SHP:** resolve deploy versions and environment drift in the server (#13)
+
 ## [0.1.4] - 2026-10-16
 
 ### Added
