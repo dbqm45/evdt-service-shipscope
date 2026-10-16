@@ -7,6 +7,12 @@ dashboard, not a published package), so entries are grouped by date instead. See
 ShipScope is, `CLAUDE.md` for the technical reference, and `FAQ.md` for how specific numbers/badges are
 calculated.
 
+## [0.1.7] - 2026-10-16
+
+### Added
+
+- **SHP:** record manual deploys and creators' display names in the server (#15)
+
 ## [0.1.6] - 2026-10-16
 
 ### Fixed
