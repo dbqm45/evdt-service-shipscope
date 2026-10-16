@@ -421,6 +421,11 @@ const emptyDashboardData = () => ({
  */
 async function loadApiData(tenantId){
     const badge = document.getElementById('statusBadge');
+    // Only the server has a settings page (/t/<tenantId>/settings); on GitHub Pages the link stays hidden.
+    const settingsLink = document.getElementById('settingsLink');
+    if (settingsLink) {
+        settingsLink.hidden = false;
+    }
     let res = null;
 
     try {

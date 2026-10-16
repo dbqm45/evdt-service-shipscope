@@ -121,7 +121,7 @@ test('connect: an admin links one Jira site; only an encrypted refresh token is 
 
     const res = await connect(alice, 'c1');
     assert.strictEqual(res.statusCode, 302, res.body);
-    assert.strictEqual(res.headers.location, `/tenants/${tenantId}/jira`);
+    assert.strictEqual(res.headers.location, `/t/${tenantId}/settings#jira`);
     const s = await status();
     assert.deepStrictEqual([s.connected, s.site, s.lastError, 'sites' in s], [true, { cloudId: 'cloud-a', url: 'https://acme.atlassian.net', name: 'acme' }, null, false]);
 

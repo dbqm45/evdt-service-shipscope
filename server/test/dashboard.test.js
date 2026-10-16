@@ -23,12 +23,12 @@ async function setup(t, options = {}) {
     return { pool, app, alice, tenantId };
 }
 
-test('/ sends you to sign-in, to your first tenant\'s dashboard, or to /me without a tenant', async (t) => {
+test('/ sends you to sign-in, to your first tenant\'s dashboard, or to get started without a tenant', async (t) => {
     const { app, alice, tenantId } = await setup(t);
     assert.strictEqual((await app.inject({ method: 'GET', url: '/' })).headers.location, '/auth/github/login');
     assert.strictEqual((await app.inject({ method: 'GET', url: '/', cookies: { sid: alice } })).headers.location, `/t/${tenantId}/`);
     const mallory = await signIn(app, 'mallory');
-    assert.strictEqual((await app.inject({ method: 'GET', url: '/', cookies: { sid: mallory } })).headers.location, '/me');
+    assert.strictEqual((await app.inject({ method: 'GET', url: '/', cookies: { sid: mallory } })).headers.location, '/start');
 });
 
 test('the dashboard page: members only, signed-out users go through sign-in and come back', async (t) => {

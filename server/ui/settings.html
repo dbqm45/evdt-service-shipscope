@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>ShipScope — Settings</title>
+    <link rel="icon" type="image/svg+xml" href="/ui/favicon.svg">
+    <link rel="stylesheet" href="/ui/style.css">
+    <link rel="stylesheet" href="/ui/settings.css">
+    <script src="/ui/theme.js"></script>
+</head>
+<body>
+<div class="wrap settings">
+    <header>
+        <div class="brand">
+            <div class="mark">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 4 14h7l-1 8 9-12h-7l1-8z"/></svg>
+            </div>
+            <div class="brand-text">
+                <span class="brand-name">ShipScope</span>
+                <span class="brand-sep">/</span>
+                <span class="brand-page" id="tenantName">Settings</span>
+            </div>
+        </div>
+        <nav class="header-right settings-nav">
+            <a href="./">Dashboard</a>
+            <a href="#workspace">Workspace</a>
+            <a href="#github">GitHub</a>
+            <a href="#jira">Jira</a>
+            <a href="#flags">Feature flags</a>
+        </nav>
+    </header>
+    <main id="settingsRoot" aria-live="polite"><p class="settings-loading">Loading…</p></main>
+</div>
+<script src="/ui/app-html.js"></script>
+<script src="/ui/settings.js"></script>
+</body>
+</html>

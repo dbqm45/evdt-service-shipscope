@@ -28,4 +28,23 @@ function loadDashboardAssets(dir) {
     return assets;
 }
 
-module.exports = { loadDashboardAssets, ASSET_PATTERN };
+// The server's own pages (ui/: settings, get started) and the dashboard files they reuse, served at /ui/<name>.
+const UI_PATTERN = /^(settings\.html|start\.html|settings\.js|start\.js|theme\.js|settings\.css)$/;
+const UI_SHARED = ['style.css', 'favicon.svg', 'app-html.js'];
+
+/**
+ * @param {string} dir the server's ui/ directory
+ * @param {Map<string, { body: string, type: string }>} dashboardAssets what loadDashboardAssets() read
+ * @returns {Map<string, { body: string, type: string }>} file name -> contents
+ */
+function loadUiAssets(dir, dashboardAssets) {
+    const assets = new Map();
+    for (const name of UI_SHARED) if (dashboardAssets.has(name)) assets.set(name, dashboardAssets.get(name));
+    if (!fs.existsSync(dir)) return assets;
+    for (const name of fs.readdirSync(dir)) {
+        if (UI_PATTERN.test(name)) assets.set(name, { body: fs.readFileSync(path.join(dir, name), 'utf8'), type: TYPES[path.extname(name)] });
+    }
+    return assets;
+}
+
+module.exports = { loadDashboardAssets, loadUiAssets, ASSET_PATTERN };

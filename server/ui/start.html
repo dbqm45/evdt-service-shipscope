@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>ShipScope — Get started</title>
+    <link rel="icon" type="image/svg+xml" href="/ui/favicon.svg">
+    <link rel="stylesheet" href="/ui/style.css">
+    <link rel="stylesheet" href="/ui/settings.css">
+    <script src="/ui/theme.js"></script>
+</head>
+<body>
+<div class="wrap settings">
+    <header>
+        <div class="brand">
+            <div class="mark">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 4 14h7l-1 8 9-12h-7l1-8z"/></svg>
+            </div>
+            <div class="brand-text"><span class="brand-name">ShipScope</span><span class="brand-sep">/</span><span class="brand-page">Get started</span></div>
+        </div>
+    </header>
+    <main>
+        <section class="panel settings-section">
+            <div class="panel-head"><h2>Create a workspace</h2></div>
+            <div class="settings-body">
+                <p class="settings-hint">A workspace holds your team's repositories, Jira boards and feature flags. You will be its admin and can invite others.
+                    Joining an existing workspace? Open the invitation link you were sent instead.</p>
+                <form id="createTenant" class="settings-form">
+                    <label>Name <input name="name" required maxlength="200" autocomplete="organization"></label>
+                    <button type="submit" class="btn btn-primary">Create</button>
+                </form>
+                <p class="settings-error" id="startError" hidden></p>
+            </div>
+        </section>
+    </main>
+</div>
+<script src="/ui/start.js"></script>
+</body>
+</html>

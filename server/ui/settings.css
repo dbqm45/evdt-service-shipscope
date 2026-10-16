@@ -1,0 +1,41 @@
+/* Settings and get-started pages (server only). Built on docs/style.css's variables and .panel. */
+.settings main { display: flex; flex-direction: column; gap: 18px; }
+.settings-nav { gap: 14px; font-size: 13px; }
+.settings-nav a { color: var(--muted); text-decoration: none; }
+.settings-nav a:hover, .settings-nav a:focus-visible { color: var(--text); }
+.settings-section { scroll-margin-top: 16px; }
+.settings-body { padding: 14px 16px 16px; display: flex; flex-direction: column; gap: 14px; font-size: 13px; }
+.settings-body h3 { font-size: 13px; margin: 6px 0 0; font-weight: 650; }
+.settings-hint, .settings-loading { color: var(--muted); margin: 0; font-size: 12px; line-height: 1.5; }
+.settings-error { color: var(--fail); margin: 0; font-size: 12px; }
+.settings-ok { color: var(--ok); margin: 0; font-size: 12px; }
+.settings-form { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end; }
+.settings-form label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); }
+.settings-form label.inline { flex-direction: row; align-items: center; gap: 6px; color: var(--text); }
+.settings-form textarea { background: var(--panel-2); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 5px 8px; font: 12px var(--font-mono); min-width: 260px; min-height: 54px; }
+.settings-form input:disabled { opacity: .5; }
+.settings-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.settings-table th { text-align: left; color: var(--muted); font-weight: 500; padding: 6px 8px; border-bottom: 1px solid var(--border); }
+.settings-table td { padding: 8px; border-bottom: 1px solid var(--border-soft); vertical-align: top; }
+.settings-table tr:last-child td { border-bottom: none; }
+.settings-table .actions { text-align: right; white-space: nowrap; }
+.settings-row-meta { color: var(--muted); font-size: 11px; margin-top: 2px; }
+.settings-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.btn { display: inline-flex; align-items: center; gap: 6px; background: var(--panel-2); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 5px 10px; font-size: 12px; cursor: pointer; text-decoration: none; font-family: inherit; }
+.btn:hover { border-color: var(--muted); }
+.btn:disabled { opacity: .5; cursor: default; }
+.btn-primary { background: var(--brand-accent); color: #111; border-color: var(--brand-accent); font-weight: 600; }
+.btn-primary:hover { background: var(--brand-accent-hi); border-color: var(--brand-accent-hi); }
+.btn-danger { color: var(--fail); }
+.btn-link { background: none; border: none; color: var(--accent-blue); padding: 0; }
+.secret-box { border: 1px solid var(--run); border-radius: 8px; padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; }
+.secret-box code { font: 12px var(--font-mono); word-break: break-all; user-select: all; }
+.state-tag { display: inline-block; font-size: 11px; padding: 1px 7px; border-radius: 10px; border: 1px solid var(--border); color: var(--muted); }
+.state-tag.ok { color: var(--ok); border-color: var(--ok); }
+.state-tag.warn { color: var(--run); border-color: var(--run); }
+.state-tag.fail { color: var(--fail); border-color: var(--fail); }
+@media (max-width: 640px) {
+    .settings-table thead { display: none; }
+    .settings-table tr, .settings-table td { display: block; }
+    .settings-table .actions { text-align: left; }
+}

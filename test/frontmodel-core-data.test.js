@@ -180,6 +180,7 @@ test('loadData: all files fetched -> live data, with optional files defaulted', 
     assert.deepEqual(JSON.parse(JSON.stringify(out.summary)), { components: {} });
     assert.equal(boxes.statusBadgeLabel.textContent, 'Live');
     assert.equal(boxes.statusBadgeTime.textContent, 'source: data/*.json');
+    assert.equal(boxes.settingsLink, undefined, 'no settings page off the server: the link is never shown');
 });
 
 test('loadData: optional files present are used; sync-meta stamps the time', async () => {
@@ -292,6 +293,7 @@ test('API mode: one request to the tenant API, live badge with the last sync tim
     assert.deepEqual(out.summary, { components: {} });
     assert.equal(boxes.statusBadgeLabel.textContent, 'Live');
     assert.match(boxes.statusBadgeTime.textContent, /^synced \d\d:\d\d · source: ShipScope API$/);
+    assert.equal(boxes.settingsLink.hidden, false, 'the server\'s settings page is linked');
 });
 
 test('API mode: one PI\'s issues come from the tenant API, never from data/jira-issues/*.json', async () => {
