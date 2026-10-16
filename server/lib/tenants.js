@@ -1,7 +1,5 @@
 const { setScope, withScope } = require('./scope');
 
-const VALID_ROLES = new Set(['admin', 'member']);
-
 class TenantNotFoundError extends Error {}
 class AlreadyMemberError extends Error {}
 /** The caller is a member of the tenant but lacks the admin role the action needs. */
@@ -77,47 +75,6 @@ async function createTenantWithOwner(pool, { name, githubUserId, githubLogin }) 
         return { tenant, user, membership: { tenantId: tenant.id, userId: user.id, role: 'admin' } };
     } catch (err) {
         await client.query('ROLLBACK');
-        throw err;
-    } finally {
-        client.release();
-    }
-}
-
-/**
- * Adds a GitHub-identified user as a member of an existing tenant, upserting the user row by
- * githubUserId if they're new to this system.
- *
- * @param {import('pg').Pool} pool
- * @param {{ tenantId: string, githubUserId: number, githubLogin: string, role: 'admin'|'member' }} input
- * @returns {Promise<{ tenantId: string, userId: string, role: 'admin'|'member' }>}
- * @throws {TenantNotFoundError} tenantId does not reference an existing tenant (FK violation, code 23503)
- * @throws {AlreadyMemberError} this user is already a member of this tenant (PK violation, code 23505)
- * @throws {Error} role is not 'admin'/'member', or other inputs missing/wrong-typed
- */
-async function addMember(pool, { tenantId, githubUserId, githubLogin, role }) {
-    if (typeof tenantId !== 'string' || !tenantId.trim()) throw new Error('tenantId is required');
-    if (typeof githubUserId !== 'number' || !Number.isInteger(githubUserId)) throw new Error('githubUserId must be an integer');
-    if (typeof githubLogin !== 'string' || !githubLogin.trim()) throw new Error('githubLogin is required');
-    if (!VALID_ROLES.has(role)) throw new Error(`role must be one of: ${[...VALID_ROLES].join(', ')}`);
-
-    const client = await pool.connect();
-    try {
-        await client.query('BEGIN');
-        await setScope(client, { tenantId });
-
-        const user = await upsertUser(client, { githubUserId, githubLogin });
-
-        await client.query(
-            'INSERT INTO memberships (tenant_id, user_id, role) VALUES ($1, $2, $3)',
-            [tenantId, user.id, role]
-        );
-
-        await client.query('COMMIT');
-        return { tenantId, userId: user.id, role };
-    } catch (err) {
-        await client.query('ROLLBACK');
-        if (err.code === '23503') throw new TenantNotFoundError(`No tenant with id ${tenantId}`, { cause: err });
-        if (err.code === '23505') throw new AlreadyMemberError(`User is already a member of tenant ${tenantId}`, { cause: err });
         throw err;
     } finally {
         client.release();
@@ -274,7 +231,6 @@ module.exports = {
     roleOf,
     assertAdmin,
     removeMember,
-    addMember,
     upsertUser,
     listTenantsForUser,
     listMembersIfMember,

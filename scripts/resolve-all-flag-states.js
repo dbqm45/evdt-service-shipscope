@@ -134,8 +134,6 @@ function main(changedBy = CHANGED_BY) {
     );
 }
 
-module.exports = { findFlagPartsDirs, extractFlagParts, resolveAllDomains };
-
 if (require.main === module) {
     // CHANGED_BY is the GitHub login of whoever triggered the run; store their display name instead when
     // they have one (as the Deployment History does), else the login.

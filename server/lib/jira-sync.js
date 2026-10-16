@@ -555,4 +555,4 @@ async function listPiIssues(pool, { tenantId, actorUserId, pi }) {
     });
 }
 
-module.exports = { WEBHOOK_RECONNECT, removeJiraWebhooks, listFlagFields, setFlagLink, NOW_KEY, JiraBoardError, listBoards, setBoards, configureBoard, syncTenant, syncAllJira, readDashboardJira, listPiIssues };
+module.exports = { WEBHOOK_RECONNECT, removeJiraWebhooks, listFlagFields, setFlagLink, JiraBoardError, listBoards, setBoards, configureBoard, syncTenant, syncAllJira, readDashboardJira, listPiIssues };

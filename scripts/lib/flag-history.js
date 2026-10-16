@@ -1,4 +1,3 @@
-const fs = require('fs');
 const { readJson, writeJson } = require('./json-file');
 
 /** Appends to the flag-state-history.json audit log — one entry per actual flag/env/source flip. */

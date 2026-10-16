@@ -1,7 +1,7 @@
 /**
- * Groups real (non-fallback-stub) Jira issues by application (via components.json) then by PI, and shows
- * whether each PI's work is fully released to prod for that application yet. Purely derived from `state` —
- * no new data file, no server round-trip beyond what loadData() already fetches.
+ * Release Notes: real (non-fallback-stub) Jira issues released to prod, grouped by PI then sprint, narrowed by
+ * the Service (application, via components.json) and Type filters. Purely derived from `state` — no data file
+ * or request of its own beyond what loadData() already fetches.
  */
 /** Release Notes summary row: always the *current* PI's released counts — deliberately ignoring
  *  whatever PI/Service/Type filters are active below, so this stays one unambiguous statement
@@ -69,9 +69,8 @@ function renderReleaseNotes(){
         return;
     }
 
-    // Flat PI → Sprint grouping, deliberately not split by application/service any more — the Service
-    // filter above still narrows *which* issues are in `filteredIssues` to begin with, this just stops
-    // partitioning the result into one panel per app once it's in.
+    // Flat PI → Sprint grouping: the Service filter above narrows which issues are in `filteredIssues`, the
+    // result is one list, not one panel per application.
     const byPi = new Map();
 
     filteredIssues.forEach(issue => {
@@ -101,7 +100,7 @@ function renderReleaseNotes(){
 
         return ReleaseNoteItem({
             type: issue.type,
-            href: `${JIRA_BASE_URL}/${issue.key}`,
+            href: jiraIssueUrl(issue.key),
             title: issue.title,
             pill: StatusPill({ cls: statusClass(prodLevel), label: statusLabel(prodLevel), title: statusLabelTooltip(prodLevel) }),
             issueKey: issue.key,
@@ -150,3 +149,75 @@ function renderReleaseNotes(){
     box.innerHTML = PanelBody({ children: piSections });
 }
 
+/**
+ * Repopulates the Service/Type filter *options* from whichever PI is currently loaded — both are derived
+ * from `state.jiraIssues`, which holds only the selected PI (`state.selectedPi`), so this runs again on every
+ * PI switch (`initGlobalPiSelect()`).
+ * Leaves the "All" option/button (never removed) and whatever's currently selected alone — callers that
+ * want a fresh start after a PI switch reset the actual filter values themselves.
+ */
+function refreshReleaseNotesFilterOptions(){
+    const allRealPiIssues = state.jiraIssues.filter(i => isRealPi(i.pi));
+
+    const appSel = document.getElementById('filterNotesApp');
+
+    appSel.querySelectorAll('option:not([value=""])').forEach(o => o.remove());
+
+    const apps = orderedApplications([...new Set(allRealPiIssues.flatMap(applicationsForIssue))]);
+
+    apps.forEach(app => {
+        const o = document.createElement('option');
+
+        o.value = app;
+        o.textContent = app;
+        appSel.appendChild(o);
+    });
+
+    const typeGroup = document.getElementById('filterNotesTypeGroup');
+
+    typeGroup.querySelectorAll('.segmented-btn:not([data-value=""])').forEach(b => b.remove());
+
+    // Same order as Product view's own Type filter (WORK_ITEM_TYPE_ORDER/typeSortRank), not a plain
+    // alphabetical sort, so the two tabs' filters read consistently.
+    const types = [...new Set(allRealPiIssues.map(i => i.type))].sort((a, b) => typeSortRank(a) - typeSortRank(b));
+
+    types.forEach(type => {
+        const b = document.createElement('button');
+
+        b.type = 'button';
+        b.className = 'segmented-btn';
+        b.dataset.value = type;
+        b.textContent = type;
+        typeGroup.appendChild(b);
+    });
+}
+
+function initReleaseNotesFilters(){
+    refreshReleaseNotesFilterOptions();
+
+    const appSel = document.getElementById('filterNotesApp');
+    const typeGroup = document.getElementById('filterNotesTypeGroup');
+    const typeInput = document.getElementById('filterNotesType');
+
+    typeGroup.addEventListener('click', e => {
+        const btn = e.target.closest('.segmented-btn');
+
+        if (!btn) {
+            return;
+        }
+
+        typeGroup.querySelectorAll('.segmented-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        typeInput.value = btn.dataset.value;
+        renderReleaseNotes();
+    });
+
+    appSel.addEventListener('input', renderReleaseNotes);
+    document.getElementById('btnClearNotesFilters').onclick = () => {
+        appSel.value = '';
+        typeGroup.querySelectorAll('.segmented-btn').forEach(b => b.classList.remove('active'));
+        typeGroup.querySelector('.segmented-btn[data-value=""]').classList.add('active');
+        typeInput.value = '';
+        renderReleaseNotes();
+    };
+}

@@ -97,7 +97,7 @@ function matchesBoardPrefix(sprintName, boardName) {
 }
 
 /** Sorts PI labels ("PI-27.3") or sprint labels descending (newest first) by every embedded number, left
- *  to right — the same convention `docs/app.js`'s own `compareVersionDesc` already uses client-side, kept
+ *  to right — the same convention `docs/app-*.js`'s own `compareVersionDesc` already uses client-side, kept
  *  in sync here since `main()` now needs to pre-sort PI entries for `index.json` itself. */
 function comparePiDesc(a, b) {
     const numsOf = s => (s.match(/\d+/g) || []).map(Number);

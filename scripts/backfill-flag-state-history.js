@@ -1,4 +1,3 @@
-const fs = require('fs');
 const path = require('path');
 const { safeRelativePath } = require('./lib/cli');
 const { readJson, writeJson } = require('./lib/json-file');
@@ -132,8 +131,6 @@ function main() {
     writeJson(FLAG_STATE_HISTORY_PATH, merged);
     console.log(`Backfilled ${minedEntries.length} historical flag change(s) from ${commits.length} commit(s) touching ${FLAG_STATES_PATH}.`);
 }
-
-module.exports = { diffFlagStates, dedupeKey };
 
 if (require.main === module) {
     main();

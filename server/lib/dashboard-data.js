@@ -56,7 +56,7 @@ function shortRef(ref) {
  * @param {{ tenantId: string, actorUserId: string }} input
  * @returns {Promise<{ deployments: object[], flagsMeta: object, flagStates: object, jiraIndex: { currentPi: string|null, pis: object[] },
  *   flagStateHistory: [], componentsOrder: object[], issueStatusIndex: object, issueDeployments: object,
- *   summary: { components: object }, lastSyncedAt: string|null }>}
+ *   summary: { components: object }, lastSyncedAt: string|null, jiraBrowseUrl: string|null }>}
  * @throws {TenantNotFoundError} the user isn't a member
  */
 async function buildDashboardData(pool, { tenantId, actorUserId }) {
@@ -104,6 +104,11 @@ async function buildDashboardData(pool, { tenantId, actorUserId }) {
             tenantId, componentOf: (repoId) => names.get(repoId),
         });
 
+        // Where an issue key links to: the tenant's own Jira site, or nowhere until Jira is connected (the dashboard
+        // then shows keys unlinked rather than pointing them at somebody else's Jira).
+        const { rows: [jira] } = await client.query('SELECT site_url FROM jira_connections WHERE tenant_id = $1 AND cloud_id IS NOT NULL', [tenantId]);
+        const jiraBrowseUrl = jira && /^https:\/\/[^/\s]+/.test(jira.site_url || '') ? `${jira.site_url.replace(/\/+$/, '')}/browse` : null;
+
         const synced = repos.map((r) => r.last_synced_at).filter(Boolean).sort((a, b) => b - a);
         return {
             deployments: records,
@@ -122,8 +127,9 @@ async function buildDashboardData(pool, { tenantId, actorUserId }) {
                 application: null,
             })),
             lastSyncedAt: synced.length ? synced[0].toISOString() : null,
+            jiraBrowseUrl,
         };
     });
 }
 
-module.exports = { buildDashboardData, componentNames };
+module.exports = { buildDashboardData };

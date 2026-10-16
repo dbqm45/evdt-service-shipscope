@@ -1,7 +1,5 @@
-let activeStatusTile = null;
-
-/** Product view summary row (§4.1): a "Current PI" snapshot card + 4 status tiles that double as a
- *  PROD-status filter for the table below (see `activeStatusTile`, read by renderIssues()). */
+/** Product view summary row (§4.1): a "Current PI" snapshot card + 4 PROD-status tiles (counts only, not
+ *  controls). */
 function renderProductSummary(){
     const box = document.getElementById('pvSummary');
     const targetPi = state.selectedPi;
@@ -21,12 +19,9 @@ function renderProductSummary(){
         { key: 'none', label: 'Not deployed', color: 'var(--nd-fg-4)', value: counts.none },
     ];
 
-    // Not clickable for now (see activeStatusTile/prodStatusBucket in renderIssues, kept in place so
-    // this is a one-line revert — just re-add the .pv-tile click wiring below to turn tile-click
-    // filtering back on): plain <div>s instead of <button>s, so they don't look/focus like controls.
     const tilesHtml = tiles.map(t => StatusTile({
         tileKey: t.key, label: t.label, color: t.color, value: t.value,
-        percent: total ? Math.round(t.value/total*100) : 0, active: activeStatusTile === t.key,
+        percent: total ? Math.round(t.value/total*100) : 0,
     }));
 
     box.innerHTML = html`${piCardHtml}${tilesHtml}`;
@@ -87,7 +82,6 @@ function selectProductIssues(){
         passesDate(i)
         && (!typeFilter || i.type === typeFilter)
         && (!priorityFilter || i.priority === priorityFilter)
-        && (!activeStatusTile || prodStatusBucket(i) === activeStatusTile)
         && (!hideTasks || i.type !== ISSUE_TYPE.TASK)
     );
 
@@ -142,7 +136,7 @@ function issueRowHtml(issue, indent, showSprintBadge){
     return IssueRow({
         rowClass: indent ? 'wi-child-row' : 'wi-ungrouped-row',
         issueKey: issue.key,
-        href: `${JIRA_BASE_URL}/${issue.key}`,
+        href: jiraIssueUrl(issue.key),
         title: issue.title && issue.title !== '—' ? issue.title : '',
         type: issue.type,
         badges,
@@ -175,7 +169,7 @@ function epicHeaderHtml(group, epicChildren, showSprintBadge){
 
     return EpicHeader({
         epicKey: group.epicKey,
-        href: `${JIRA_BASE_URL}/${group.epicKey}`,
+        href: jiraIssueUrl(group.epicKey),
         title: group.epicTitle || group.epicKey,
         hasChildren: group.children.length > 0,
         collapsed: collapsedEpics.has(group.epicKey),
@@ -323,8 +317,8 @@ function refreshSprintSelect(){
 
 /**
  * Repopulates the Type/Priority filter *options* from whichever PI is currently loaded — both are derived
- * from `state.jiraIssues`, which only ever holds one PI's worth of data now (see `state.selectedPi`), so
- * these can't just be set once at init any more; called again on every PI switch (`initGlobalPiSelect()`).
+ * from `state.jiraIssues`, which holds only the selected PI (`state.selectedPi`), so this runs again on every
+ * PI switch (`initGlobalPiSelect()`).
  */
 function refreshProductViewFilterOptions(){
     const typeGroup = document.getElementById('filterTypeGroup');
@@ -404,7 +398,6 @@ function initProductView(){
         document.getElementById('filterFrom').value='';
         document.getElementById('filterTo').value='';
         document.getElementById('filterHideTasks').checked = false;
-        activeStatusTile = null;
         renderProductSummary();
         resetIssuePagination();
     };
@@ -419,77 +412,3 @@ function initProductView(){
         }
     });
 }
-
-/**
- * Repopulates the Service/Type filter *options* from whichever PI is currently loaded — both are derived
- * from `state.jiraIssues`, which only ever holds one PI's worth of data now (see `state.selectedPi`), so
- * these can't just be set once at init any more; called again on every PI switch (`initGlobalPiSelect()`).
- * Leaves the "All" option/button (never removed) and whatever's currently selected alone — callers that
- * want a fresh start after a PI switch reset the actual filter values themselves.
- */
-function refreshReleaseNotesFilterOptions(){
-    const allRealPiIssues = state.jiraIssues.filter(i => isRealPi(i.pi));
-
-    const appSel = document.getElementById('filterNotesApp');
-
-    appSel.querySelectorAll('option:not([value=""])').forEach(o => o.remove());
-
-    const apps = orderedApplications([...new Set(allRealPiIssues.flatMap(applicationsForIssue))]);
-
-    apps.forEach(app => {
-        const o = document.createElement('option');
-
-        o.value = app;
-        o.textContent = app;
-        appSel.appendChild(o);
-    });
-
-    const typeGroup = document.getElementById('filterNotesTypeGroup');
-
-    typeGroup.querySelectorAll('.segmented-btn:not([data-value=""])').forEach(b => b.remove());
-
-    // Same order as Product view's own Type filter (WORK_ITEM_TYPE_ORDER/typeSortRank), not a plain
-    // alphabetical sort, so the two tabs' filters read consistently.
-    const types = [...new Set(allRealPiIssues.map(i => i.type))].sort((a, b) => typeSortRank(a) - typeSortRank(b));
-
-    types.forEach(type => {
-        const b = document.createElement('button');
-
-        b.type = 'button';
-        b.className = 'segmented-btn';
-        b.dataset.value = type;
-        b.textContent = type;
-        typeGroup.appendChild(b);
-    });
-}
-
-function initReleaseNotesFilters(){
-    refreshReleaseNotesFilterOptions();
-
-    const appSel = document.getElementById('filterNotesApp');
-    const typeGroup = document.getElementById('filterNotesTypeGroup');
-    const typeInput = document.getElementById('filterNotesType');
-
-    typeGroup.addEventListener('click', e => {
-        const btn = e.target.closest('.segmented-btn');
-
-        if (!btn) {
-            return;
-        }
-
-        typeGroup.querySelectorAll('.segmented-btn').forEach(b => b.classList.remove('active'));
-        btn.classList.add('active');
-        typeInput.value = btn.dataset.value;
-        renderReleaseNotes();
-    });
-
-    appSel.addEventListener('input', renderReleaseNotes);
-    document.getElementById('btnClearNotesFilters').onclick = () => {
-        appSel.value = '';
-        typeGroup.querySelectorAll('.segmented-btn').forEach(b => b.classList.remove('active'));
-        typeGroup.querySelector('.segmented-btn[data-value=""]').classList.add('active');
-        typeInput.value = '';
-        renderReleaseNotes();
-    };
-}
-

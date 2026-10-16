@@ -111,13 +111,8 @@ function renderSummaryCards(){
         return d && hasDrift(d.driftBehind) && driftComparedEnv(d.driftBehind) === ENVIRONMENT.QA;
     }).length;
 
-    const today = new Date();
-    const isToday = iso => {
-        const d = new Date(iso);
-
-        return d.getFullYear() === today.getFullYear() && d.getMonth() === today.getMonth() && d.getDate() === today.getDate();
-    };
-    const deploysToday = state.deployments.filter(d => isToday(d.deployedAt));
+    const today = dayKey(new Date());
+    const deploysToday = state.deployments.filter(d => dayKey(d.deployedAt) === today);
     const failedToday = deploysToday.filter(d => d.status !== 'success').length;
 
     const divergingEnvs = new Set();
@@ -475,14 +470,14 @@ function renderMatrix(){
     bindFlagRowHover(m);
 }
 
-let visibleDeployCount = 20;
 const DEPLOY_PAGE_SIZE = 20;
+let visibleDeployCount = DEPLOY_PAGE_SIZE;
 
 /** Ticket + flag-flip chips, shared between a single deploy card and a grouped-deploy card (where the
  *  chips are the union across every run in the group). Returns '' when there's nothing to show. */
 function renderChipsRow(relatedIssues, flagBadges){
     return DeployChips({
-        issues: (relatedIssues || []).map(k => ({ key: k, href: `${JIRA_BASE_URL}/${k}` })),
+        issues: (relatedIssues || []).map(k => ({ key: k, href: jiraIssueUrl(k) })),
         flagBadges: flagBadges || {},
     });
 }
@@ -585,7 +580,7 @@ function flagAddedEvents(){
 
 /**
  * Full audit trail from flag-state-history.json — every flip ever recorded, not just the latest
- * per flag/env/source (that's still what flagStates.json/effectiveFlagState hold, for *current* state).
+ * per flag/env/source (that's what flag-states.json/effectiveFlagState hold, for *current* state).
  * Entries only exist from the point this log was introduced onward; older flips were never captured.
  */
 function flagChangeEvents(){
@@ -908,7 +903,7 @@ function renderFlags(){
             states,
             details: FlagDetails({
                 description: f.description,
-                issues: (f.jiraKeys || []).map(k => ({ key: k, href: `${JIRA_BASE_URL}/${k}` })),
+                issues: (f.jiraKeys || []).map(k => ({ key: k, href: jiraIssueUrl(k) })),
                 components: f.components || [],
                 added: f.createdAt ? fmtDateShort(f.createdAt) : '',
             }),

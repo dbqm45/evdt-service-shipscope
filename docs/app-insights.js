@@ -45,27 +45,26 @@ function sprintLabelFor(issue){
     return m ? `PI-${m[1]}.${m[2]}` : issue.sprint;
 }
 
-/** Chart 1's data: every issue's PROD status (via the same issueStatusForEnv the Product view table
- *  already reads row-by-row), bucketed per sprint (`sprintLabelFor()`) rather than per PI — a finer-grained
- *  view of the same rollup. `deployed` and `deployed_code_only` share one bucket ("Deployed (hidden)") —
- *  at this rolled-up level, "code shipped but flag confirmed off" and "code shipped, no flag to check"
- *  both mean the same practical thing: shipped, visibility unconfirmed. */
-function sprintReleaseStatusBreakdown(){
-    const bySprint = new Map();
+/** PROD status counts of `issues`, one bucket per `keyOf(issue)` (issues with no key are skipped), as rows
+ *  `{ label, counts, total }` sorted by `compare`. `deployed` and `deployed_code_only` share one bucket
+ *  ("Deployed (hidden)") — at this rolled-up level, "code shipped but flag confirmed off" and "code shipped,
+ *  no flag to check" both mean the same practical thing: shipped, visibility unconfirmed. */
+function releaseStatusBreakdown(issues, keyOf, compare){
+    const byKey = new Map();
 
-    state.jiraIssues.forEach(issue => {
-        const label = sprintLabelFor(issue);
+    issues.forEach(issue => {
+        const key = keyOf(issue);
 
-        if (!label) {
+        if (!key) {
             return;
         }
 
-        if (!bySprint.has(label)) {
-            bySprint.set(label, { none: 0, deployedHidden: 0, released: 0, partial: 0 });
+        if (!byKey.has(key)) {
+            byKey.set(key, { none: 0, deployedHidden: 0, released: 0, partial: 0 });
         }
 
         const level = issueStatusForEnv(issue, ENVIRONMENT.PROD).level;
-        const counts = bySprint.get(label);
+        const counts = byKey.get(key);
 
         if (level === RELEASE_LEVEL.RELEASED) {
             counts.released++;
@@ -78,19 +77,19 @@ function sprintReleaseStatusBreakdown(){
         }
     });
 
-    return [...bySprint.keys()].sort(compareVersionDesc).map(label => {
-        const counts = bySprint.get(label);
+    return [...byKey.keys()].sort(compare).map(label => {
+        const counts = byKey.get(label);
 
         return { label, counts, total: counts.none + counts.deployedHidden + counts.released + counts.partial };
     });
 }
 
-function renderSprintStatusChart(){
-    const box = document.getElementById('chartSprint');
-    const rows = sprintReleaseStatusBreakdown();
+/** One stacked bar per row of a releaseStatusBreakdown(), or `emptyMessage` when there are none. */
+function renderReleaseStatusChart(boxId, rows, emptyMessage){
+    const box = document.getElementById(boxId);
 
     if (!rows.length) {
-        box.innerHTML = EmptyState({ message: 'No issues with a detectable sprint to chart yet' });
+        box.innerHTML = EmptyState({ message: emptyMessage });
         return;
     }
 
@@ -106,70 +105,32 @@ function renderSprintStatusChart(){
             return BarSegment({ cls: s.cls, widthPct: n / total * 100, title: `${s.label}: ${n}` });
         });
 
-        return BarRow({ label: label, valueText: total, segments });
+        return BarRow({ label, valueText: total, segments });
     });
 
     box.innerHTML = html`${legend}${rowsHtml}`;
 }
 
-/** Same rollup as `sprintReleaseStatusBreakdown()`, bucketed by Jira `priority` instead — answers "how
- *  many Highest/High-priority issues are still not released," not just "how many total." Issues with no
- *  priority set (an older sync, or a Jira instance that doesn't use it) are excluded rather than lumped
- *  into an "unknown" bucket. */
+/** Chart 1's data: every issue's PROD status (via the same issueStatusForEnv the Product view table
+ *  already reads row-by-row), bucketed per sprint (`sprintLabelFor()`) rather than per PI — a finer-grained
+ *  view of the same rollup. */
+function sprintReleaseStatusBreakdown(){
+    return releaseStatusBreakdown(state.jiraIssues, sprintLabelFor, compareVersionDesc);
+}
+
+function renderSprintStatusChart(){
+    renderReleaseStatusChart('chartSprint', sprintReleaseStatusBreakdown(), 'No issues with a detectable sprint to chart yet');
+}
+
+/** Same rollup, bucketed by Jira `priority` instead — answers "how many Highest/High-priority issues are still
+ *  not released," not just "how many total." Issues with no priority set (an older sync, or a Jira instance
+ *  that doesn't use it) are excluded rather than lumped into an "unknown" bucket. */
 function priorityReleaseStatusBreakdown(){
-    const byPriority = new Map();
-
-    state.jiraIssues.filter(i => isRealPi(i.pi) && i.priority).forEach(issue => {
-        if (!byPriority.has(issue.priority)) {
-            byPriority.set(issue.priority, { none: 0, deployedHidden: 0, released: 0, partial: 0 });
-        }
-
-        const level = issueStatusForEnv(issue, ENVIRONMENT.PROD).level;
-        const counts = byPriority.get(issue.priority);
-
-        if (level === RELEASE_LEVEL.RELEASED) {
-            counts.released++;
-        } else if (level === RELEASE_LEVEL.DEPLOYED || level === RELEASE_LEVEL.DEPLOYED_CODE_ONLY) {
-            counts.deployedHidden++;
-        } else if (level === RELEASE_LEVEL.PARTIAL) {
-            counts.partial++;
-        } else {
-            counts.none++;
-        }
-    });
-
-    return [...byPriority.keys()].sort(comparePriorityDesc).map(priority => {
-        const counts = byPriority.get(priority);
-
-        return { priority, counts, total: counts.none + counts.deployedHidden + counts.released + counts.partial };
-    });
+    return releaseStatusBreakdown(state.jiraIssues.filter(i => isRealPi(i.pi)), i => i.priority, comparePriorityDesc);
 }
 
 function renderPriorityStatusChart(){
-    const box = document.getElementById('chartPriority');
-    const rows = priorityReleaseStatusBreakdown();
-
-    if (!rows.length) {
-        box.innerHTML = EmptyState({ message: 'No issues with a priority set yet' });
-        return;
-    }
-
-    const legend = ChartLegend({ items: CHART_STATUS_ORDER });
-    const rowsHtml = rows.map(({ priority, counts, total }) => {
-        const segments = CHART_STATUS_ORDER.map(s => {
-            const n = counts[s.key];
-
-            if (!n) {
-                return '';
-            }
-
-            return BarSegment({ cls: s.cls, widthPct: n / total * 100, title: `${s.label}: ${n}` });
-        });
-
-        return BarRow({ label: priority, valueText: total, segments });
-    });
-
-    box.innerHTML = html`${legend}${rowsHtml}`;
+    renderReleaseStatusChart('chartPriority', priorityReleaseStatusBreakdown(), 'No issues with a priority set yet');
 }
 
 /** Chart 2's data: every flag currently ON in prod (via the same effectiveFlagState() resolution used
@@ -209,12 +170,6 @@ function renderStaleFlagsChart(){
     }))}`;
 }
 
-/** Median days from Jira resolution (`resolvedAt`) to the first successful prod deployment referencing
- *  that issue key — "how long after Done did this actually reach users," bucketed per sprint
- *  (`sprintLabelFor()`, same "PI-27.3.3"-style label as chart 1) rather than per PI, for the same
- *  finer-grained reason. Only counts issues that are both resolved and have a detectable sprint and have
- *  shipped to prod at least once; a negative gap (code already on prod before the ticket was marked Done
- *  — a "deploy first, close after verifying" workflow) is clamped to 0 rather than shown as negative. */
 /** Earliest known successful prod deployment referencing this issue, across both the live
  *  `state.deployments` (may have aged out of RETENTION_DAYS) and the never-trimmed
  *  `state.issueDeployments` fallback — see issueDeployedOnComponent()'s own comment for why both are
@@ -230,6 +185,12 @@ function earliestProdDeployedAt(issueKey){
 
     return all.length ? Math.min(...all) : null;
 }
+/** Median days from Jira resolution (`resolvedAt`) to the first successful prod deployment referencing
+ *  that issue key — "how long after Done did this actually reach users," bucketed per sprint
+ *  (`sprintLabelFor()`, same "PI-27.3.3"-style label as chart 1) rather than per PI, for the same
+ *  finer-grained reason. Only counts issues that are both resolved and have a detectable sprint and have
+ *  shipped to prod at least once; a negative gap (code already on prod before the ticket was marked Done
+ *  — a "deploy first, close after verifying" workflow) is clamped to 0 rather than shown as negative. */
 function leadTimeToProdBySprint(){
     const bySprint = new Map();
 

@@ -412,16 +412,13 @@ ktoś nie odpali dla niego backfillu.
 (Skrypt: `sync-jira.js`, funkcje `resolveCurrentPiForSpaces`, `runCurrentPiMode`, `writePiShards`. Workflow:
 `orchestrate-full-sync.yml`, job `sync_jira`. Ścieżka ręcznego snapshotu: `backfill-jira-issues.yml`.)
 
-## Zakładka Release Notes (podgląd)
+## Zakładka Release Notes
 
 ### Jak w ogóle zobaczyć tę zakładkę?
 
-Trzeba wczytać stronę z `?releaseNotes=1` dodanym do URL. Nie istnieje żaden inny przełącznik — żadne
-ustawienie, żaden cookie, nic nie jest zapamiętywane między wizytami. To celowe, miękkie wdrożenie funkcji na
-czas jej weryfikacji na realnych danych, nie środek kontroli dostępu: leżące pod spodem dane JSON są równie
-publiczne z parametrem, jak i bez niego.
-
-(Plik: `docs/app.js`, konstanta `RELEASE_NOTES_ENABLED`.)
+Jest zawsze widoczna, obok Product view i Technical view. (Za przełącznikiem w adresie jest jeszcze zakładka
+Insights: trzeba wczytać stronę z `?insights=1`. To miękkie wdrożenie, nie kontrola dostępu: dane są te same z
+parametrem i bez niego.)
 
 ### Jak issue jest przypisywany do „aplikacji”?
 

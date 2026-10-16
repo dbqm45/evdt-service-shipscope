@@ -174,20 +174,6 @@ test('tab clicks switch views and toggle the PI / sprint selectors', async () =>
     assert.equal(boxes.globalPiSelectWrap.style.display, 'none');
 });
 
-test('feature switches off: Product tab disabled, Release Notes tab removed', async () => {
-    const app = loadApp({
-        patch: s => s.replace('const PRODUCT_VIEW_ENABLED = true;', 'const PRODUCT_VIEW_ENABLED = false;').replace('const RELEASE_NOTES_ENABLED = true;', 'const RELEASE_NOTES_ENABLED = false;'),
-    });
-
-    await settle();
-    assert.ok(app.byView.product.classList.contains('tab-disabled'));
-    assert.equal(app.byView.product.title, "Product view isn't ready yet");
-    assert.equal(app.byView.product.onclick, undefined, 'disabled tab is not clickable');
-    assert.equal(typeof app.byView.tech.onclick, 'function');
-    assert.equal(app.byView.notes.removed, true);
-    assert.equal(app.boxes.releaseNotesBody, undefined, 'release notes never rendered');
-});
-
 test('live boot: current PI chosen from the index, its shard loaded, options labelled', async () => {
     const calls = [];
     const routes = liveRoutes();

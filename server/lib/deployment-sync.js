@@ -360,4 +360,4 @@ async function syncAll({ pool, app, fetch: fetchFn = fetch, now = Date.now(), cl
 /** Never tried sorts first, then the oldest attempt. */
 const waitKey = (at) => (at ? at.getTime() : -1);
 
-module.exports = { syncRepo, syncAll, DEFAULT_TENANT_BUDGET_MS };
+module.exports = { syncAll };

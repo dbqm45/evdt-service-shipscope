@@ -6,22 +6,22 @@ const {
     JIRA_PROJECT_KEY, DEPLOYMENTS_PATH, SPACES_PATH, AUTH_HEADER_VALUE,
 } = require('./lib/jira-config');
 const {
-    extractPiFromSprintName, extractPiFromLabel, pickRelevantSprintInfo, comparePiDesc, safeFileSlug,
+    comparePiDesc,
 } = require('./lib/jira-pi');
 const {
     deriveIssueKeysFromDeployments, projectKeyOf, buildJql, buildJqlForKeys, buildCurrentPiJql,
 } = require('./lib/jira-jql');
 const {
-    JiraSpacesConfigError, filterExistingProjectKeys, readSpacesConfig, resolveSpacesConfig,
+    filterExistingProjectKeys, readSpacesConfig, resolveSpacesConfig,
     buildBoardNamesByProjectName, buildTeamNamesByProjectName,
 } = require('./lib/jira-spaces');
 const { JiraBoardLookupError, resolveCurrentPiForSpaces } = require('./lib/jira-boards');
 const {
-    pickBestType, buildFallbackIssuesFromDeployments, findSpecialFieldIds, extractTeamName, extractTeamNames,
+    buildFallbackIssuesFromDeployments, findSpecialFieldIds,
     fillMissingEpicTitles, fetchAndMapIssuesForJql,
 } = require('./lib/jira-issues');
 const {
-    readExistingIndex, groupIssuesByPi, writePiShards, buildStatusIndex,
+    groupIssuesByPi, writePiShards, buildStatusIndex,
 } = require('./lib/jira-shards');
 
 // This file is the orchestrator only: it decides *which* Jira query to run (backfill / current PI /
@@ -401,7 +401,7 @@ async function runFullScopeMode(explicitProjectKeys, allowedProjectKeys, current
 
     // Board-derived current-PI results (if any) are the most authoritative signal for "what PI is the team
     // actually in right now" — falls back to the highest PI seen among non-Epic issues (the same heuristic
-    // docs/app.js's own currentPi() used client-side before this index existed) when no board is configured
+    // docs/app-*.js's own currentPi() used client-side before this index existed) when no board is configured
     // or it couldn't be resolved this run, and to `null` when even that finds nothing (e.g. a fully
     // fallback-stub run with no real PI at all).
     const currentPiFromBoards = currentPiResults
@@ -524,34 +524,6 @@ async function main() {
     );
     buildStatusIndex();
 }
-
-module.exports = {
-    deriveIssueKeysFromDeployments,
-    buildJql,
-    buildJqlForKeys,
-    buildCurrentPiJql,
-    extractPiFromSprintName,
-    extractPiFromLabel,
-    pickRelevantSprintInfo,
-    extractTeamName,
-    extractTeamNames,
-    comparePiDesc,
-    safeFileSlug,
-    pickBestType,
-    buildFallbackIssuesFromDeployments,
-    parseBackfillPis,
-    groupIssuesByPi,
-    writePiShards,
-    readExistingIndex,
-    buildStatusIndex,
-    resolveCurrentPiForSpaces,
-    JiraBoardLookupError,
-    JiraSpacesConfigError,
-    readSpacesConfig,
-    buildBoardNamesByProjectName,
-    buildTeamNamesByProjectName,
-    fetchAndMapIssuesForJql,
-};
 
 if (require.main === module) {
     main().catch(e => { console.error(e); process.exit(1); });

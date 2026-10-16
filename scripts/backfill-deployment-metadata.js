@@ -1,9 +1,9 @@
 const fs = require('fs');
-const path = require('path');
 const { fail, safeRelativePath } = require('./lib/cli');
 const { readJson, writeJson } = require('./lib/json-file');
 const { resolveDisplayName } = require('./lib/github-users');
 const { githubApiGet } = require('./lib/github-api');
+const { extractPromotedVersion, extractRunId, computeDeployDurationMs } = require('./lib/deployment-records');
 const { GITHUB_TOKEN, APP_REPO, COMPONENT } = process.env;
 
 const DATA_PATH = safeRelativePath(process.env.DATA_PATH || 'docs/data/deployments.json', 'DATA_PATH');
@@ -48,20 +48,8 @@ async function githubApiAllPages(basePathWithQuery) {
     return all;
 }
 
-function extractPromotedVersion(commitMessage) {
-    const match = (commitMessage || '').match(/\bv?\d+\.\d+\.\d+\b/);
-
-    return match ? match[0] : null;
-}
-
 function looksLikeRawSha(version) {
     return /^[0-9a-f]{7,40}$/i.test(version || '');
-}
-
-function extractRunId(logUrl) {
-    const match = (logUrl || '').match(/\/actions\/runs\/(\d+)/);
-
-    return match ? match[1] : null;
 }
 
 function extractShaFromLink(url) {
@@ -79,23 +67,6 @@ const TERMINAL_STATES = new Set(['success', 'failure', 'error']);
 // first *terminal* entry, reintroducing the exact bug the sync script already fixed.
 function firstTerminalStatus(statuses) {
     return (statuses || []).find(s => TERMINAL_STATES.has(s.state)) || null;
-}
-
-// Must stay in sync with sync-github-deployments.js's own computeDeployDurationMs: GitHub appends
-// `inactive` to a deployment's *own* status history whenever a *later* deployment on the same environment
-// succeeds (`auto_inactive`) — not part of this deployment's own lifecycle, so including it inflates
-// `durationMs` to "however long until some unrelated future deploy happened." Found and fixed as a real
-// bug: this copy was missing the filter the sync script already has, and since backfill specifically
-// targets *older* records (more likely to have since accumulated an `inactive` marker from a later
-// deploy), it was computing inflated durations for exactly the records most likely to need fixing.
-function computeDeployDurationMs(statuses) {
-    const lifecycle = (statuses || []).filter(s => s.state !== 'inactive');
-
-    if (lifecycle.length < 2) return null;
-
-    const times = lifecycle.map(s => new Date(s.created_at).getTime());
-
-    return Math.max(...times) - Math.min(...times);
 }
 
 async function resolveManualFlag(logUrl, runEventCache) {
@@ -430,18 +401,6 @@ async function main() {
         (remaining > 0 || versionsRemaining > 0 || rollbacksRemaining > 0 || namesRemaining > 0 ? ' Rerun to continue.' : '')
     );
 }
-
-module.exports = {
-    extractRunId,
-    extractShaFromLink,
-    extractPromotedVersion,
-    looksLikeRawSha,
-    computeDeployDurationMs,
-    buildPerEnvSuccessChronology,
-    previousShaFor,
-    backfillCompareLinks,
-    backfillDuplicateReleaseGaps,
-};
 
 if (require.main === module) {
     main().catch(e => { console.error(e); process.exit(1); });

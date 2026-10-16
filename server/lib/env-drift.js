@@ -85,4 +85,4 @@ async function computeEnvDrift({ token, fullName, latestByEnv, ignorePatterns, f
     return { envs, failed };
 }
 
-module.exports = { ENV_ORDER, compareTrees, computeEnvDrift };
+module.exports = { ENV_ORDER, computeEnvDrift };

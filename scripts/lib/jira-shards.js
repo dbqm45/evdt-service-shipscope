@@ -280,7 +280,7 @@ function writePiShards(issuesByPi, sprintsByPi, { scope, currentPi, isExplicitBa
 
     writeShardFiles(fetchedEntries, issuesByPi, scope);
 
-    // `index.json` must never list a PI whose shard file doesn't actually exist — `docs/app.js`'s global PI
+    // `index.json` must never list a PI whose shard file doesn't actually exist — `docs/app-*.js`'s global PI
     // `<select>` trusts this list completely. Only ever catches a *pre-existing* entry (from a partial
     // scope's merge, or a stale/malformed index.json) whose file went missing externally.
     const finalPiEntries = resolved.finalPiEntries.filter(e => {
@@ -301,7 +301,7 @@ function writePiShards(issuesByPi, sprintsByPi, { scope, currentPi, isExplicitBa
 
 /**
  * A tiny, cross-PI `key -> { pi, statusCategory }` map, rebuilt from whatever shard files exist on disk
- * after every run. Exists so `docs/app.js` doesn't have to fetch more than one PI's shard just to answer
+ * after every run. Exists so `docs/app-*.js` doesn't have to fetch more than one PI's shard just to answer
  * "is every issue this flag is linked to actually Done" (Technical view's Flags panel). Pure local file
  * reads, so always recomputed in full.
  */

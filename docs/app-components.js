@@ -53,11 +53,14 @@ function MonoText({ text }){
 }
 
 /** Same `<a target=_blank>` everywhere; `stopClick` keeps a click from also triggering the clickable row/card
- *  the link sits in. */
+ *  the link sits in. Without an `href` (a Jira key before Jira is connected) the same text, unlinked. */
 function ExternalLink({ href, cls = '', stopClick = false, title = '', children }){
     const classAttr = cls ? html` class="${cls}"` : '';
-    const clickAttr = stopClick ? raw(' onclick="event.stopPropagation()"') : '';
     const titleAttr = title ? html` title="${title}"` : '';
+    if (!href) {
+        return html`<span${classAttr}${titleAttr}>${children}</span>`;
+    }
+    const clickAttr = stopClick ? raw(' onclick="event.stopPropagation()"') : '';
 
     return html`<a${classAttr} href="${href}" target="_blank" rel="noopener noreferrer"${clickAttr}${titleAttr}>${children}</a>`;
 }
@@ -149,9 +152,9 @@ function PiCard({ name, isCurrent, total, onProd, onProdPct }){
     </div>`;
 }
 
-function StatusTile({ tileKey, label, color, value, percent, active = false }){
+function StatusTile({ tileKey, label, color, value, percent }){
     return html`
-      <div class="pv-tile${active ? ' active' : ''}" data-tile-key="${tileKey}">
+      <div class="pv-tile" data-tile-key="${tileKey}">
         <div class="pv-tile-top"><span class="pv-tile-swatch" style="background:${color}"></span><span class="pv-tile-label">${label}</span></div>
         <div class="pv-tile-bottom"><span class="pv-tile-value">${value}</span><span class="pv-tile-total">${percent}% of items</span></div>
       </div>`;
@@ -282,7 +285,7 @@ function EnvCardHeader({ env, icon, serviceCount, note }){
 }
 
 function FlagsNotTrackedIcon(){
-    return html`<span class="flags-not-tracked-icon" title="Feature flags for this component aren't tracked in the Flags panel below yet — check with the owning team directly.">${raw(ICONS.flag)}<span class="flags-not-tracked-mark">?</span></span>`;
+    return html`<span class="flags-not-tracked-icon" title="Feature flags for this component aren't tracked in the Flags panel below yet — check with the owning team directly.">${raw(ICONS.flag)}</span>`;
 }
 
 /** Avatar plus name block of a matrix row. `.comp-name` is the flex row: avatar on the left, then a plain

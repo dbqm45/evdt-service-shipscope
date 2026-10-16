@@ -398,16 +398,13 @@ the current one will not appear at all until someone runs the backfill workflow 
 (Script: `sync-jira.js`, functions `resolveCurrentPiForSpaces`, `runCurrentPiMode`, `writePiShards`.
 Workflow: `orchestrate-full-sync.yml`, job `sync_jira`. Manual snapshot path: `backfill-jira-issues.yml`.)
 
-## Release Notes tab (preview)
+## Release Notes tab
 
 ### How do I even see this tab?
 
-Load the page with `?releaseNotes=1` appended to the URL. There is no other switch — no setting, no
-cookie, nothing saved between visits. This is a deliberate soft-launch gate while the tab is still being
-validated against real data, not an access-control measure: the underlying JSON is exactly as public with
-or without the parameter.
-
-(File: `docs/app.js`, constant `RELEASE_NOTES_ENABLED`.)
+It is always there, next to Product view and Technical view. (The Insights tab is the one still behind a URL
+switch: load the page with `?insights=1`. That is a soft launch, not access control: the data is the same with or
+without it.)
 
 ### How is an issue grouped into an "application"?
 

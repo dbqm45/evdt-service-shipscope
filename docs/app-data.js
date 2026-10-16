@@ -445,7 +445,7 @@ async function loadApiData(tenantId){
         document.getElementById('statusBadgeLabel').textContent = 'Error';
         document.getElementById('statusBadgeTime').textContent = 'source: ShipScope API';
 
-        return { ...emptyDashboardData(), isFallback: false };
+        return { ...emptyDashboardData(), jiraBrowseUrl: null, isFallback: false };
     }
 
     const data = await res.json();
@@ -453,7 +453,7 @@ async function loadApiData(tenantId){
     badge.title = '';
     document.getElementById('statusBadgeLabel').textContent = 'Live';
     document.getElementById('statusBadgeTime').textContent = data.lastSyncedAt
-        ? `synced ${new Date(data.lastSyncedAt).toLocaleTimeString('pl-PL', {hour:'2-digit', minute:'2-digit'})} · source: ShipScope API`
+        ? `synced ${fmtTime(data.lastSyncedAt)} · source: ShipScope API`
         : 'source: ShipScope API';
 
     // A new workspace's dashboard is empty: point at what's left to set up rather than a blank page.
@@ -463,7 +463,8 @@ async function loadApiData(tenantId){
         setupBanner.hidden = !nothingYet;
     }
 
-    return { ...emptyDashboardData(), ...data, isFallback: false };
+    // `jiraBrowseUrl: null` (no Jira connected) must not fall back to the file-based dashboard's Jira site.
+    return { ...emptyDashboardData(), jiraBrowseUrl: null, ...data, isFallback: false };
 }
 
 async function loadData(){
@@ -480,8 +481,7 @@ async function loadData(){
         document.getElementById('statusBadge').title = '';
         document.getElementById('statusBadgeLabel').textContent = 'Live';
 
-        // Best-effort: this file is newer than the other four, and losing the flag audit trail
-        // shouldn't take down the rest of the dashboard if it's ever missing.
+        // Best-effort: losing the flag audit trail shouldn't take down the rest of the dashboard.
         const flagStateHistory = await fetch('data/flag-state-history.json')
             .then(r => r.ok ? r.json() : [])
             .catch(() => []);
@@ -504,9 +504,8 @@ async function loadData(){
 
         // Best-effort: `{ [issueKey]: { [env]: { [component]: { deployedAt, commitUrl } } } }`, never
         // trimmed by RETENTION_DAYS unlike `deployments.json` itself — see sync-github-deployments.js's
-        // ISSUE_DEPLOYMENTS_PATH for why. Missing/unreachable (e.g. before the first sync after this
-        // existed) just means anyDeploymentForIssue()/issueDeployedOnComponent() have nothing to fall
-        // back to yet, same as before this file existed.
+        // ISSUE_DEPLOYMENTS_PATH for why. Missing/unreachable just means
+        // anyDeploymentForIssue()/issueDeployedOnComponent() have nothing to fall back to.
         const issueDeployments = await fetch('data/issue-deployments.json')
             .then(r => r.ok ? r.json() : {})
             .catch(() => ({}));
@@ -523,14 +522,13 @@ async function loadData(){
         // precomputed fast path for currentVersion()/componentDeployments() so the Technical view's
         // summary cards and component×env matrix don't each have to rescan the full (potentially large)
         // `deployments` array on first render — see sync-github-deployments.js's SUMMARY_PATH comment.
-        // Missing/unreachable (e.g. before the first sync after this existed) just means those lookups
-        // fall straight back to scanning `state.deployments`, same as before this file existed.
+        // Missing/unreachable just means those lookups fall back to scanning `state.deployments`.
         const summary = await fetch('data/summary.json')
             .then(r => r.ok ? r.json() : { components: {} })
             .catch(() => ({ components: {} }));
 
         document.getElementById('statusBadgeTime').textContent = syncMeta && syncMeta.lastFullSync
-            ? `synced ${new Date(syncMeta.lastFullSync).toLocaleTimeString('pl-PL', {hour:'2-digit', minute:'2-digit'})} · source: data/*.json`
+            ? `synced ${fmtTime(syncMeta.lastFullSync)} · source: data/*.json`
             : 'source: data/*.json';
 
         return { deployments, flagsMeta, flagStates, jiraIndex, flagStateHistory, componentsOrder, issueStatusIndex, issueDeployments, summary, isFallback: false };

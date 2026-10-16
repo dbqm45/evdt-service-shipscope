@@ -5,7 +5,7 @@
  */
 
 /**
- * ShipScope only ever tracks these 3 named environments (`ENVIRONMENTS` in docs/app.js, and the whole
+ * ShipScope only ever tracks these 3 named environments (`ENVIRONMENTS` in docs/app-*.js, and the whole
  * test→qa→prod promotion-chain assumption drift detection relies on) — a real deployment to anything else
  * (staging, uat, a preview env) has nowhere to go today and is dropped, loudly, below.
  *
@@ -77,7 +77,7 @@ function latestSuccessfulByEnv(componentRecords) {
  * ShipScope shows the current, real state of what's deployed — not a historical archive (Jira and
  * GitHub's own deployment/Actions history already own that). So anything older than `retentionDays` (RETENTION_DAYS) is
  * physically removed from `deployments.json`, **except**: the single latest record overall per
- * component/environment (whatever `currentVersion()` in docs/app.js always needs to show, success or
+ * component/environment (whatever `currentVersion()` in docs/app-*.js always needs to show, success or
  * not) and the single latest *successful* one (whatever drift/rollback detection needs as "the last real
  * deploy," which can differ from the latest-overall record when the most recent attempt failed). Both are
  * kept no matter how old, so this never breaks either of those — everything else outside the window is
@@ -118,7 +118,7 @@ function trimOldRecords(records, { retentionDays, now = Date.now() }) {
 
 /** Builds SUMMARY_PATH's content straight from the two maps trimOldRecords() already computed — see that
  *  constant's own comment for why this exists. Every env entry gets both keys (even if, in some
- *  theoretically-impossible case, only one map had it) so docs/app.js never has to branch on a missing key. */
+ *  theoretically-impossible case, only one map had it) so docs/app-*.js never has to branch on a missing key. */
 function buildSummary(latestOverall, latestSuccess) {
     const components = {};
     const bucketFor = rec => components[rec.component] || (components[rec.component] = {});
@@ -145,7 +145,7 @@ function buildSummary(latestOverall, latestSuccess) {
 /**
  * Mutates `history` (the never-trimmed issue-deployments companion — see ISSUE_DEPLOYMENTS_PATH's comment in
  * sync-github-deployments.js for why it exists) and returns whether anything was added. Only the *first* time an issue key is seen as successfully deployed to a given env/component
- * is kept: that's all `docs/app.js`'s "has this ever shipped" joins need, and it means this file never
+ * is kept: that's all `docs/app-*.js`'s "has this ever shipped" joins need, and it means this file never
  * needs updating once an (issue, env, component) triple is recorded, regardless of how many further
  * deployments that issue's commit range gets swept up into. Deliberately called with this component's
  * *full current* record set (not just this run's freshly-resolved ones) — a one-time, zero-API-cost

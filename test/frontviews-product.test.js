@@ -141,10 +141,6 @@ test('renderProductSummary: counts, current tag, active tile and hostile PI', ()
     assert.equal(out.split('data-tile-key').length - 1, 4);
     assert.ok(out.includes('25% of items'));
 
-    run("activeStatusTile = 'released'; renderProductSummary()");
-    out = html('pvSummary');
-    assert.ok(out.includes('pv-tile active'));
-    run('activeStatusTile = null');
 
     setState({ selectedPi: EVIL, jiraIssues: [issue('B-1')], jiraIndex: null });
     run('renderProductSummary()');
@@ -194,9 +190,6 @@ test('selectProductIssues: type, priority, hide-tasks and status tile filters', 
     filters(el, { hideTasks: true });
     assert.deepEqual(ev('selectProductIssues().allIssues.map(i => i.key)'), ['A-1', 'A-2', 'A-4']);
     filters(el);
-    run("activeStatusTile = 'released'");
-    assert.deepEqual(ev('selectProductIssues().allIssues.map(i => i.key)'), ['A-1']);
-    run('activeStatusTile = null');
 });
 
 test('selectProductIssues: date range uses last environment change', () => {
@@ -558,14 +551,12 @@ test('initProductView wires sprint, type, priority, hide-tasks, dates, clear and
     el('filterFrom').value = 'x';
     el('filterTo').value = 'y';
     el('filterHideTasks').checked = true;
-    run("activeStatusTile = 'none'");
     el('btnClearFilters').onclick();
     assert.equal(el('filterType').value, '');
     assert.equal(el('filterPriority').value, '');
     assert.equal(el('filterFrom').value, '');
     assert.equal(el('filterTo').value, '');
     assert.equal(el('filterHideTasks').checked, false);
-    assert.equal(run('activeStatusTile'), null);
     assert.ok(allBtn.classes.has('active') && !bugBtn.classes.has('active'));
 
     // infinite scroll

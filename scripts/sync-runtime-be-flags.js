@@ -1,5 +1,3 @@
-const fs = require('fs');
-const path = require('path');
 const { fail, safeRelativePath } = require('./lib/cli');
 const { readJson, writeJson } = require('./lib/json-file');
 const { appendFlagHistoryEntries } = require('./lib/flag-history');
@@ -101,8 +99,6 @@ async function main() {
     appendFlagHistoryEntries(FLAG_STATE_HISTORY_PATH, historyEntries);
     console.log(`Done. ${changedCount} state(s) changed.`);
 }
-
-module.exports = { filterBooleanFlags, main };
 
 if (require.main === module) {
     main().catch(e => { console.error(e); process.exit(1); });
