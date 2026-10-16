@@ -82,6 +82,9 @@ test('settings page: the GitHub section -- installations, their repositories to 
     assert.match(admin, />\.github\/\nREADME\.md<\/textarea>/);
     assert.match(admin, /title="boom &quot;quoted&quot;">sync failed/);
     assert.match(admin, /data-action="unlink-installation" data-installation-id="8"/);
+    const paused = { ...github, repos: [{ ...github.repos[0], rateLimitedUntil: '2026-10-16T12:10:00.000Z' }] };
+    assert.match(str(ui.renderGitHub({ enabled: true, github: paused, installationRepos: {}, admin: false })),
+        /class="state-tag warn" title="GitHub asked ShipScope to slow down[^"]*">paused by GitHub's rate limit until /, 'a pause, not a failure');
 
     assert.match(admin, /every 15 minutes by default/);
     assert.match(str(ui.renderGitHub({ enabled: true, webhooks: true, github, installationRepos: {}, admin: true })), /instant updates on/);
@@ -107,6 +110,9 @@ test('settings page: the Jira section -- connect, choose a site, pick boards and
     ];
     const admin = str(ui.renderJira({ enabled: true, jira, boards, admin: true }));
     assert.match(admin, /Jira sync failed: &lt;x&gt;/);
+    assert.ok(!/rate limit/.test(admin));
+    assert.match(str(ui.renderJira({ enabled: true, jira: { ...jira, lastError: null, rateLimitedUntil: '2026-10-16T12:10:00.000Z' }, boards, admin: false })),
+        /class="state-tag warn">sync paused by Atlassian's rate limit until /);
     assert.match(admin, /type="checkbox" form="jiraBoardSelection" name="boardIds" value="10" checked/);
     assert.match(admin, /name="boardIds" value="13"  aria-label/, 'unselected boards are not checked');
     assert.match(admin, /<form id="jiraBoardSelection" class="settings-actions" data-action="save-boards">/);

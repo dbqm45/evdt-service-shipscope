@@ -140,6 +140,9 @@ function DeleteWorkspace(tenantName){
 }
 
 function syncTag(repo){
+    if (repo.rateLimitedUntil) {
+        return html`<span class="state-tag warn" title="GitHub asked ShipScope to slow down for this installation; other workspaces are not affected">paused by GitHub's rate limit until ${fmtDateTime(repo.rateLimitedUntil)}</span>`;
+    }
     if (repo.lastSyncError) {
         return html`<span class="state-tag fail" title="${repo.lastSyncError}">sync failed</span>`;
     }
@@ -262,7 +265,8 @@ function renderJira({ enabled, webhooks, jira, boards, admin, flagFields = null 
             'Read-only access through Atlassian: issues, boards and sprints of the boards you choose.');
     }
     const status = html`<p>${jira.site ? html`Connected to <strong>${jira.site.name}</strong> <span class="settings-row-meta">${jira.site.url}</span>` : 'Connected — choose a site.'}
-        ${jira.lastError ? html` <span class="state-tag fail">${jira.lastError}</span>` : ''}</p>${jira.site ? webhookLine(webhooks, jira.webhook) : ''}`;
+        ${jira.lastError ? html` <span class="state-tag fail">${jira.lastError}</span>` : ''}
+        ${jira.rateLimitedUntil ? html` <span class="state-tag warn">sync paused by Atlassian's rate limit until ${fmtDateTime(jira.rateLimitedUntil)}</span>` : ''}</p>${jira.site ? webhookLine(webhooks, jira.webhook) : ''}`;
     if (!admin) {
         return section(status);
     }

@@ -78,7 +78,7 @@ test('sync: records, issue keys from the commit range, rollback, skips, and a cu
     };
     const { sync, rows, calls } = await setup(t, { 'acme/web': web, 'acme/api': emptyRepo() });
 
-    assert.deepStrictEqual(await sync(), { repos: 2, inserted: 4, failed: 0 });
+    assert.deepStrictEqual(await sync(), { repos: 2, inserted: 4, failed: 0, deferred: 0 });
 
     const deps = await rows('SELECT deployment_id, environment, status, related_issues, rollback_to_sha, commit_url, deployed_by_login, duration_ms, workflow_run_url FROM deployments ORDER BY deployment_id');
     assert.deepStrictEqual(deps.map((d) => [Number(d.deployment_id), d.environment, d.status]), [
@@ -153,23 +153,24 @@ test('sync: one failing repo records its error and the others still sync', async
     };
     const { sync, rows } = await setup(t, { 'acme/web': web, 'acme/api': api });
 
-    assert.deepStrictEqual(await sync(), { repos: 2, inserted: 1, failed: 1 });
-    const repos = await rows('SELECT full_name, last_sync_error, last_synced_at FROM tracked_repos ORDER BY full_name');
+    assert.deepStrictEqual(await sync(), { repos: 2, inserted: 1, failed: 1, deferred: 0 });
+    const repos = await rows('SELECT full_name, last_sync_error, last_synced_at, last_attempt_at FROM tracked_repos ORDER BY full_name');
     assert.strictEqual(repos[0].full_name, 'acme/api');
     assert.strictEqual(repos[0].last_sync_error, null);
     assert.ok(repos[0].last_synced_at);
     assert.match(repos[1].last_sync_error, /HTTP 500/);
     assert.strictEqual(repos[1].last_synced_at, null);
+    assert.ok(repos[1].last_attempt_at, 'the attempt counts: a repo that keeps failing doesn\'t stay first in line');
 });
 
 test('sync: a webhook\'s targeted sync touches only the repos it names', async (t) => {
     const web = { ...emptyRepo(), fail: 500 };
     const api = { ...emptyRepo(), deployments: [{ id: 301, environment: 'prod', sha: sha(31), created_at: at(5) }], statuses: { 301: [status('success', 4)] } };
     const { sync, calls } = await setup(t, { 'acme/web': web, 'acme/api': api });
-    assert.deepStrictEqual(await sync({ repoIds: [2] }), { repos: 1, inserted: 1, failed: 0 });
+    assert.deepStrictEqual(await sync({ repoIds: [2] }), { repos: 1, inserted: 1, failed: 0, deferred: 0 });
     assert.ok(!calls.some((u) => u.includes('acme/web')), 'the other repo is not even asked');
-    assert.deepStrictEqual(await sync({ repoIds: [999] }), { repos: 0, inserted: 0, failed: 0 });
-    assert.deepStrictEqual(await sync({ repoIds: [] }), { repos: 0, inserted: 0, failed: 0 });
+    assert.deepStrictEqual(await sync({ repoIds: [999] }), { repos: 0, inserted: 0, failed: 0, deferred: 0 });
+    assert.deepStrictEqual(await sync({ repoIds: [] }), { repos: 0, inserted: 0, failed: 0, deferred: 0 });
 });
 
 test('sync: the per-run cap processes the oldest first and the cursor follows it', async (t) => {

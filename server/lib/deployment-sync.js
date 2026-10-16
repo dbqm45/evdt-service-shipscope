@@ -1,5 +1,5 @@
 const { withScope } = require('./scope');
-const { createInstallationToken, githubGet, GitHubApiError } = require('./github-app');
+const { createInstallationToken, githubGet, GitHubApiError, GitHubRateLimitError } = require('./github-app');
 const { buildDeploymentPlan, computeNextCursor, issuesFromMessages } = require('./deployment-logic');
 const { fetchRefIndex, resolveVersionFile, resolveVersion } = require('./version-resolution');
 const { ENV_ORDER, computeEnvDrift } = require('./env-drift');
@@ -17,6 +17,8 @@ const { MAX_RUN_LOOKUPS, createCaches, resolveManual, resolveDisplayName } = req
  */
 
 const DEFAULTS = { maxPerRun: 200, stuckMaxAgeHours: 48, maxPages: 20 };
+/** A tenant's share of one pass (worker.js SYNC_TENANT_BUDGET_SECONDS); a large backlog continues next pass. */
+const DEFAULT_TENANT_BUDGET_MS = 120_000;
 const ERROR_MAX_LENGTH = 500;
 
 /** New deployments (id > cursor), newest-first from GitHub, stopping at the first already-synced id. */
@@ -128,19 +130,29 @@ async function refreshDrift({ pool, token, tenantId, repo, fetch: fetchFn }) {
 /**
  * Syncs one tracked repo.
  *
- * @param {{ pool: import('pg').Pool, token: string, tenantId: string, repo: { repoId: number, fullName: string, cursor: number, versionFile?: string|null, driftIgnorePaths?: string[], drift?: object }, fetch?: typeof fetch, now?: number, options?: Partial<typeof DEFAULTS>, caches?: ReturnType<typeof createCaches> }} input
- * @returns {Promise<{ inserted: number, blocked: number, skipped: number, cursor: number, driftRecomputed: boolean, untracked?: true }>}
- * @throws {GitHubApiError}
+ * `deadline` (ms since the epoch, by `clock`) is the tenant's time budget: past it the repo stops between deployments
+ * (`partial`), keeps what it did, and leaves the cursor before the rest. Drift then waits for a pass that finishes.
+ *
+ * @param {{ pool: import('pg').Pool, token: string, tenantId: string, repo: { repoId: number, fullName: string, cursor: number, versionFile?: string|null, driftIgnorePaths?: string[], drift?: object }, fetch?: typeof fetch, now?: number, options?: Partial<typeof DEFAULTS>, caches?: ReturnType<typeof createCaches>, deadline?: number, clock?: () => number }} input
+ * @returns {Promise<{ inserted: number, blocked: number, skipped: number, cursor: number, partial: boolean, driftRecomputed: boolean, untracked?: true }>}
+ * @throws {GitHubApiError} a GitHubRateLimitError when the installation's rate limit is spent
  */
-async function syncRepo({ pool, token, tenantId, repo, fetch: fetchFn = fetch, now = Date.now(), options = {}, caches = createCaches() }) {
+async function syncRepo({ pool, token, tenantId, repo, fetch: fetchFn = fetch, now = Date.now(), options = {}, caches = createCaches(), deadline = Infinity, clock = Date.now }) {
     const { maxPerRun, stuckMaxAgeHours, maxPages } = { ...DEFAULTS, ...options };
     const { repoId, fullName, cursor } = repo;
+    // Past the tenant's time budget (syncAll), stop between deployments -- after at least one, so every pass makes
+    // progress -- and leave the rest, and the cursor before them, for the next pass.
+    const outOfTime = (done) => done > 0 && clock() >= deadline;
 
     const fetched = await fetchNewDeployments({ token, fullName, cursor, fetch: fetchFn, maxPages });
     // Oldest first and capped, so a large backlog makes steady progress across runs.
-    const batch = fetched.sort((a, b) => a.id - b.id).slice(0, maxPerRun);
+    let batch = fetched.sort((a, b) => a.id - b.id).slice(0, maxPerRun);
     const statusesById = {};
-    for (const dep of batch) {
+    for (const [i, dep] of batch.entries()) {
+        if (outOfTime(i)) {
+            batch = batch.slice(0, i);
+            break;
+        }
         const statuses = await githubGet({ token, path: `/repos/${fullName}/deployments/${dep.id}/statuses?per_page=10`, fetch: fetchFn });
         if (!Array.isArray(statuses)) throw new GitHubApiError('statuses response is not a list', 502);
         statusesById[dep.id] = statuses;
@@ -154,7 +166,13 @@ async function syncRepo({ pool, token, tenantId, repo, fetch: fetchFn = fetch, n
 
     const records = [];
     const budget = { runs: MAX_RUN_LOOKUPS };
-    for (const entry of plan) {
+    const unfinished = [...blockedIds];
+    for (const [i, entry] of plan.entries()) {
+        if (outOfTime(i)) {
+            // The plan runs in status order, not id order: everything not done holds the cursor back.
+            unfinished.push(...plan.slice(i).map((e) => e.dep.id));
+            break;
+        }
         const sha = entry.dep.sha;
         const commit = await githubGet({ token, path: `/repos/${fullName}/commits/${sha}`, fetch: fetchFn });
         const message = commit?.commit?.message || '';
@@ -191,7 +209,8 @@ async function syncRepo({ pool, token, tenantId, repo, fetch: fetchFn = fetch, n
         }
     }
 
-    const nextCursor = computeNextCursor(batch, blockedIds, cursor);
+    const nextCursor = computeNextCursor(batch, unfinished, cursor);
+    const partial = batch.length < Math.min(fetched.length, maxPerRun) || unfinished.length > blockedIds.length;
 
     const written = await withScope(pool, { tenantId }, async (client) => {
         // Untracked while GitHub was being read: its records would have nowhere to go (and shouldn't).
@@ -199,7 +218,7 @@ async function syncRepo({ pool, token, tenantId, repo, fetch: fetchFn = fetch, n
             'SELECT 1 FROM tracked_repos WHERE tenant_id = $1 AND repo_id = $2 FOR UPDATE',
             [tenantId, repoId]
         );
-        if (!still.length) return { inserted: 0, blocked: blockedIds.length, skipped: skipped.length, cursor, untracked: true };
+        if (!still.length) return { inserted: 0, blocked: blockedIds.length, skipped: skipped.length, cursor, partial: false, untracked: true };
 
         let inserted = 0;
         for (const r of records) {
@@ -225,45 +244,66 @@ async function syncRepo({ pool, token, tenantId, repo, fetch: fetchFn = fetch, n
             }
         }
         await client.query(
-            `UPDATE tracked_repos SET deployments_cursor = $3, last_synced_at = now(), last_sync_error = NULL
+            `UPDATE tracked_repos SET deployments_cursor = $3, last_synced_at = now(), last_attempt_at = now(), last_sync_error = NULL
              WHERE tenant_id = $1 AND repo_id = $2`,
             [tenantId, repoId, nextCursor]
         );
-        return { inserted, blocked: blockedIds.length, skipped: skipped.length, cursor: nextCursor };
+        return { inserted, blocked: blockedIds.length, skipped: skipped.length, cursor: nextCursor, partial };
     });
-    if (written.untracked) return { ...written, driftRecomputed: false };
+    // A cut-short repo's latest deploys may still change this pass's picture; drift waits for a complete pass.
+    if (written.untracked || written.partial) return { ...written, driftRecomputed: false };
 
     const driftRecomputed = await refreshDrift({ pool, token, tenantId, repo, fetch: fetchFn });
     return { ...written, driftRecomputed };
 }
 
 /**
- * One sync pass over every tenant's tracked repos. Each tenant is read under its own RLS scope (the worker
- * has no cross-tenant view). One failing repo records its error on its row and the pass moves on.
+ * One sync pass over every tenant's tracked repos, fair across tenants (prd.md Open Question 2):
+ * - tenants go longest-waiting first (by their repos' oldest last attempt; never-tried first), and so do repos within one;
+ * - each tenant gets `options.tenantBudgetMs` per pass: past it, no new repo starts and the current one stops between
+ *   deployments, so a large backlog takes several passes instead of holding up everyone else;
+ * - a rate limit pauses only that App installation (its own budget on GitHub's side) until GitHub says, recorded in
+ *   `github_installations.rate_limited_until`; its other repos wait, every other tenant goes on.
+ * Each tenant is read under its own RLS scope (the worker has no cross-tenant view). One failing repo records its
+ * error on its row and the pass moves on.
  *
  * `repoIds` limits the pass to those repos (in every tenant that tracks them): a webhook's targeted sync.
  *
- * @param {{ pool: import('pg').Pool, app: { appId: string, privateKey: import('crypto').KeyObject }, fetch?: typeof fetch, now?: number, log?: (msg: string) => void, options?: object, repoIds?: number[] }} input
- * @returns {Promise<{ repos: number, inserted: number, failed: number }>}
+ * @param {{ pool: import('pg').Pool, app: { appId: string, privateKey: import('crypto').KeyObject }, fetch?: typeof fetch, now?: number, clock?: () => number, log?: (msg: string) => void, options?: object, repoIds?: number[] }} input
+ * @returns {Promise<{ repos: number, inserted: number, failed: number, deferred: number }>} deferred: repos left for a later pass (rate limit or time budget)
  */
-async function syncAll({ pool, app, fetch: fetchFn = fetch, now = Date.now(), log = () => {}, options = {}, repoIds = null }) {
+async function syncAll({ pool, app, fetch: fetchFn = fetch, now = Date.now(), clock = Date.now, log = () => {}, options = {}, repoIds = null }) {
+    const tenantBudgetMs = options.tenantBudgetMs ?? DEFAULT_TENANT_BUDGET_MS;
     const tokens = new Map(); // installationId -> Promise<token>, for this pass only
     const tokenFor = (installationId) => {
         if (!tokens.has(installationId)) tokens.set(installationId, createInstallationToken({ app, installationId, fetch: fetchFn }));
         return tokens.get(installationId);
     };
 
-    const totals = { repos: 0, inserted: 0, failed: 0 };
-    const { rows: tenants } = await pool.query('SELECT id FROM tenants ORDER BY created_at');
-    for (const { id: tenantId } of tenants) {
-        const caches = createCaches(); // per tenant: one tenant's lookups never answer another's
+    const { rows: tenantRows } = await pool.query('SELECT id FROM tenants ORDER BY created_at');
+    const work = [];
+    for (const { id: tenantId } of tenantRows) {
         const repos = await withScope(pool, { tenantId }, async (client) => (await client.query(
-            `SELECT repo_id, full_name, installation_id, deployments_cursor, version_file, drift_ignore_paths, drift
-             FROM tracked_repos WHERE tenant_id = $1 AND ($2::bigint[] IS NULL OR repo_id = ANY($2)) ORDER BY full_name`,
+            `SELECT r.repo_id, r.full_name, r.installation_id, r.deployments_cursor, r.version_file, r.drift_ignore_paths, r.drift,
+                    r.last_attempt_at, i.rate_limited_until
+             FROM tracked_repos r
+             LEFT JOIN github_installations i ON i.tenant_id = r.tenant_id AND i.installation_id = r.installation_id
+             WHERE r.tenant_id = $1 AND ($2::bigint[] IS NULL OR r.repo_id = ANY($2))
+             ORDER BY r.last_attempt_at NULLS FIRST, r.full_name`,
             [tenantId, repoIds]
         )).rows);
-        for (const row of repos) {
-            totals.repos += 1;
+        if (repos.length) work.push({ tenantId, repos, waitingSince: repos[0].last_attempt_at });
+    }
+    // Stable sort: equally-waiting tenants keep their creation order.
+    work.sort((a, b) => waitKey(a.waitingSince) - waitKey(b.waitingSince));
+
+    const totals = { repos: 0, inserted: 0, failed: 0, deferred: 0 };
+    const limitedUntil = new Map(); // installationId -> Date, learned this pass
+    for (const { tenantId, repos } of work) {
+        const caches = createCaches(); // per tenant: one tenant's lookups never answer another's
+        const deadline = clock() + tenantBudgetMs;
+        for (const [i, row] of repos.entries()) {
+            const installationId = Number(row.installation_id);
             const repo = {
                 repoId: Number(row.repo_id),
                 fullName: row.full_name,
@@ -272,17 +312,43 @@ async function syncAll({ pool, app, fetch: fetchFn = fetch, now = Date.now(), lo
                 driftIgnorePaths: row.drift_ignore_paths,
                 drift: row.drift,
             };
+            const limited = limitedUntil.get(installationId) || row.rate_limited_until;
+            if (limited && limited.getTime() > clock()) {
+                totals.deferred += 1;
+                continue;
+            }
+            if (i > 0 && clock() >= deadline) {
+                totals.deferred += 1;
+                continue;
+            }
+            totals.repos += 1;
             try {
-                const token = await tokenFor(Number(row.installation_id));
-                const result = await syncRepo({ pool, token, tenantId, repo, fetch: fetchFn, now, options, caches });
+                const token = await tokenFor(installationId);
+                const result = await syncRepo({ pool, token, tenantId, repo, fetch: fetchFn, now, options, caches, deadline, clock });
                 totals.inserted += result.inserted;
-                if (result.inserted || result.blocked) log(`${repo.fullName}: +${result.inserted} deployments, ${result.blocked} pending`);
+                if (result.partial) totals.deferred += 1;
+                if (result.inserted || result.blocked || result.partial) {
+                    log(`${repo.fullName}: +${result.inserted} deployments, ${result.blocked} pending${result.partial ? ', more next pass (time budget)' : ''}`);
+                }
             } catch (err) {
+                if (err instanceof GitHubRateLimitError) {
+                    totals.deferred += 1;
+                    limitedUntil.set(installationId, err.retryAt);
+                    log(`${repo.fullName}: GitHub rate limit, installation ${installationId} paused until ${err.retryAt.toISOString()}`);
+                    await withScope(pool, { tenantId }, async (client) => {
+                        await client.query(
+                            'UPDATE github_installations SET rate_limited_until = $3 WHERE tenant_id = $1 AND installation_id = $2',
+                            [tenantId, installationId, err.retryAt]
+                        );
+                        await client.query('UPDATE tracked_repos SET last_attempt_at = now() WHERE tenant_id = $1 AND repo_id = $2', [tenantId, repo.repoId]);
+                    });
+                    continue;
+                }
                 totals.failed += 1;
                 const message = String(err.message || err).slice(0, ERROR_MAX_LENGTH);
                 log(`${repo.fullName}: sync failed: ${message}`);
                 await withScope(pool, { tenantId }, (client) => client.query(
-                    'UPDATE tracked_repos SET last_sync_error = $3 WHERE tenant_id = $1 AND repo_id = $2',
+                    'UPDATE tracked_repos SET last_sync_error = $3, last_attempt_at = now() WHERE tenant_id = $1 AND repo_id = $2',
                     [tenantId, repo.repoId, message]
                 ));
             }
@@ -291,4 +357,7 @@ async function syncAll({ pool, app, fetch: fetchFn = fetch, now = Date.now(), lo
     return totals;
 }
 
-module.exports = { syncRepo, syncAll };
+/** Never tried sorts first, then the oldest attempt. */
+const waitKey = (at) => (at ? at.getTime() : -1);
+
+module.exports = { syncRepo, syncAll, DEFAULT_TENANT_BUDGET_MS };

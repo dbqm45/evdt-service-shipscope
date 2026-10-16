@@ -218,6 +218,16 @@ not stripped or coerced).
   decides (GitHub's `inactive` marker is ignored); a redeploy of the same commit inherits the previous
   record's issues instead of comparing a commit with itself; at most 200 new deployments per repo per pass,
   oldest first.
+- **Fair syncs across tenants** (deployments and Jira alike): a pass starts with whoever waited longest
+  (`last_attempt_at`, success or not, so a repo that keeps failing doesn't stay first in line), and each tenant
+  gets `SYNC_TENANT_BUDGET_SECONDS` (default 120) of it. Past that budget no new repo or Jira board starts, and a
+  repo stops between deployments with its cursor before what was left (drift then waits for a complete pass);
+  the rest continues next pass, longest-waiting first. A rate limit pauses only the credential that got it --
+  GitHub per App installation (`github_installations.rate_limited_until`, from `Retry-After` or
+  `x-ratelimit-reset`, else 1 minute), Atlassian per tenant connection (`jira_connections.rate_limited_until`,
+  from `Retry-After`, else 5 minutes) -- capped at an hour; it is shown in settings as a pause, not an error.
+  Atlassian requests have a 30 s timeout like GitHub's. A webhook-requested sync that hits a pause is dropped
+  from the queue; the periodic sync covers it.
 - **Webhooks**: verified before anything else -- GitHub's HMAC-SHA256 over the exact raw body (the JSON parser is
   bypassed on these routes), Atlassian's JWT pinned to HS256 with `exp`/`iat` checked (5 minutes of skew) -- and
   both compared in constant time. A delivery only ever queues a key (`sync_requests`: a repo id, a Jira webhook id

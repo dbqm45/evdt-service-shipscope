@@ -9,6 +9,7 @@ const HEARTBEAT_INTERVAL_MS = 30_000;
 const WEBHOOK_INTERVAL_MS = 30_000; // how often webhook-requested syncs are picked up
 const CLEANUP_INTERVAL_MS = 24 * 3600_000;
 const DEFAULT_SYNC_INTERVAL_MINUTES = 15;
+const DEFAULT_TENANT_BUDGET_SECONDS = 120;
 // Postgres advisory lock keys: one sync and one cleanup at a time, even with more than one worker instance.
 const SYNC_LOCK = 727_001;
 const CLEANUP_LOCK = 727_002;
@@ -61,23 +62,34 @@ function syncIntervalMinutes(env) {
     return value;
 }
 
+/**
+ * SYNC_TENANT_BUDGET_SECONDS: 10-3600, default 120 -- how long one tenant may take in a sync pass before the next
+ * tenant's turn (its remaining work continues next pass). Keeps one large tenant from holding up everyone else.
+ */
+function tenantBudgetSeconds(env) {
+    if (env.SYNC_TENANT_BUDGET_SECONDS === undefined || env.SYNC_TENANT_BUDGET_SECONDS === '') return DEFAULT_TENANT_BUDGET_SECONDS;
+    const value = Number(env.SYNC_TENANT_BUDGET_SECONDS);
+    if (!Number.isInteger(value) || value < 10 || value > 3600) throw new Error('SYNC_TENANT_BUDGET_SECONDS must be a whole number of seconds, 10-3600');
+    return value;
+}
+
 /** One deployment sync pass (FR-005), never overlapping another. Errors are logged, never thrown. */
-async function syncTick(pool, app, log = console.log, deps = { syncAll }) {
+async function syncTick(pool, app, log = console.log, deps = { syncAll }, tenantBudgetMs = DEFAULT_TENANT_BUDGET_SECONDS * 1000) {
     try {
-        const run = await runExclusive(pool, SYNC_LOCK, () => deps.syncAll({ pool, app, log: (m) => log(`${stamp()} ${m}`) }));
+        const run = await runExclusive(pool, SYNC_LOCK, () => deps.syncAll({ pool, app, log: (m) => log(`${stamp()} ${m}`), options: { tenantBudgetMs } }));
         if (run.skipped) log(`${stamp()} sync skipped: another run holds the lock`);
-        else log(`${stamp()} sync done: ${run.result.repos} repos, +${run.result.inserted} deployments, ${run.result.failed} failed`);
+        else log(`${stamp()} sync done: ${run.result.repos} repos, +${run.result.inserted} deployments, ${run.result.failed} failed, ${run.result.deferred} left for the next pass`);
     } catch (err) {
         log(`${stamp()} sync failed: ${err.message}`);
     }
 }
 
 /** One Jira issue sync pass (FR-009), never overlapping another. Errors are logged, never thrown. */
-async function jiraTick(pool, atlassian, log = console.log, deps = { syncAllJira }) {
+async function jiraTick(pool, atlassian, log = console.log, deps = { syncAllJira }, tenantBudgetMs = DEFAULT_TENANT_BUDGET_SECONDS * 1000) {
     try {
-        const run = await runExclusive(pool, JIRA_LOCK, () => deps.syncAllJira({ pool, atlassian, log: (m) => log(`${stamp()} ${m}`) }));
+        const run = await runExclusive(pool, JIRA_LOCK, () => deps.syncAllJira({ pool, atlassian, log: (m) => log(`${stamp()} ${m}`), tenantBudgetMs }));
         if (run.skipped) log(`${stamp()} jira sync skipped: another run holds the lock`);
-        else log(`${stamp()} jira sync done: ${run.result.tenants} tenants, ${run.result.issues} issues, ${run.result.failed} failed`);
+        else log(`${stamp()} jira sync done: ${run.result.tenants} tenants, ${run.result.issues} issues, ${run.result.failed} failed, ${run.result.deferred} left for the next pass`);
     } catch (err) {
         log(`${stamp()} jira sync failed: ${err.message}`);
     }
@@ -88,10 +100,12 @@ async function jiraTick(pool, atlassian, log = console.log, deps = { syncAllJira
  * connections. Under the same locks as the periodic syncs, so never alongside one; a request that couldn't run
  * (lock held, or the sync failed as a whole) stays queued for the next tick. Errors are logged, never thrown.
  */
-async function webhookTick(pool, { app, atlassian }, log = console.log, deps = { syncAll, syncAllJira }) {
+async function webhookTick(pool, { app, atlassian, tenantBudgetMs = DEFAULT_TENANT_BUDGET_SECONDS * 1000 }, log = console.log, deps = { syncAll, syncAllJira }) {
     const sources = [
-        app && ['github', SYNC_LOCK, (requests) => deps.syncAll({ pool, app, log: (m) => log(`${stamp()} ${m}`), repoIds: requests.map((r) => Number(r.key)).filter(Number.isSafeInteger) })],
-        atlassian && ['jira', JIRA_LOCK, (requests) => deps.syncAllJira({ pool, atlassian, log: (m) => log(`${stamp()} ${m}`), keys: requests.map((r) => r.key) })],
+        app && ['github', SYNC_LOCK, (requests) => deps.syncAll({
+            pool, app, log: (m) => log(`${stamp()} ${m}`), options: { tenantBudgetMs }, repoIds: requests.map((r) => Number(r.key)).filter(Number.isSafeInteger),
+        })],
+        atlassian && ['jira', JIRA_LOCK, (requests) => deps.syncAllJira({ pool, atlassian, log: (m) => log(`${stamp()} ${m}`), tenantBudgetMs, keys: requests.map((r) => r.key) })],
     ].filter(Boolean);
     for (const [source, lock, sync] of sources) {
         try {
@@ -120,24 +134,25 @@ async function cleanupTick(pool, log = console.log, deps = { cleanupAll }) {
 if (require.main === module) {
     const app = loadGitHubAppConfig(process.env);
     const syncMinutes = syncIntervalMinutes(process.env);
+    const budgetMs = tenantBudgetSeconds(process.env) * 1000;
     const pool = createPool();
     const timers = [setInterval(() => heartbeatTick(pool), HEARTBEAT_INTERVAL_MS)];
     heartbeatTick(pool);
 
     if (app) {
-        timers.push(setInterval(() => syncTick(pool, app), syncMinutes * 60_000));
-        syncTick(pool, app);
+        timers.push(setInterval(() => syncTick(pool, app, undefined, undefined, budgetMs), syncMinutes * 60_000));
+        syncTick(pool, app, undefined, undefined, budgetMs);
     } else {
         console.log(`${stamp()} GITHUB_APP_* not set: deployment sync is off`);
     }
     const atlassian = loadAtlassianConfig(process.env);
     if (atlassian) {
-        timers.push(setInterval(() => jiraTick(pool, atlassian), syncMinutes * 60_000));
-        jiraTick(pool, atlassian);
+        timers.push(setInterval(() => jiraTick(pool, atlassian, undefined, undefined, budgetMs), syncMinutes * 60_000));
+        jiraTick(pool, atlassian, undefined, undefined, budgetMs);
     } else {
         console.log(`${stamp()} ATLASSIAN_* not set: Jira sync is off`);
     }
-    if (app || atlassian) timers.push(setInterval(() => webhookTick(pool, { app, atlassian }), WEBHOOK_INTERVAL_MS));
+    if (app || atlassian) timers.push(setInterval(() => webhookTick(pool, { app, atlassian, tenantBudgetMs: budgetMs }), WEBHOOK_INTERVAL_MS));
     timers.push(setInterval(() => cleanupTick(pool), CLEANUP_INTERVAL_MS));
     cleanupTick(pool);
 
@@ -147,4 +162,4 @@ if (require.main === module) {
     });
 }
 
-module.exports = { heartbeatTick, runExclusive, syncIntervalMinutes, syncTick, jiraTick, webhookTick, cleanupTick };
+module.exports = { heartbeatTick, runExclusive, syncIntervalMinutes, tenantBudgetSeconds, syncTick, jiraTick, webhookTick, cleanupTick };

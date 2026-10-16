@@ -195,7 +195,7 @@ async function setup(t, { sites = [SITE_A], pageSize = 50, scope, webhookUrl = n
     const { pool, teardown } = await createTestDb();
     t.after(teardown);
     const jira = { 'cloud-a': siteData(), 'cloud-b': { boards: [{ id: 77, name: 'Labs', type: 'scrum' }], sprints: {}, fields: [], issues: [] } };
-    const atlassian = fakeAtlassian({ codes: { c1: sites }, jira, pageSize, fail, ...(scope ? { scope } : {}) });
+    const atlassian = fakeAtlassian({ codes: { c1: sites, c2: sites }, jira, pageSize, fail, ...(scope ? { scope } : {}) });
     const github = fakeGitHub(USERS);
     const fetch = (url, init) => (/^https:\/\/(auth|api)\.atlassian\.com\//.test(url) ? atlassian.handler(url, init) : github(url, init));
     const config = { ...ATLASSIAN, webhookUrl };
@@ -248,7 +248,7 @@ test('FR-009: the current PI of each board (plus the previous one on its first s
     await call('PUT', '/jira/boards', { boardIds: [10] });
     const sync = await call('POST', '/jira/sync');
     assert.strictEqual(sync.statusCode, 200, sync.body);
-    assert.deepStrictEqual(sync.json(), { boards: 1, issues: 6, currentPi: 'PI-27.3' }, 'PI-27.3: ABC-1, ABC-2, Epic ABC-10; PI-27.2: ABC-1, ABC-3, Epic ABC-10');
+    assert.deepStrictEqual(sync.json(), { boards: 1, issues: 6, currentPi: 'PI-27.3', partial: false }, 'PI-27.3: ABC-1, ABC-2, Epic ABC-10; PI-27.2: ABC-1, ABC-3, Epic ABC-10');
 
     const data = await api('/dashboard-data');
     assert.deepStrictEqual(data.jiraIndex, {
@@ -278,7 +278,7 @@ test('FR-009: the current PI of each board (plus the previous one on its first s
     const issues = jira['cloud-a'].issues;
     issues.find((i) => i.key === 'ABC-2').fields.customfield_10020 = [{ id: 104, name: 'Sparks 27.4.1' }];
     issues.find((i) => i.key === 'ABC-3').fields.summary = 'renamed later';
-    assert.deepStrictEqual((await call('POST', '/jira/sync')).json(), { boards: 1, issues: 2, currentPi: 'PI-27.3' });
+    assert.deepStrictEqual((await call('POST', '/jira/sync')).json(), { boards: 1, issues: 2, currentPi: 'PI-27.3', partial: false });
     assert.deepStrictEqual((await api('/jira-issues?pi=PI-27.3')).map((i) => i.key), ['ABC-1', 'ABC-10'], 'gone from the PI it left');
     assert.strictEqual((await api('/jira-issues?pi=PI-27.2')).find((i) => i.key === 'ABC-3').title, 'ABC-3 title', 'a past PI is the snapshot taken while it was current');
     assert.ok((await call('GET', '/jira')).json().lastSyncedAt);
@@ -300,13 +300,13 @@ test('FR-009: deselecting a board removes its issues; switching sites starts ove
 test('FR-009: the worker syncs every connected tenant; a failing one is recorded and the pass goes on', async (t) => {
     const { pool, call, tenantId, fetch, jira, rows } = await setup(t);
     await call('PUT', '/jira/boards', { boardIds: [10] });
-    assert.deepStrictEqual(await syncAllJira({ pool, atlassian: ATLASSIAN, fetch }), { tenants: 1, issues: 6, failed: 0 });
+    assert.deepStrictEqual(await syncAllJira({ pool, atlassian: ATLASSIAN, fetch }), { tenants: 1, issues: 6, failed: 0, deferred: 0 });
 
     // Jira answers the issue search with an error: recorded on the connection, nothing stored is lost.
     const failing = fakeAtlassian({ jira, fail: { '/search/jql': 500 } });
     const log = [];
     const failingFetch = (url, init) => (url.includes('/search/jql') ? failing.handler(url, init) : fetch(url, init));
-    assert.deepStrictEqual(await syncAllJira({ pool, atlassian: ATLASSIAN, fetch: failingFetch, log: (m) => log.push(m) }), { tenants: 1, issues: 0, failed: 1 });
+    assert.deepStrictEqual(await syncAllJira({ pool, atlassian: ATLASSIAN, fetch: failingFetch, log: (m) => log.push(m) }), { tenants: 1, issues: 0, failed: 1, deferred: 0 });
     assert.match(log[0], new RegExp(`tenant ${tenantId}: Jira sync failed`));
     assert.match((await call('GET', '/jira')).json().lastError, /Jira sync failed: GET \/ex\/jira\/cloud-a\/rest\/api\/3\/search\/jql failed with HTTP 500/);
     assert.strictEqual((await rows('SELECT * FROM jira_issues')).length, 6);
@@ -319,7 +319,7 @@ test('FR-009: a team-managed board with sprints syncs by sprint; one with sprint
     assert.strictEqual((await call('PUT', '/jira/boards', { boardIds: [13, 14] })).statusCode, 200);
     const sync = await call('POST', '/jira/sync');
     assert.strictEqual(sync.statusCode, 200, sync.body);
-    assert.deepStrictEqual(sync.json(), { boards: 2, issues: 1, currentPi: 'Sprint 7' },
+    assert.deepStrictEqual(sync.json(), { boards: 2, issues: 1, currentPi: 'Sprint 7', partial: false },
         'sprints not named after a PI are their own increment; the previous one (Sprint 6) is empty; an empty flow month is not "now"');
     assert.deepStrictEqual((await api('/jira-issues?pi=Sprint 7')).map((i) => [i.key, i.sprint]), [['LAB-1', 'Sprint 7']]);
     assert.strictEqual((await call('GET', '/jira')).json().lastError, null);
@@ -328,7 +328,7 @@ test('FR-009: a team-managed board with sprints syncs by sprint; one with sprint
 test('mixed rhythms: a SAFe board and a Scrum board open together on "Now"; each issue keeps its own increment', async (t) => {
     const { call, api } = await setup(t);
     await call('PUT', '/jira/boards', { boardIds: [10, 13] });
-    assert.deepStrictEqual((await call('POST', '/jira/sync')).json(), { boards: 2, issues: 7, currentPi: '@now' });
+    assert.deepStrictEqual((await call('POST', '/jira/sync')).json(), { boards: 2, issues: 7, currentPi: '@now', partial: false });
 
     const { jiraIndex } = await api('/dashboard-data');
     assert.strictEqual(jiraIndex.currentPi, '@now');
@@ -393,7 +393,7 @@ test('releases: a board in the release rhythm syncs its project\'s current fixVe
 
     await call('PUT', '/jira/boards', { boardIds: [11] });
     assert.strictEqual((await call('PUT', '/jira/boards/11', { rhythm: 'release', piTemplate: null })).statusCode, 200);
-    assert.deepStrictEqual((await call('POST', '/jira/sync')).json(), { boards: 1, issues: 2, currentPi: 'ABC 1.2' }, 'the archived 1.3 is not a release to follow');
+    assert.deepStrictEqual((await call('POST', '/jira/sync')).json(), { boards: 1, issues: 2, currentPi: 'ABC 1.2', partial: false }, 'the archived 1.3 is not a release to follow');
 
     const { jiraIndex } = await api('/dashboard-data');
     assert.deepStrictEqual(jiraIndex.pis.map((p) => [p.pi, p.kind, p.sprints]), [
@@ -406,7 +406,7 @@ test('releases: a board in the release rhythm syncs its project\'s current fixVe
     site.versions.ABC[2].released = true;
     site.versions.ABC.push(version('14', '1.4', false, '2026-12-01'));
     site.issues.push(raw('ABC-24', 'Story', [], fix('14')));
-    assert.deepStrictEqual((await call('POST', '/jira/sync')).json(), { boards: 1, issues: 1, currentPi: 'ABC 1.4' });
+    assert.deepStrictEqual((await call('POST', '/jira/sync')).json(), { boards: 1, issues: 1, currentPi: 'ABC 1.4', partial: false });
 });
 
 test('flow: a kanban board syncs by calendar month -- resolved in it, plus what is in progress now -- and joins the others on "Now"', async (t) => {
@@ -424,7 +424,7 @@ test('flow: a kanban board syncs by calendar month -- resolved in it, plus what 
 
     await call('PUT', '/jira/boards', { boardIds: [10, 12] });
     const sync = (await call('POST', '/jira/sync')).json();
-    assert.deepStrictEqual(sync, { boards: 2, issues: 9, currentPi: '@now' }, 'PI-27.3 (3) + PI-27.2 (3) + this month (SUP-1, SUP-2) + last month (SUP-3)');
+    assert.deepStrictEqual(sync, { boards: 2, issues: 9, currentPi: '@now', partial: false }, 'PI-27.3 (3) + PI-27.2 (3) + this month (SUP-1, SUP-2) + last month (SUP-3)');
 
     const { jiraIndex } = await api('/dashboard-data');
     assert.deepStrictEqual(jiraIndex.pis.filter((p) => p.kind === 'flow').map((p) => [p.pi, p.sprints]), [
@@ -487,10 +487,89 @@ test('webhooks: off without the scope (an older connection) or a public URL; a r
         const { call } = await setup(t, { scope: scoped, webhookUrl: 'https://shipscope.example/webhooks/jira', fail: { '/rest/api/3/webhook': 403 } });
         await call('PUT', '/jira/boards', { boardIds: [10] });
         const sync = await call('POST', '/jira/sync');
-        assert.deepStrictEqual(sync.json(), { boards: 1, issues: 6, currentPi: 'PI-27.3' }, 'the issues still synced');
+        assert.deepStrictEqual(sync.json(), { boards: 1, issues: 6, currentPi: 'PI-27.3', partial: false }, 'the issues still synced');
         const { webhook, lastError } = (await call('GET', '/jira')).json();
         assert.strictEqual(webhook.active, false);
         assert.match(webhook.error, /^Instant updates are off: POST \/ex\/jira\/cloud-a\/rest\/api\/3\/webhook failed with HTTP 403$/);
         assert.strictEqual(lastError, null, 'a webhook problem is not a sync error');
     }
+});
+
+test('fairness: past the tenant\'s time budget no further board starts; the next pass begins with the boards that waited', async (t) => {
+    const { pool, call, rows, fetch } = await setup(t);
+    await call('PUT', '/jira/boards', { boardIds: [10, 13] });
+    const pass = (now) => syncAllJira({ pool, atlassian: ATLASSIAN, fetch, now, clock: () => 1_000, tenantBudgetMs: 0 });
+    const synced = async () => (await rows('SELECT board_id, last_synced_at FROM jira_boards ORDER BY board_id')).map((r) => [Number(r.board_id), r.last_synced_at && r.last_synced_at.toISOString()]);
+
+    const log = [];
+    assert.deepStrictEqual(await syncAllJira({ pool, atlassian: ATLASSIAN, fetch, now: new Date('2026-09-20T10:00:00Z'), clock: () => 1_000, tenantBudgetMs: 0, log: (m) => log.push(m) }),
+        { tenants: 1, issues: 6, failed: 0, deferred: 1 }, 'one board, the first by id since neither has synced');
+    assert.match(log[0], /1 Jira board\(s\) synced, the rest next pass \(time budget\)/);
+    assert.deepStrictEqual(await synced(), [[10, '2026-09-20T10:00:00.000Z'], [13, null]]);
+    assert.strictEqual((await call('GET', '/jira')).json().currentPi, 'PI-27.3', 'what is synced is usable at once');
+
+    assert.deepStrictEqual(await pass(new Date('2026-09-20T10:15:00Z')), { tenants: 1, issues: 1, failed: 0, deferred: 1 }, 'the board that waited goes first');
+    assert.deepStrictEqual(await synced(), [[10, '2026-09-20T10:00:00.000Z'], [13, '2026-09-20T10:15:00.000Z']]);
+    assert.strictEqual((await call('GET', '/jira')).json().currentPi, '@now', 'both boards\' increments together');
+    await pass(new Date('2026-09-20T10:30:00Z'));
+    assert.deepStrictEqual(await synced(), [[10, '2026-09-20T10:30:00.000Z'], [13, '2026-09-20T10:15:00.000Z']], 'and round they go');
+
+    assert.deepStrictEqual(await syncAllJira({ pool, atlassian: ATLASSIAN, fetch }), { tenants: 1, issues: 4, failed: 0, deferred: 0 }, 'with the default budget: both (current increments only: neither is a first sync any more)');
+});
+
+test('fairness: Atlassian\'s rate limit pauses the connection until its Retry-After -- not an error, no other tenant affected', async (t) => {
+    const { pool, call, fetch, rows } = await setup(t);
+    await call('PUT', '/jira/boards', { boardIds: [10] });
+    let jiraCalls = 0;
+    const limited = (url, init) => {
+        if (url.includes('/ex/jira/')) jiraCalls += 1;
+        if (url.includes('/search/jql')) return new Response('{}', { status: 429, headers: { 'retry-after': '120' } });
+        return fetch(url, init);
+    };
+    const log = [];
+    assert.deepStrictEqual(await syncAllJira({ pool, atlassian: ATLASSIAN, fetch: limited, log: (m) => log.push(m) }), { tenants: 1, issues: 0, failed: 0, deferred: 1 });
+    assert.match(log[0], /Atlassian rate limit, Jira sync paused until/);
+    const conn = (await call('GET', '/jira')).json();
+    assert.strictEqual(conn.lastError, null, 'nothing for the admin to fix');
+    assert.ok(Math.abs(Date.parse(conn.rateLimitedUntil) - (Date.now() + 120_000)) < 10_000, 'paused for Retry-After');
+    const [row] = await rows('SELECT last_attempt_at FROM jira_connections');
+    assert.ok(row.last_attempt_at);
+
+    jiraCalls = 0;
+    assert.deepStrictEqual(await syncAllJira({ pool, atlassian: ATLASSIAN, fetch: limited }), { tenants: 0, issues: 0, failed: 0, deferred: 1 });
+    assert.strictEqual(jiraCalls, 0, 'not asked again while paused');
+
+    const later = Date.now() + 130_000;
+    assert.deepStrictEqual(await syncAllJira({ pool, atlassian: ATLASSIAN, fetch, clock: () => later }), { tenants: 1, issues: 6, failed: 0, deferred: 0 });
+    await rows("UPDATE jira_connections SET rate_limited_until = now() - interval '1 second'");
+    assert.strictEqual((await call('GET', '/jira')).json().rateLimitedUntil, null, 'a pause that is over is not shown');
+});
+
+test('fairness: the Jira connection that waited longest syncs first', async (t) => {
+    const { app, pool, call, fetch, tenantId } = await setup(t);
+    await call('PUT', '/jira/boards', { boardIds: [10] });
+    // A second workspace on the same site, syncing another board.
+    const bob = await signIn(app, 'bob');
+    const other = (await app.inject({ method: 'POST', url: '/tenants', cookies: { sid: bob }, payload: { name: 'Labs' } })).json().tenant.id;
+    const start = await app.inject({ method: 'GET', url: `/tenants/${other}/jira/connect`, cookies: { sid: bob } });
+    const state = new URL(start.headers.location).searchParams.get('state');
+    const cb = await app.inject({ method: 'GET', url: `/auth/atlassian/callback?code=c2&state=${state}`, cookies: { sid: bob, jira_connect: start.cookies.find((c) => c.name === 'jira_connect').value } });
+    assert.strictEqual(cb.statusCode, 302, cb.body);
+    const put = await app.inject({ method: 'PUT', url: `/tenants/${other}/jira/boards`, cookies: { sid: bob }, payload: { boardIds: [13] } });
+    assert.strictEqual(put.statusCode, 200, put.body);
+
+    const order = async () => {
+        const boards = [];
+        await syncAllJira({ pool, atlassian: ATLASSIAN, fetch: (url, init) => {
+            const m = url.match(/\/board\/(\d+)\/sprint/);
+            if (m && !boards.includes(m[1])) boards.push(m[1]);
+            return fetch(url, init);
+        } });
+        return boards;
+    };
+    assert.deepStrictEqual(await order(), ['10', '13'], 'never tried: in the order the workspaces were created');
+    const setAttempt = (id, ago) => withScope(pool, { tenantId: id }, (c) => c.query(`UPDATE jira_connections SET last_attempt_at = now() - interval '${ago}'`));
+    await setAttempt(tenantId, '1 minute');
+    await setAttempt(other, '1 hour');
+    assert.deepStrictEqual(await order(), ['13', '10'], 'Labs waited longer');
 });

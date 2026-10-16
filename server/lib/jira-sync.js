@@ -33,6 +33,8 @@ const WEBHOOK_LIFETIME_MS = 30 * DAY_MS; // Atlassian drops a dynamic webhook 30
 const WEBHOOK_REFRESH_BEFORE_MS = 7 * DAY_MS;
 const WEBHOOK_RECONNECT = 'Reconnect Jira to allow instant updates (this connection was made before ShipScope asked for webhooks)';
 const ERROR_MAX_LENGTH = 300;
+/** A tenant's share of one worker pass (worker.js SYNC_TENANT_BUDGET_SECONDS), checked between boards. */
+const DEFAULT_TENANT_BUDGET_MS = 120_000;
 
 /**
  * The site's boards, each with its type and marked selected or not. Admins only.
@@ -199,21 +201,29 @@ async function boardIncrements({ accessToken, cloudId, board, firstSync, now, fe
 }
 
 /**
- * One tenant's Jira sync. A failure is recorded on the connection (`last_error`) and rethrown.
+ * One tenant's Jira sync. A failure is recorded on the connection (`last_error`) and rethrown; a rate limit (429)
+ * instead pauses the connection until Atlassian says (`rate_limited_until`, 5 minutes when it doesn't) -- it is not
+ * the admin's problem to fix. `deadline` (ms since the epoch, by `clock`) is the tenant's time budget in a worker
+ * pass: past it no further board starts (`partial`), and the next pass begins with the boards that waited longest.
  *
  * @param {import('pg').Pool} pool
- * @param {{ tenantId: string, atlassian: object, fetch?: typeof fetch, now?: Date }} input
- * @returns {Promise<{ boards: number, issues: number, currentPi: string|null }>}
+ * @param {{ tenantId: string, atlassian: object, fetch?: typeof fetch, now?: Date, deadline?: number, clock?: () => number }} input
+ * @returns {Promise<{ boards: number, issues: number, currentPi: string|null, partial: boolean }>}
  * @throws {JiraNotConnectedError|AtlassianError}
  */
-async function syncTenant(pool, { tenantId, atlassian, fetch: fetchFn = fetch, now = new Date() }) {
+async function syncTenant(pool, { tenantId, atlassian, fetch: fetchFn = fetch, now = new Date(), deadline = Infinity, clock = Date.now }) {
     try {
-        return await syncTenantUnrecorded(pool, { tenantId, atlassian, fetch: fetchFn, now });
+        return await syncTenantUnrecorded(pool, { tenantId, atlassian, fetch: fetchFn, now, deadline, clock });
     } catch (err) {
         // accessTokenFor() already records why a connection can't be used; this records everything else.
-        if (err instanceof AtlassianError) {
+        if (err instanceof AtlassianError && err.retryAt) {
             await withScope(pool, { tenantId }, (client) => client.query(
-                'UPDATE jira_connections SET last_error = $2 WHERE tenant_id = $1',
+                'UPDATE jira_connections SET rate_limited_until = $2, last_attempt_at = now() WHERE tenant_id = $1',
+                [tenantId, err.retryAt]
+            ));
+        } else if (err instanceof AtlassianError) {
+            await withScope(pool, { tenantId }, (client) => client.query(
+                'UPDATE jira_connections SET last_error = $2, last_attempt_at = now() WHERE tenant_id = $1',
                 [tenantId, `Jira sync failed: ${err.message}`.slice(0, ERROR_MAX_LENGTH)]
             ));
         }
@@ -221,19 +231,24 @@ async function syncTenant(pool, { tenantId, atlassian, fetch: fetchFn = fetch, n
     }
 }
 
-async function syncTenantUnrecorded(pool, { tenantId, atlassian, fetch: fetchFn, now }) {
+async function syncTenantUnrecorded(pool, { tenantId, atlassian, fetch: fetchFn, now, deadline, clock }) {
     const { boards, boardsWithIssues, flagLink } = await withScope(pool, { tenantId }, async (client) => ({
         flagLink: (await client.query('SELECT flag_link FROM jira_connections WHERE tenant_id = $1', [tenantId])).rows[0]?.flag_link || null,
-        boards: (await client.query('SELECT board_id, name, project_key, rhythm, pi_template FROM jira_boards WHERE tenant_id = $1 ORDER BY board_id', [tenantId])).rows,
+        // Longest-waiting first: when the time budget cuts a pass short, the boards left out go first next time.
+        boards: (await client.query(
+            'SELECT board_id, name, project_key, rhythm, pi_template FROM jira_boards WHERE tenant_id = $1 ORDER BY last_synced_at NULLS FIRST, board_id',
+            [tenantId]
+        )).rows,
         boardsWithIssues: new Set((await client.query('SELECT DISTINCT board_id FROM jira_issues WHERE tenant_id = $1', [tenantId])).rows.map((r) => Number(r.board_id))),
     }));
-    if (!boards.length) return { boards: 0, issues: 0, currentPi: null };
+    if (!boards.length) return { boards: 0, issues: 0, currentPi: null, partial: false };
 
     const { accessToken, cloudId } = await accessTokenFor(pool, { tenantId, atlassian, fetch: fetchFn });
     const fieldIds = { ...(await fetchFieldIds({ accessToken, cloudId, fetch: fetchFn })), flagLink };
     const plan = [];
     const currentByBoard = new Map();
-    for (const board of boards) {
+    for (const [i, board] of boards.entries()) {
+        if (i > 0 && clock() >= deadline) break;
         const boardId = Number(board.board_id);
         const firstSync = !boardsWithIssues.has(boardId);
         const increments = await boardIncrements({ accessToken, cloudId, board, firstSync, now, fetch: fetchFn });
@@ -271,19 +286,22 @@ async function syncTenantUnrecorded(pool, { tenantId, atlassian, fetch: fetchFn,
             );
         }
         for (const [boardId, current] of currentByBoard) {
-            await client.query('UPDATE jira_boards SET current_increment = $3 WHERE tenant_id = $1 AND board_id = $2', [tenantId, boardId, current]);
+            await client.query(
+                'UPDATE jira_boards SET current_increment = $3, last_synced_at = $4 WHERE tenant_id = $1 AND board_id = $2',
+                [tenantId, boardId, current, now]
+            );
         }
         // What the dashboard opens on: only current increments with issues count (an empty flow month is not "now").
         const current = await currentIncrements(client, tenantId);
         const opensOn = current.length > 1 ? NOW_KEY : current[0] || null;
         await client.query(
-            'UPDATE jira_connections SET current_pi = $2, last_synced_at = $3, last_error = NULL WHERE tenant_id = $1',
+            'UPDATE jira_connections SET current_pi = $2, last_synced_at = $3, last_attempt_at = now(), last_error = NULL WHERE tenant_id = $1',
             [tenantId, opensOn, now]
         );
         return opensOn;
     });
     await ensureWebhook(pool, { tenantId, atlassian, accessToken, cloudId, fetch: fetchFn, now });
-    return { boards: boards.length, issues: plan.reduce((n, p) => n + p.issues.length, 0), currentPi };
+    return { boards: currentByBoard.size, issues: plan.reduce((n, p) => n + p.issues.length, 0), currentPi, partial: currentByBoard.size < boards.length };
 }
 
 /**
@@ -409,32 +427,59 @@ async function removeJiraWebhooks(pool, { tenantId, atlassian, fetch: fetchFn = 
 }
 
 /**
- * One pass over every tenant with a Jira connection. One failing tenant is logged and the pass moves on. `keys`
- * limits it to the tenants a webhook delivery names (lib/webhooks.js jiraSyncKeys(): `webhook:<id>` of the
+ * One pass over every tenant with a Jira connection, fair across tenants the same way as the deployment sync
+ * (prd.md Open Questions 2 and 3): longest-waiting connection first, `tenantBudgetMs` per tenant (see syncTenant),
+ * and a rate-limited connection is skipped until Atlassian's wait is over; other tenants go on (if they share the
+ * limit, they get their own 429 and pause too). One failing tenant is logged and the pass moves on.
+ * `keys` limits it to the tenants a webhook delivery names (lib/webhooks.js jiraSyncKeys(): `webhook:<id>` of the
  * connection's webhook, `cloud:<cloudId>` or `site:<url>`).
  *
- * @param {{ pool: import('pg').Pool, atlassian: object, fetch?: typeof fetch, log?: (msg: string) => void, now?: Date, keys?: string[] }} input
- * @returns {Promise<{ tenants: number, issues: number, failed: number }>}
+ * @param {{ pool: import('pg').Pool, atlassian: object, fetch?: typeof fetch, log?: (msg: string) => void, now?: Date, clock?: () => number, keys?: string[], tenantBudgetMs?: number }} input
+ * @returns {Promise<{ tenants: number, issues: number, failed: number, deferred: number }>} deferred: tenants left (partly) for a later pass
  */
-async function syncAllJira({ pool, atlassian, fetch: fetchFn = fetch, log = () => {}, now = new Date(), keys = null }) {
-    const totals = { tenants: 0, issues: 0, failed: 0 };
+async function syncAllJira({ pool, atlassian, fetch: fetchFn = fetch, log = () => {}, now = new Date(), clock = Date.now, keys = null, tenantBudgetMs = DEFAULT_TENANT_BUDGET_MS }) {
+    const totals = { tenants: 0, issues: 0, failed: 0, deferred: 0 };
     const wanted = keys && new Set(keys);
     const { rows: tenants } = await pool.query('SELECT id FROM tenants ORDER BY created_at');
+    const work = [];
     for (const { id: tenantId } of tenants) {
         const conn = await withScope(pool, { tenantId }, async (client) => (
-            await client.query('SELECT cloud_id, site_url, webhook_ids FROM jira_connections WHERE tenant_id = $1 AND cloud_id IS NOT NULL', [tenantId])
+            await client.query(
+                'SELECT cloud_id, site_url, webhook_ids, last_attempt_at, rate_limited_until FROM jira_connections WHERE tenant_id = $1 AND cloud_id IS NOT NULL',
+                [tenantId]
+            )
         ).rows[0]);
         if (!conn) continue;
         if (wanted) {
             const own = [`cloud:${conn.cloud_id}`, `site:${String(conn.site_url || '').replace(/\/+$/, '')}`, ...conn.webhook_ids.map((id) => `webhook:${id}`)];
             if (!own.some((k) => wanted.has(k))) continue;
         }
+        work.push({ tenantId, conn });
+    }
+    // Stable sort: never-tried first, then the oldest attempt; ties keep the tenants' creation order.
+    const waitKey = (at) => (at ? at.getTime() : -1);
+    work.sort((a, b) => waitKey(a.conn.last_attempt_at) - waitKey(b.conn.last_attempt_at));
+
+    for (const { tenantId, conn } of work) {
+        if (conn.rate_limited_until && conn.rate_limited_until.getTime() > clock()) {
+            totals.deferred += 1;
+            continue;
+        }
         totals.tenants += 1;
         try {
-            const result = await syncTenant(pool, { tenantId, atlassian, fetch: fetchFn, now });
+            const result = await syncTenant(pool, { tenantId, atlassian, fetch: fetchFn, now, deadline: clock() + tenantBudgetMs, clock });
             totals.issues += result.issues;
+            if (result.partial) {
+                totals.deferred += 1;
+                log(`tenant ${tenantId}: ${result.boards} Jira board(s) synced, the rest next pass (time budget)`);
+            }
         } catch (err) {
             if (!(err instanceof AtlassianError) && !(err instanceof JiraNotConnectedError)) throw err;
+            if (err.retryAt) {
+                totals.deferred += 1;
+                log(`tenant ${tenantId}: Atlassian rate limit, Jira sync paused until ${err.retryAt.toISOString()}`);
+                continue;
+            }
             totals.failed += 1;
             log(`tenant ${tenantId}: Jira sync failed: ${err.message}`);
         }

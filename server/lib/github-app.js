@@ -1,4 +1,5 @@
 const crypto = require('crypto');
+const { retryAtFrom } = require('./rate-limit');
 
 /**
  * GitHub App server-to-server calls (FR-004/FR-006). The App authenticates as itself with a short-lived
@@ -19,6 +20,24 @@ class GitHubApiError extends Error {
         super(message);
         this.status = status;
     }
+}
+
+/** GitHub's primary or secondary rate limit: the installation's budget is spent until `retryAt`. */
+class GitHubRateLimitError extends GitHubApiError {
+    /** @param {string} message @param {number} status @param {Date} retryAt */
+    constructor(message, status, retryAt) {
+        super(message, status);
+        this.retryAt = retryAt;
+    }
+}
+
+/**
+ * A rate-limited answer: 429, or 403 with no requests left (primary limit) or a Retry-After (secondary limit; its
+ * own counter, so x-ratelimit-remaining may still be above 0). Any other 403 is a real permission error.
+ */
+function isRateLimited(res) {
+    if (res.status === 429) return true;
+    return res.status === 403 && (res.headers.get('x-ratelimit-remaining') === '0' || res.headers.get('retry-after') !== null);
 }
 
 const base64url = (value) => Buffer.from(typeof value === 'string' ? value : JSON.stringify(value)).toString('base64url');
@@ -51,6 +70,11 @@ async function githubFetch(fetchFn, path, { token, method = 'GET' }) {
         });
     } catch (err) {
         throw new GitHubApiError(`${method} ${path.split('?')[0]} failed: ${err.name === 'TimeoutError' ? 'timed out' : err.message}`, 0);
+    }
+    if (isRateLimited(res)) {
+        // GitHub: without a header, wait at least a minute.
+        const retryAt = retryAtFrom(res.headers, { fallbackMs: 60_000 });
+        throw new GitHubRateLimitError(`${method} ${path.split('?')[0]} hit GitHub's rate limit (HTTP ${res.status}) until ${retryAt.toISOString()}`, res.status, retryAt);
     }
     if (!res.ok) throw new GitHubApiError(`${method} ${path.split('?')[0]} failed with HTTP ${res.status}`, res.status);
     return res.json();
@@ -150,4 +174,5 @@ module.exports = {
     userCanAccessInstallation,
     listInstallationRepos,
     GitHubApiError,
+    GitHubRateLimitError,
 };
