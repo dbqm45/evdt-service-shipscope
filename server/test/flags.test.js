@@ -2,27 +2,32 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const { checkPayload, IngestPayloadError } = require('../lib/flags');
 
-const REPO = { fullName: 'acme/web' };
-const obs = (key, env, enabled) => ({ key, env, enabled });
+const NOW = new Date('2026-10-16T12:00:00Z');
+const obs = (key, env, state, extra = {}) => ({ key, env, state, ...extra });
 
-test('checkPayload: groups values by key, takes the component from the token, rejects conflicts and prototype keys', () => {
-    const { valuesByKey, metaByKey } = checkPayload({
-        source: 'build',
-        component: 'web',
-        observations: [obs('a', 'prod', true), obs('a', 'qa', false), obs('a', 'prod', true), obs('b', 'test', true)],
-        flags: [{ key: 'a', description: 'A', jiraKeys: ['ABC-1'] }],
-    }, REPO);
-    assert.deepStrictEqual(valuesByKey, { a: { prod: true, qa: false }, b: { test: true } });
-    assert.deepStrictEqual([...metaByKey.keys()], ['a']);
-    assert.doesNotThrow(() => checkPayload({ source: 'build', component: 'acme/web', observations: [] }, REPO));
+test('checkPayload: normalizes, derives covered environments, bounds the sender\'s changedAt, rejects contradictions', () => {
+    const out = checkPayload({
+        observations: [obs('a', 'prod', 'on'), obs('a', 'prod', 'on'), obs('b', 'qa', 'partial', { rollout: 25, changedAt: '2026-10-16T11:00:00Z' })],
+        flags: [{ key: 'a', description: 'A' }],
+    }, NOW);
+    assert.strictEqual(out.complete, true, 'full state by default');
+    assert.deepStrictEqual(out.environments, ['prod', 'qa']);
+    assert.deepStrictEqual(out.observations.map((o) => [o.key, o.env, o.state, o.rollout, o.changedAt.toISOString()]), [
+        ['a', 'prod', 'on', null, NOW.toISOString()],
+        ['b', 'qa', 'partial', 25, '2026-10-16T11:00:00.000Z'],
+    ]);
+    assert.deepStrictEqual(checkPayload({ complete: false, environments: ['test', 'prod'], observations: [] }, NOW).environments, ['test', 'prod']);
 
-    const bad = (payload, message) => assert.throws(() => checkPayload({ source: 'build', observations: [], ...payload }, REPO), (err) => err instanceof IngestPayloadError && message.test(err.message));
-    bad({ component: 'api' }, /does not match this token's repository "acme\/web"/);
-    bad({ observations: [obs('a', 'prod', true), obs('a', 'prod', false)] }, /conflicting values for a\.prod/);
-    bad({ observations: [obs('__proto__', 'prod', true)] }, /not a valid flag key/);
-    bad({ observations: [obs('a', 'prod', true)], flags: [{ key: 'b' }] }, /b has no observations/);
-    bad({ observations: [obs('a', 'prod', true)], flags: [{ key: 'a' }, { key: 'a' }] }, /listed twice/);
-    bad({ observations: [obs('constructor', 'prod', true)], flags: [{ key: 'constructor' }] }, /not a valid flag key/);
+    const bad = (payload, message) => assert.throws(() => checkPayload({ observations: [], ...payload }, NOW), (err) => err instanceof IngestPayloadError && message.test(err.message));
+    bad({ observations: [obs('a', 'prod', 'on'), obs('a', 'prod', 'off')] }, /conflicting values for a\.prod/);
+    bad({ observations: [obs('a', 'prod', 'partial', { rollout: 10 }), obs('a', 'prod', 'partial', { rollout: 20 })] }, /conflicting/);
+    bad({ observations: [obs('a', 'prod', 'on', { rollout: 10 })] }, /only meaningful with state "partial"/);
+    bad({ observations: [obs('a', 'prod', 'on', { changedAt: '2026-10-16T12:06:00Z' })] }, /in the future/);
+    bad({ observations: [obs('a', 'prod', 'on', { changedAt: '2026-10-09T11:59:00Z' })] }, /more than 7 days old/);
+    bad({ environments: ['qa'], observations: [obs('a', 'prod', 'on')] }, /prod is not in "environments"/);
+    bad({ observations: [obs('__proto__', 'prod', 'on')] }, /not a valid flag key/);
+    bad({ observations: [obs('a', 'prod', 'on')], flags: [{ key: 'b' }] }, /b has no observations/);
+    bad({ observations: [obs('a', 'prod', 'on')], flags: [{ key: 'a' }, { key: 'a' }] }, /listed twice/);
 });
 
 if (!process.env.TEST_DATABASE_URL) {
@@ -34,6 +39,7 @@ const { createTestDb } = require('./helpers/test-db');
 const { buildApp } = require('../web');
 const { AUTH, fakeGitHub, signIn } = require('./helpers/auth');
 const { withScope } = require('../lib/scope');
+const { ingestFlags } = require('../lib/flags');
 
 const USERS = { alice: { id: 870_000_001, login: 'alice' }, bob: { id: 870_000_002, login: 'bob' }, mallory: { id: 870_000_003, login: 'mallory' } };
 
@@ -53,91 +59,195 @@ async function setup(t) {
     const link = (await app.inject({ method: 'POST', url: `/tenants/${tenantId}/invitations`, cookies: { sid: alice }, payload: { role: 'member' } })).json().url;
     assert.strictEqual((await app.inject({ method: 'POST', url: `${new URL(link).pathname}/accept`, cookies: { sid: bob } })).statusCode, 201);
 
-    const newToken = async (repoId, label = 'CI') => {
-        const res = await app.inject({ method: 'POST', url: `/tenants/${tenantId}/repos/${repoId}/ingest-tokens`, cookies: { sid: alice }, payload: { label } });
+    /** Creates a source and returns its token. */
+    const newSource = async (payload) => {
+        const res = await app.inject({ method: 'POST', url: `/tenants/${tenantId}/flag-sources`, cookies: { sid: alice }, payload });
         assert.strictEqual(res.statusCode, 201, res.body);
-        return res.json().token;
+        return res.json();
     };
-    const ingest = (token, payload) => app.inject({ method: 'POST', url: '/api/flags/ingest', headers: { authorization: `Bearer ${token}` }, payload });
+    const ingest = (token, payload) => app.inject({ method: 'POST', url: '/api/flags/ingest', headers: { authorization: `Bearer ${token}` }, payload: { schemaVersion: 2, ...payload } });
     const dashboard = async () => (await app.inject({ method: 'GET', url: `/api/tenants/${tenantId}/dashboard-data`, cookies: { sid: alice } })).json();
     const rows = (sql, params = []) => withScope(pool, { tenantId }, async (c) => (await c.query(sql, params)).rows);
-    return { pool, app, alice, bob, tenantId, newToken, ingest, dashboard, rows };
+    return { pool, app, alice, bob, tenantId, newSource, ingest, dashboard, rows };
 }
 
-test('ingest: values, metadata and history land in the dashboard shapes; resends change nothing', async (t) => {
-    const { newToken, ingest, dashboard, rows } = await setup(t);
-    const web = await newToken(1);
+test('ingest: full state per environment -- values, history, removals and a flag coming back', async (t) => {
+    const { newSource, ingest, dashboard, rows } = await setup(t);
+    const { token } = (await newSource({ name: 'Frontend CI', kind: 'build', repoId: 1 })).token;
 
-    let res = await ingest(web, {
-        schemaVersion: 1,
-        source: 'build',
+    let res = await ingest(token, {
         changedBy: 'ci-bot',
-        observations: [obs('newCheckout', 'test', true), obs('newCheckout', 'prod', false), obs('darkMode', 'qa', true)],
+        observations: [obs('newCheckout', 'test', 'on'), obs('newCheckout', 'prod', 'off'), obs('darkMode', 'prod', 'on')],
         flags: [{ key: 'newCheckout', description: 'New checkout flow', jiraKeys: ['ABC-12'] }],
     });
     assert.strictEqual(res.statusCode, 200, res.body);
-    assert.deepStrictEqual(res.json(), { component: 'acme/web', flags: 2, changed: 3, created: ['darkMode', 'newCheckout'], collisions: [] });
+    assert.deepStrictEqual(res.json(), { source: 'Frontend CI', flags: 2, changed: 3, removed: 0, stale: 0, created: ['darkMode', 'newCheckout'] });
 
-    // The same payload again: nothing changes, no history.
-    res = await ingest(web, { schemaVersion: 1, source: 'build', observations: [obs('newCheckout', 'test', true), obs('newCheckout', 'prod', false)] });
-    assert.deepStrictEqual(res.json(), { component: 'acme/web', flags: 1, changed: 0, created: [], collisions: [] });
-    assert.strictEqual((await rows('SELECT * FROM flag_state_history')).length, 3);
+    // The same state again: nothing changes.
+    res = await ingest(token, { observations: [obs('newCheckout', 'test', 'on'), obs('newCheckout', 'prod', 'off'), obs('darkMode', 'prod', 'on')] });
+    assert.deepStrictEqual(res.json(), { source: 'Frontend CI', flags: 2, changed: 0, removed: 0, stale: 0, created: [] });
 
-    // A flip, from a runtime source; metadata left out stays as it was.
-    res = await ingest(web, { schemaVersion: 1, source: 'runtime-be', observations: [obs('newCheckout', 'prod', true)] });
-    assert.strictEqual(res.json().changed, 1);
+    // darkMode was deleted from the code: the next full prod state no longer lists it. test isn't covered, so untouched.
+    res = await ingest(token, { observations: [obs('newCheckout', 'prod', 'off')] });
+    assert.deepStrictEqual([res.json().changed, res.json().removed], [0, 1]);
+    let data = await dashboard();
+    assert.deepStrictEqual(Object.keys(data.flagsMeta).sort(), ['newCheckout'], 'a flag listed nowhere any more is not shown');
+    assert.strictEqual(data.flagStates.newCheckout.test.build.enabled, true, 'environments outside the message are untouched');
 
-    const data = await dashboard();
-    assert.deepStrictEqual(Object.keys(data.flagsMeta).sort(), ['darkMode', 'newCheckout']);
+    // An incremental message (complete: false) removes nothing; darkMode comes back.
+    res = await ingest(token, { complete: false, observations: [obs('darkMode', 'prod', 'on')] });
+    assert.deepStrictEqual([res.json().changed, res.json().removed], [1, 0]);
+    data = await dashboard();
     assert.deepStrictEqual({ ...data.flagsMeta.newCheckout, createdAt: undefined }, {
-        description: 'New checkout flow', source: 'runtime-be', jiraKeys: ['ABC-12'], components: ['web'], createdAt: undefined,
+        description: 'New checkout flow', source: 'build', jiraKeys: ['ABC-12'], components: ['web'], createdAt: undefined,
     });
-    assert.deepStrictEqual(data.flagsMeta.darkMode.description, '');
-    const prod = data.flagStates.newCheckout.prod;
-    assert.deepStrictEqual([prod.build.enabled, prod.build.changedBy, prod.build.component], [false, 'ci-bot', 'web']);
-    assert.deepStrictEqual([prod['runtime-be'].enabled, prod['runtime-be'].changedBy], [true, 'ingest: acme/web']);
-    assert.deepStrictEqual(data.flagStateHistory.map((h) => [h.key, h.env, h.source, h.enabled]), [
-        ['newCheckout', 'test', 'build', true],
-        ['newCheckout', 'prod', 'build', false],
-        ['darkMode', 'qa', 'build', true],
-        ['newCheckout', 'prod', 'runtime-be', true],
-    ], 'oldest first');
+    assert.deepStrictEqual(data.flagStates.newCheckout.prod.build, {
+        enabled: false, state: 'off', rollout: null, changedAt: data.flagStates.newCheckout.prod.build.changedAt, changedBy: 'ci-bot', component: 'web', sourceName: 'Frontend CI',
+    });
+    assert.ok(data.flagStates.darkMode.prod.build.enabled);
+
+    const history = await rows('SELECT key, environment, state, removed FROM flag_value_history ORDER BY id');
+    assert.deepStrictEqual(history.map((h) => [h.key, h.environment, h.state, h.removed]), [
+        ['newCheckout', 'test', 'on', false], ['newCheckout', 'prod', 'off', false], ['darkMode', 'prod', 'on', false],
+        ['darkMode', 'prod', null, true],
+        ['darkMode', 'prod', 'on', false],
+    ]);
+    assert.deepStrictEqual(data.flagStateHistory.map((h) => [h.key, h.env, h.enabled]), [
+        ['newCheckout', 'test', true], ['newCheckout', 'prod', false], ['darkMode', 'prod', true], ['darkMode', 'prod', true],
+    ], 'removals are not flips in the dashboard history');
 });
 
-test('ingest: another repo sending the same key and source is a collision; the rest of its payload still applies', async (t) => {
-    const { newToken, ingest, dashboard } = await setup(t);
-    const web = await newToken(1);
-    const api = await newToken(2);
-    await ingest(web, { schemaVersion: 1, source: 'build', observations: [obs('shared', 'prod', true)] });
+test('ingest: partial rollouts, the sender\'s change time, and delayed messages that must not undo newer ones', async (t) => {
+    const { pool, newSource, dashboard, rows } = await setup(t);
+    const { token } = (await newSource({ name: 'LaunchDarkly', kind: 'runtime' })).token;
+    const at = (iso) => new Date(iso);
+    const send = (payload, now) => ingestFlags(pool, { token, payload: { schemaVersion: 2, complete: false, ...payload }, now });
 
-    const res = await ingest(api, {
-        schemaVersion: 1,
-        source: 'build',
-        observations: [obs('shared', 'prod', false), obs('apiOnly', 'prod', true)],
-        flags: [{ key: 'shared', description: 'hijack' }],
-    });
-    assert.strictEqual(res.statusCode, 200, res.body);
-    assert.deepStrictEqual(res.json().collisions, [{ key: 'shared', ownedBy: 'acme/web' }]);
-    assert.strictEqual(res.json().changed, 1);
-    // A different source for the same key is deliberate sharing (a FE build flag and a BE runtime flag), not a collision.
-    assert.deepStrictEqual((await ingest(api, { schemaVersion: 1, source: 'runtime-be', observations: [obs('shared', 'prod', false)] })).json().collisions, []);
+    await send({ observations: [obs('beta', 'prod', 'partial', { rollout: 10, changedAt: '2026-10-16T09:00:00Z' })] }, at('2026-10-16T12:00:00Z'));
+    const [stored] = await rows('SELECT state, rollout, changed_at FROM flag_values');
+    assert.deepStrictEqual([stored.state, Number(stored.rollout), stored.changed_at.toISOString()], ['partial', 10, '2026-10-16T09:00:00.000Z'], 'the sender\'s time, not the arrival time');
+
+    // A rollout change is a change.
+    assert.strictEqual((await send({ observations: [obs('beta', 'prod', 'partial', { rollout: 50, changedAt: '2026-10-16T10:00:00Z' })] }, at('2026-10-16T12:00:00Z'))).changed, 1);
+    // A message from 08:00 arriving late: ignored, the 10:00 value stays.
+    const late = await send({ observations: [obs('beta', 'prod', 'off', { changedAt: '2026-10-16T08:00:00Z' })] }, at('2026-10-16T12:01:00Z'));
+    assert.deepStrictEqual([late.changed, late.stale], [0, 1]);
 
     const data = await dashboard();
-    assert.strictEqual(data.flagStates.shared.prod.build.enabled, true, 'not overwritten');
-    assert.strictEqual(data.flagsMeta.shared.description, '', 'metadata of a collided key is not applied');
-    assert.deepStrictEqual(data.flagsMeta.shared.components, ['api', 'web']);
+    assert.deepStrictEqual([data.flagStates.beta.prod['runtime-be'].enabled, data.flagStates.beta.prod['runtime-be'].state, data.flagStates.beta.prod['runtime-be'].rollout], [true, 'partial', 50]);
+    assert.deepStrictEqual(data.flagsMeta.beta.components, [], 'a source without a repo has no component');
+    assert.strictEqual(data.flagsMeta.beta.source, 'runtime-be');
 });
 
-test('ingest: one tenant\'s ingests run one at a time, so two senders of a new key cannot both own it', async (t) => {
-    const { pool, tenantId, newToken, ingest } = await setup(t);
-    const web = await newToken(1);
+test('ingest: several sources of one kind fold by priority, then by the latest change; build and runtime stay separate', async (t) => {
+    const { newSource, ingest, dashboard, app, alice, tenantId } = await setup(t);
+    const web = await newSource({ name: 'Web build', kind: 'build', repoId: 1 });
+    const api = await newSource({ name: 'API build', kind: 'build', repoId: 2 });
+    const ld = await newSource({ name: 'LaunchDarkly', kind: 'runtime', priority: 50 });
+    const backend = await newSource({ name: 'Backend', kind: 'runtime' }); // default priority 100
+
+    await ingest(web.token.token, { observations: [obs('shared', 'prod', 'on')] });
+    await ingest(api.token.token, { observations: [obs('shared', 'prod', 'off')] });
+    await ingest(ld.token.token, { observations: [obs('shared', 'prod', 'on')] });
+    await ingest(backend.token.token, { observations: [obs('shared', 'prod', 'off')] });
+
+    let data = await dashboard();
+    assert.strictEqual(data.flagStates.shared.prod.build.sourceName, 'API build', 'same priority: the latest change wins');
+    assert.strictEqual(data.flagStates.shared.prod['runtime-be'].sourceName, 'Backend', 'higher priority wins');
+    assert.deepStrictEqual(data.flagsMeta.shared.components, ['api', 'web']);
+
+    // Priority is configuration: raise LaunchDarkly above the backend.
+    const put = await app.inject({
+        method: 'PUT', url: `/tenants/${tenantId}/flag-sources/${ld.source.id}`, cookies: { sid: alice },
+        payload: { name: 'LaunchDarkly', kind: 'runtime', priority: 500, repoId: null },
+    });
+    assert.strictEqual(put.statusCode, 200, put.body);
+    data = await dashboard();
+    assert.strictEqual(data.flagStates.shared.prod['runtime-be'].sourceName, 'LaunchDarkly');
+    assert.strictEqual(data.flagStates.shared.prod['runtime-be'].enabled, true);
+});
+
+test('ingest: tokens are checked and payloads validated; nothing is written by a rejected request', async (t) => {
+    const { app, newSource, ingest, rows } = await setup(t);
+    const { token } = (await newSource({ name: 'CI', kind: 'build' })).token;
+    const good = { observations: [obs('a', 'prod', 'on')] };
+
+    for (const bad of ['', 'nope', `shpi_${'A'.repeat(43)}`, token.slice(0, -1)]) assert.strictEqual((await ingest(bad, good)).statusCode, 401, bad);
+    assert.strictEqual((await app.inject({ method: 'POST', url: '/api/flags/ingest', payload: { schemaVersion: 2, ...good } })).statusCode, 401, 'no header');
+    for (const bad of [
+        { ...good, schemaVersion: 1 },
+        { ...good, extra: 1 },
+        { ...good, source: 'build' },
+        { observations: [{ key: 'a', env: 'prod', enabled: true }] },
+        { observations: [obs('a', 'staging', 'on')] },
+        { observations: [obs('a', 'prod', 'maybe')] },
+        { observations: [obs('a', 'prod', 'partial', { rollout: 101 })] },
+        { observations: [obs('a', 'prod', 'on', { changedAt: 'yesterday' })] },
+        { observations: [obs('1bad', 'prod', 'on')] },
+        { observations: Array.from({ length: 5001 }, (_, i) => obs(`k${i}`, 'prod', 'on')) },
+        { ...good, environments: [] },
+        { ...good, flags: [{ key: 'a', jiraKeys: ['not-a-key'] }] },
+    ]) {
+        assert.strictEqual((await ingest(token, bad)).statusCode, 400, JSON.stringify(bad).slice(0, 80));
+    }
+    assert.deepStrictEqual(await rows('SELECT * FROM flags'), [], 'nothing written by rejected requests');
+    assert.strictEqual((await ingest(token, good)).statusCode, 200);
+    const [stored] = await rows('SELECT token_hash, last_used_at FROM ingest_tokens');
+    assert.ok(stored.last_used_at);
+    assert.ok(!stored.token_hash.includes(token.slice(5)), 'only a hash is stored');
+});
+
+test('flag sources: admins create, list (never the tokens), rename, rotate tokens and delete; members and outsiders cannot', async (t) => {
+    const { app, alice, bob, tenantId, newSource, ingest, rows } = await setup(t);
+    const created = await newSource({ name: 'Frontend CI', kind: 'build', repoId: 1 });
+    assert.deepStrictEqual([created.source.name, created.source.kind, created.source.priority, created.source.repoId], ['Frontend CI', 'build', 0, 1]);
+    assert.match(created.token.token, /^shpi_/);
+    const mallory = await signIn(app, 'mallory');
+    const url = `/tenants/${tenantId}/flag-sources`;
+
+    const list = await app.inject({ method: 'GET', url, cookies: { sid: alice } });
+    assert.strictEqual(list.statusCode, 200);
+    assert.deepStrictEqual(list.json().sources.map((s) => [s.name, s.tokens.length, s.tokens[0].lastUsedAt]), [['Frontend CI', 1, null]]);
+    assert.ok(!list.body.includes(created.token.token.slice(5)), 'the token is shown once, at creation');
+
+    const post = (sid, payload) => app.inject({ method: 'POST', url, cookies: { sid }, payload });
+    assert.strictEqual((await post(bob, { name: 'x', kind: 'build' })).statusCode, 403);
+    assert.strictEqual((await post(mallory, { name: 'x', kind: 'build' })).statusCode, 404);
+    assert.strictEqual((await post(alice, { name: 'Frontend CI', kind: 'runtime' })).statusCode, 409, 'names are unique');
+    assert.strictEqual((await post(alice, { name: 'x', kind: 'build', repoId: 99 })).statusCode, 404, 'repo not tracked');
+    for (const bad of [{ name: '', kind: 'build' }, { name: 'x', kind: 'remote' }, { name: 'x', kind: 'build', priority: 1001 }, { name: 'x', kind: 'build', extra: 1 }, { name: 'x' }]) {
+        assert.strictEqual((await post(alice, bad)).statusCode, 400, JSON.stringify(bad));
+    }
+    assert.strictEqual((await app.inject({ method: 'GET', url, cookies: { sid: bob } })).statusCode, 403);
+
+    // Rotation: a second token works alongside the first; revoking the first leaves the second.
+    const second = await app.inject({ method: 'POST', url: `${url}/${created.source.id}/tokens`, cookies: { sid: alice } });
+    assert.strictEqual(second.statusCode, 201);
+    assert.strictEqual((await app.inject({ method: 'DELETE', url: `/tenants/${tenantId}/ingest-tokens/${created.token.id}`, cookies: { sid: bob } })).statusCode, 403);
+    assert.strictEqual((await app.inject({ method: 'DELETE', url: `/tenants/${tenantId}/ingest-tokens/${created.token.id}`, cookies: { sid: alice } })).statusCode, 204);
+    assert.strictEqual((await ingest(created.token.token, { observations: [] })).statusCode, 401, 'revoked');
+    assert.strictEqual((await ingest(second.json().token, { observations: [obs('a', 'prod', 'on')] })).statusCode, 200);
+
+    // Untracking the repo keeps the source, without a component; deleting the source removes its values and tokens.
+    await rows('DELETE FROM tracked_repos WHERE repo_id = 1');
+    const dashboard = async () => (await app.inject({ method: 'GET', url: `/api/tenants/${tenantId}/dashboard-data`, cookies: { sid: alice } })).json();
+    assert.deepStrictEqual((await dashboard()).flagsMeta.a.components, []);
+    assert.strictEqual((await app.inject({ method: 'DELETE', url: `${url}/${created.source.id}`, cookies: { sid: alice } })).statusCode, 204);
+    assert.deepStrictEqual([await rows('SELECT * FROM flag_values'), await rows('SELECT * FROM ingest_tokens'), await rows('SELECT * FROM flag_value_history')], [[], [], []]);
+    assert.deepStrictEqual((await dashboard()).flagsMeta, {});
+    assert.strictEqual((await app.inject({ method: 'DELETE', url: `${url}/${created.source.id}`, cookies: { sid: alice } })).statusCode, 404);
+});
+
+test('ingest: one tenant\'s ingests run one at a time', async (t) => {
+    const { pool, tenantId, newSource, ingest } = await setup(t);
+    const { token } = (await newSource({ name: 'CI', kind: 'build' })).token;
     const holder = await pool.connect();
     let pending;
     let settled = false;
     try {
         await holder.query('BEGIN');
         await holder.query("SELECT pg_advisory_xact_lock(hashtextextended('flags:' || $1, 0))", [tenantId]);
-        pending = ingest(web, { schemaVersion: 1, source: 'build', observations: [obs('a', 'prod', true)] }).then((res) => { settled = true; return res; });
+        pending = ingest(token, { observations: [obs('a', 'prod', 'on')] }).then((res) => { settled = true; return res; });
         await new Promise((resolve) => setTimeout(resolve, 300));
         assert.strictEqual(settled, false, 'waits while another ingest of this tenant is running');
     } finally {
@@ -147,73 +257,9 @@ test('ingest: one tenant\'s ingests run one at a time, so two senders of a new k
     assert.strictEqual((await pending).statusCode, 200);
 });
 
-test('ingest: tokens are checked, payloads validated, and untracking a repo removes its flags and tokens', async (t) => {
-    const { app, newToken, ingest, dashboard, rows } = await setup(t);
-    const web = await newToken(1);
-    const good = { schemaVersion: 1, source: 'build', observations: [obs('a', 'prod', true)] };
-
-    for (const token of ['', 'nope', `shpi_${'A'.repeat(43)}`, web.slice(0, -1)]) {
-        assert.strictEqual((await ingest(token, good)).statusCode, 401, token);
-    }
-    assert.strictEqual((await app.inject({ method: 'POST', url: '/api/flags/ingest', payload: good })).statusCode, 401, 'no header');
-    for (const bad of [
-        { ...good, schemaVersion: 2 },
-        { ...good, source: 'launchdarkly' },
-        { ...good, extra: 1 },
-        { ...good, observations: [{ key: 'a', env: 'staging', enabled: true }] },
-        { ...good, observations: [{ key: 'a', env: 'prod', enabled: 'true' }] },
-        { ...good, observations: [{ key: '1bad', env: 'prod', enabled: true }] },
-        { ...good, observations: Array.from({ length: 5001 }, (_, i) => obs(`k${i}`, 'prod', true)) },
-        { ...good, flags: [{ key: 'a', jiraKeys: ['not-a-key'] }] },
-        { ...good, component: 'acme/api' },
-    ]) {
-        assert.strictEqual((await ingest(web, bad)).statusCode, 400, JSON.stringify(bad).slice(0, 80));
-    }
-    assert.strictEqual((await rows('SELECT * FROM flags')).length, 0, 'nothing written by rejected requests');
-
-    assert.strictEqual((await ingest(web, good)).statusCode, 200);
-    const [token] = await rows('SELECT token_hash, last_used_at FROM ingest_tokens');
-    assert.ok(token.last_used_at);
-    assert.notStrictEqual(token.token_hash, web, 'only a hash is stored');
-
-    // Untracking (the GitHub routes' DELETE does exactly this delete).
-    await rows('DELETE FROM tracked_repos WHERE repo_id = 1');
-    assert.deepStrictEqual(await rows('SELECT * FROM ingest_tokens'), []);
-    assert.deepStrictEqual(await rows('SELECT * FROM flag_states'), []);
-    assert.deepStrictEqual(await rows('SELECT * FROM flag_state_history'), []);
-    assert.deepStrictEqual((await dashboard()).flagsMeta, {}, 'a flag with nothing left is not shown');
-    assert.strictEqual((await ingest(web, good)).statusCode, 401, 'its token went with it');
-});
-
-test('ingest tokens: admins create, list (never the token) and revoke; members and outsiders cannot', async (t) => {
-    const { app, alice, bob, tenantId, newToken, ingest } = await setup(t);
-    const token = await newToken(1, 'GitHub Actions');
-    const mallory = await signIn(app, 'mallory');
-
-    const list = await app.inject({ method: 'GET', url: `/tenants/${tenantId}/ingest-tokens`, cookies: { sid: alice } });
-    assert.strictEqual(list.statusCode, 200);
-    const [entry] = list.json().tokens;
-    assert.deepStrictEqual([entry.repoId, entry.fullName, entry.label, entry.lastUsedAt], [1, 'acme/web', 'GitHub Actions', null]);
-    assert.ok(!JSON.stringify(list.json()).includes(token.slice(5)), 'the token is shown once, at creation');
-
-    const create = (sid, repoId, payload = { label: 'x' }) => app.inject({ method: 'POST', url: `/tenants/${tenantId}/repos/${repoId}/ingest-tokens`, cookies: { sid }, payload });
-    assert.strictEqual((await create(bob, 1)).statusCode, 403);
-    assert.strictEqual((await create(mallory, 1)).statusCode, 404);
-    assert.strictEqual((await create(alice, 99)).statusCode, 404, 'not tracked');
-    assert.strictEqual((await create(alice, 1, { label: '' })).statusCode, 400);
-    assert.strictEqual((await create(alice, 1, { label: 'x', repoId: 2 })).statusCode, 400);
-    assert.strictEqual((await app.inject({ method: 'GET', url: `/tenants/${tenantId}/ingest-tokens`, cookies: { sid: bob } })).statusCode, 403);
-
-    const del = (sid, id) => app.inject({ method: 'DELETE', url: `/tenants/${tenantId}/ingest-tokens/${id}`, cookies: { sid } });
-    assert.strictEqual((await del(bob, entry.id)).statusCode, 403);
-    assert.strictEqual((await del(alice, entry.id)).statusCode, 204);
-    assert.strictEqual((await del(alice, entry.id)).statusCode, 404);
-    assert.strictEqual((await ingest(token, { schemaVersion: 1, source: 'build', observations: [] })).statusCode, 401, 'revoked');
-});
-
 test('RLS: every table with a tenant_id forces row-level security, and flags are invisible across tenants', async (t) => {
-    const { pool, app, alice, tenantId, newToken, ingest } = await setup(t);
-    await ingest(await newToken(1), { schemaVersion: 1, source: 'build', observations: [obs('a', 'prod', true)] });
+    const { pool, app, alice, tenantId, newSource, ingest } = await setup(t);
+    await ingest((await newSource({ name: 'CI', kind: 'build' })).token.token, { observations: [obs('a', 'prod', 'on')] });
 
     const { rows: tables } = await pool.query(
         `SELECT c.relname, c.relrowsecurity, c.relforcerowsecurity FROM pg_class c
@@ -221,13 +267,13 @@ test('RLS: every table with a tenant_id forces row-level security, and flags are
          JOIN pg_attribute a ON a.attrelid = c.oid AND a.attname = 'tenant_id'
          WHERE c.relkind = 'r'`
     );
-    assert.ok(tables.length >= 10);
+    assert.ok(tables.length >= 11);
     for (const table of tables) assert.ok(table.relrowsecurity && table.relforcerowsecurity, `${table.relname} forces RLS`);
 
-    for (const table of ['flags', 'flag_states', 'flag_state_history', 'ingest_tokens']) {
+    for (const table of ['flag_sources', 'ingest_tokens', 'flags', 'flag_values', 'flag_value_history']) {
         assert.deepStrictEqual((await pool.query(`SELECT * FROM ${table}`)).rows, [], `${table} unscoped`);
     }
     const other = (await app.inject({ method: 'POST', url: '/tenants', cookies: { sid: alice }, payload: { name: 'Other' } })).json().tenant.id;
-    assert.deepStrictEqual(await withScope(pool, { tenantId: other }, async (c) => (await c.query('SELECT * FROM flag_states')).rows), []);
-    assert.strictEqual((await withScope(pool, { tenantId }, async (c) => (await c.query('SELECT * FROM flag_states')).rows)).length, 1);
+    assert.deepStrictEqual(await withScope(pool, { tenantId: other }, async (c) => (await c.query('SELECT * FROM flag_values')).rows), []);
+    assert.strictEqual((await withScope(pool, { tenantId }, async (c) => (await c.query('SELECT * FROM flag_values')).rows)).length, 1);
 });

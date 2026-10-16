@@ -39,11 +39,15 @@ Each deploy also records whether its GitHub Actions run was started by hand (`ma
 **Actions** read permission; without it the flag stays unknown) and the creator's public display name
 (`lib/deployment-people.js`; both display-only, a failed lookup never fails the sync).
 
-- **Feature flags** (`lib/flags.js`): pushed from outside, never read by ShipScope itself -- each tenant keeps
-  flags its own way (build-time files, a runtime API, a flag service, or none). An admin issues an ingest token
-  per tracked repo; whatever holds the flags posts observations to `POST /api/flags/ingest` in the file-based
-  contract (`design-docs/FLAG-INGEST.pl.md`). Same rules as `scripts/lib/flag-ingest.js`: another repo sending
-  the same key for the same source is a refused collision, a resend changes nothing, every flip goes to history.
+- **Feature flags** (`lib/flags.js`, contract `schemaVersion: 2`): pushed from outside, never read by ShipScope
+  itself -- each tenant keeps flags its own way (build-time files, a runtime API, a flag service, or none). An admin
+  names the tenant's *flag sources* ("LaunchDarkly", "Frontend CI", ...), each with a kind (`build`/`runtime`), a
+  priority and optionally a component (tracked repo); each source sends the **full state** of its flags for the
+  environments it covers, with its own token. Flags it no longer lists there are marked removed; values are
+  `off`/`on`/`partial` (+ rollout %); a sender's `changedAt` is kept (within 7 days back / 5 minutes ahead) and an
+  older message never undoes a newer one. Several sources of one kind fold into the dashboard's `build`/`runtime-be`
+  slot by priority, then by the latest change. Not a port of `scripts/lib/flag-ingest.js` (schemaVersion 1, the
+  single-tenant contract): this one replaces it for the server.
 
 Not yet: Jira data in the database (those dashboard panels are empty; FR-007 will connect Jira via Atlassian
 OAuth), GitHub webhooks.
@@ -91,7 +95,7 @@ Dashboard:
 | `GET /` | — | Signed out: to sign-in. Signed in: to the first tenant's dashboard, or `/me` without a tenant. |
 | `GET /t/:tenantId/` | session + member (else sign-in and back) | The dashboard page (`docs/index.html`, minus its `data/*.json` preload hints). |
 | `GET /t/:tenantId/:asset` | — | `style.css`, `favicon.svg`, `app-*.js` only (the same public code GitHub Pages serves). |
-| `GET /api/tenants/:tenantId/dashboard-data` | session + member | Everything the page loads, in the `data/*.json` shapes: `deployments` (repo short name as `component`; `version` is the resolved release/tag/version-file/message label, else the short sha; `driftBehind` on each environment's latest successful deploy), `issueDeployments`, `componentsOrder` (tracked repos), `lastSyncedAt`, `flagsMeta`/`flagStates`/`flagStateHistory` (flags with at least one value from a still-tracked repo); Jira parts empty for now. |
+| `GET /api/tenants/:tenantId/dashboard-data` | session + member | Everything the page loads, in the `data/*.json` shapes: `deployments` (repo short name as `component`; `version` is the resolved release/tag/version-file/message label, else the short sha; `driftBehind` on each environment's latest successful deploy), `issueDeployments`, `componentsOrder` (tracked repos), `lastSyncedAt`, `flagsMeta`/`flagStates`/`flagStateHistory` (flags some source still reports; each value also carries `state`, `rollout` and `sourceName`); Jira parts empty for now. |
 
 Deployments and settings:
 
@@ -105,10 +109,13 @@ Feature flags:
 
 | Route | Auth | What it does |
 |---|---|---|
-| `POST /tenants/:tenantId/repos/:repoId/ingest-tokens` | session + admin | Body `{ "label": "GitHub Actions" }`. Returns `{ id, repoId, label, createdAt, token }`; the token (`shpi_...`) is shown only here, only its SHA-256 is stored. 201, or 404 if the repo isn't tracked. |
-| `GET /tenants/:tenantId/ingest-tokens` | session + admin | `{ tokens: [{ id, repoId, fullName, label, createdAt, lastUsedAt }] }`, never the tokens. |
+| `POST /tenants/:tenantId/flag-sources` | session + admin | Body `{ "name": "LaunchDarkly", "kind": "build" \| "runtime", "priority"?: 0..1000, "repoId"?: 123 \| null }` (priority defaults to 0 for build, 100 for runtime). Returns `{ source, token: { id, token } }`; the token (`shpi_...`) is shown only here, only its SHA-256 is stored. 201; 409 for a taken name, 404 for an untracked repo. |
+| `GET /tenants/:tenantId/flag-sources` | session + admin | `{ sources: [{ id, name, kind, priority, repoId, createdAt, tokens: [{ id, createdAt, lastUsedAt }] }] }`, never the tokens. |
+| `PUT /tenants/:tenantId/flag-sources/:sourceId` | session + admin | Body `{ name, kind, priority, repoId }`: rename, change the kind, the precedence or the component. |
+| `DELETE /tenants/:tenantId/flag-sources/:sourceId` | session + admin | Deletes the source with its tokens, values and history. 204, or 404. |
+| `POST /tenants/:tenantId/flag-sources/:sourceId/tokens` | session + admin | Another token for the source (rotation without downtime). Returns `{ id, token }`. 201. |
 | `DELETE /tenants/:tenantId/ingest-tokens/:tokenId` | session + admin | Revokes a token. 204, or 404. |
-| `POST /api/flags/ingest` | `Authorization: Bearer <ingest token>` | Body `{ "schemaVersion": 1, "source": "build" \| "runtime-be", "observations": [{ "key", "env": "test"\|"qa"\|"prod", "enabled": true }], "changedBy"?, "component"?, "flags"?: [{ "key", "description"?, "jiraKeys"? }] }` (at most 5000 observations). The component is the token's repo; a payload naming another is a 400. `flags` describes only keys observed in the same payload. Returns `{ component, flags, changed, created, collisions: [{ key, ownedBy }] }`; 401 for an unknown or revoked token. |
+| `POST /api/flags/ingest` | `Authorization: Bearer <ingest token>` | Body `{ "schemaVersion": 2, "observations": [{ "key", "env": "test"\|"qa"\|"prod", "state": "off"\|"on"\|"partial", "rollout"?: 0..100, "changedAt"?: ISO 8601 }], "complete"?: true, "environments"?: [...], "changedBy"?, "flags"?: [{ "key", "description"?, "jiraKeys"? }] }` (at most 5000 observations). `complete` (default `true`): flags of this source not listed for the covered `environments` (default: those in `observations`) are marked removed; `false` sends just changes. `flags` describes only keys observed in the same message. Returns `{ source, flags, changed, removed, stale, created }`; 401 for an unknown or revoked token. |
 
 `GET /tenants/:tenantId/github` also reports each tracked repo's `lastSyncedAt` and `lastSyncError`.
 
@@ -165,9 +172,10 @@ not stripped or coerced).
   `invitations` (migration `003`) is tenant-scoped the same way, plus a read-only policy for exactly one
   invitation whose token hash is set as `app.invite_token_hash` (how a not-yet-member reads the link).
   `github_installations` and `tracked_repos` (migration `004`), `deployments` and `issue_deployments`
-  (migration `005`), `ingest_tokens`, `flags`, `flag_states` and `flag_state_history` (migration `008`) are
-  tenant-scoped the same way. An ingest request carries no session: like an invitation, it can read exactly
-  the one `ingest_tokens` row whose hash it holds (`app.ingest_token_hash`), then works under that row's tenant.
+  (migration `005`), `flag_sources`, `ingest_tokens`, `flags`, `flag_values` and `flag_value_history` (migration
+  `008`) are tenant-scoped the same way. An ingest request carries no session: like an invitation, it can read
+  exactly the one `ingest_tokens` row whose hash it holds (`app.ingest_token_hash`), then works under that row's
+  tenant, one ingest per tenant at a time (a transaction advisory lock).
   An unscoped query fails closed: zero rows, or an RLS error for a write.
 
 ## Running locally

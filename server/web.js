@@ -24,7 +24,8 @@ const {
 const { listDeployments, getSettings, updateSettings, MAX_LIMIT } = require('./lib/deployments');
 const { buildDashboardData } = require('./lib/dashboard-data');
 const {
-    createIngestToken, listIngestTokens, revokeIngestToken, ingestFlags, IngestTokenError, IngestPayloadError,
+    createFlagSource, updateFlagSource, deleteFlagSource, listFlagSources, createIngestToken, revokeIngestToken, ingestFlags,
+    IngestTokenError, IngestPayloadError, FlagSourceNotFoundError, FlagSourceConflictError,
 } = require('./lib/flags');
 const { loadDashboardAssets, ASSET_PATTERN } = require('./lib/dashboard-assets');
 
@@ -69,6 +70,8 @@ const ERROR_STATUS = [
     [GitHubApiError, 502],
     [IngestTokenError, 401],
     [IngestPayloadError, 400],
+    [FlagSourceNotFoundError, 404],
+    [FlagSourceConflictError, 409],
 ];
 
 /** Drops the query string and masks invitation tokens, which work like passwords until accepted. */
@@ -395,40 +398,38 @@ function buildApp({ pool, auth, githubApp = null, fetch: fetchFn = fetch, logger
     registerDashboardRoutes();
     if (githubApp) registerGitHubRoutes();
 
-    // Feature flags, pushed from outside (lib/flags.js): admins issue an ingest token per tracked repo, and
-    // whatever holds the tenant's flags (CI reading build-time files, a job polling a runtime API or a flag
-    // service) posts observations with it. No session: the token is the credential.
+    // Feature flags, pushed from outside (lib/flags.js, contract schemaVersion 2): admins name the tenant's flag
+    // sources ("LaunchDarkly", "Frontend CI", ...) and each sends the full state of its flags with its own token.
+    // No session on the ingest: the token is the credential.
     function registerFlagRoutes() {
         const FLAG_KEY = { type: 'string', pattern: '^[A-Za-z_][A-Za-z0-9_.:-]{0,127}$' };
+        const ENV = { type: 'string', enum: ['test', 'qa', 'prod'] };
         app.post('/api/flags/ingest', {
-            bodyLimit: 1024 * 1024,
+            bodyLimit: 2 * 1024 * 1024,
             schema: {
                 body: {
                     type: 'object',
-                    required: ['schemaVersion', 'source', 'observations'],
+                    required: ['schemaVersion', 'observations'],
                     additionalProperties: false,
                     properties: {
-                        schemaVersion: { const: 1 },
-                        component: { type: 'string', maxLength: 200 },
-                        // build: baked in at build time; runtime-be: switched live (a backend, a flag service, ...).
-                        source: { type: 'string', enum: ['build', 'runtime-be'] },
+                        schemaVersion: { const: 2 },
+                        // Full state (default): flags this source no longer lists in these environments are removed.
+                        complete: { type: 'boolean' },
+                        environments: { type: 'array', minItems: 1, uniqueItems: true, items: ENV },
                         changedBy: { type: 'string', minLength: 1, maxLength: 100 },
                         observations: {
                             type: 'array',
                             maxItems: 5000,
                             items: {
                                 type: 'object',
-                                required: ['key', 'env', 'enabled'],
+                                required: ['key', 'env', 'state'],
                                 additionalProperties: false,
                                 properties: {
                                     key: FLAG_KEY,
-                                    env: { type: 'string', enum: ['test', 'qa', 'prod'] },
-                                    enabled: { type: 'boolean' },
-                                    // Accepted by the contract (FLAG-INGEST.pl.md) but not used yet.
-                                    observedAt: { type: 'string', maxLength: 64 },
-                                    changedBy: { type: 'string', maxLength: 100 },
-                                    value: {},
-                                    kind: { type: 'string', maxLength: 32 },
+                                    env: ENV,
+                                    state: { type: 'string', enum: ['off', 'on', 'partial'] },
+                                    rollout: { type: 'number', minimum: 0, maximum: 100 },
+                                    changedAt: { type: 'string', format: 'date-time' },
                                 },
                             },
                         },
@@ -454,30 +455,53 @@ function buildApp({ pool, auth, githubApp = null, fetch: fetchFn = fetch, logger
             return ingestFlags(pool, { token: match ? match[1] : '', payload: request.body });
         });
 
-        const tokenRepoParams = { type: 'object', required: ['tenantId', 'repoId'], properties: { tenantId: UUID_PARAM, repoId: GITHUB_ID_PARAM } };
-        app.post('/tenants/:tenantId/repos/:repoId/ingest-tokens', {
-            preHandler: requireUser,
-            schema: {
-                params: tokenRepoParams,
-                body: {
-                    type: 'object',
-                    required: ['label'],
-                    additionalProperties: false,
-                    properties: { label: { type: 'string', minLength: 1, maxLength: 100 } },
-                },
+        const sourceBody = (required) => ({
+            type: 'object',
+            required,
+            additionalProperties: false,
+            properties: {
+                name: { type: 'string', minLength: 1, maxLength: 100 },
+                kind: { type: 'string', enum: ['build', 'runtime'] },
+                priority: { type: 'integer', minimum: 0, maximum: 1000 },
+                repoId: { anyOf: [{ type: 'null' }, { type: 'integer', minimum: 1 }] },
             },
-        }, async (request, reply) => {
-            const created = await createIngestToken(pool, {
-                tenantId: request.params.tenantId, actorUserId: request.user.id, repoId: Number(request.params.repoId), label: request.body.label,
-            });
-            if (!created) return reply.code(404).send({ error: 'That repository is not tracked' });
-            return reply.code(201).send(created);
         });
+        const sourceParams = { type: 'object', required: ['tenantId', 'sourceId'], properties: { tenantId: UUID_PARAM, sourceId: UUID_PARAM } };
 
-        app.get('/tenants/:tenantId/ingest-tokens', {
+        app.post('/tenants/:tenantId/flag-sources', {
+            preHandler: requireUser,
+            schema: { params: tenantOnlyParams, body: sourceBody(['name', 'kind']) },
+        }, async (request, reply) => reply.code(201).send(await createFlagSource(pool, {
+            tenantId: request.params.tenantId, actorUserId: request.user.id, ...request.body,
+        })));
+
+        app.get('/tenants/:tenantId/flag-sources', {
             preHandler: requireUser,
             schema: { params: tenantOnlyParams },
-        }, async (request) => ({ tokens: await listIngestTokens(pool, { tenantId: request.params.tenantId, actorUserId: request.user.id }) }));
+        }, async (request) => ({ sources: await listFlagSources(pool, { tenantId: request.params.tenantId, actorUserId: request.user.id }) }));
+
+        app.put('/tenants/:tenantId/flag-sources/:sourceId', {
+            preHandler: requireUser,
+            schema: { params: sourceParams, body: sourceBody(['name', 'kind', 'priority', 'repoId']) },
+        }, async (request) => updateFlagSource(pool, {
+            tenantId: request.params.tenantId, actorUserId: request.user.id, sourceId: request.params.sourceId, ...request.body,
+        }));
+
+        app.delete('/tenants/:tenantId/flag-sources/:sourceId', {
+            preHandler: requireUser,
+            schema: { params: sourceParams },
+        }, async (request, reply) => {
+            const removed = await deleteFlagSource(pool, { tenantId: request.params.tenantId, actorUserId: request.user.id, sourceId: request.params.sourceId });
+            if (!removed) return reply.code(404).send({ error: 'No such flag source' });
+            return reply.code(204).send();
+        });
+
+        app.post('/tenants/:tenantId/flag-sources/:sourceId/tokens', {
+            preHandler: requireUser,
+            schema: { params: sourceParams },
+        }, async (request, reply) => reply.code(201).send(await createIngestToken(pool, {
+            tenantId: request.params.tenantId, actorUserId: request.user.id, sourceId: request.params.sourceId,
+        })));
 
         app.delete('/tenants/:tenantId/ingest-tokens/:tokenId', {
             preHandler: requireUser,
