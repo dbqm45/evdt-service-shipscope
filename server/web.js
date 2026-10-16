@@ -30,7 +30,7 @@ const {
     createFlagSource, updateFlagSource, deleteFlagSource, listFlagSources, createIngestToken, revokeIngestToken, ingestFlags,
     IngestTokenError, IngestPayloadError, FlagSourceNotFoundError, FlagSourceConflictError,
 } = require('./lib/flags');
-const { loadDashboardAssets, ASSET_PATTERN } = require('./lib/dashboard-assets');
+const { loadDashboardAssets, loadUiAssets, ASSET_PATTERN } = require('./lib/dashboard-assets');
 
 const SESSION_COOKIE = 'sid';
 const STATE_COOKIE = 'oauth_state';
@@ -55,8 +55,9 @@ const UUID_SOURCE = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12
 // Where sign-in may send the user back to: an invitation link or a tenant's dashboard. An allowlist, not
 // "any relative path": a looser check (e.g. "starts with /") still lets "//evil.example" through as a
 // protocol-relative open redirect.
-const RETURN_TO_PATTERN = new RegExp(`^(/invitations/${TOKEN_PATTERN.source.slice(1, -1)}|/t/${UUID_SOURCE}/)$`);
+const RETURN_TO_PATTERN = new RegExp(`^(/invitations/${TOKEN_PATTERN.source.slice(1, -1)}|/t/${UUID_SOURCE}/(settings)?|/start)$`);
 const DEFAULT_DASHBOARD_DIR = path.join(__dirname, '..', 'docs');
+const UI_DIR = path.join(__dirname, 'ui');
 
 const UUID_PARAM = { type: 'string', format: 'uuid' };
 const TOKEN_PARAM = { type: 'string', pattern: TOKEN_PATTERN.source };
@@ -240,7 +241,7 @@ function buildApp({ pool, auth, githubApp = null, atlassian = null, fetch: fetch
             }
             const installation = await getInstallation({ app: githubApp, installationId, fetch: fetchFn });
             await linkInstallation(pool, { tenantId, actorUserId: user.id, installation });
-            return reply.redirect(`/tenants/${tenantId}/github`);
+            return reply.redirect(`/t/${tenantId}/settings#github`);
         }
 
         // The cookie was validated when set, but it's client-controlled: check it again before redirecting.
@@ -466,7 +467,7 @@ function buildApp({ pool, auth, githubApp = null, atlassian = null, fetch: fetch
             await saveConnection(pool, {
                 tenantId, actorUserId: request.user.id, refreshToken: tokens.refreshToken, scopes: tokens.scopes, sites, encryptionKey: atlassian.encryptionKey,
             });
-            return reply.redirect(`/tenants/${tenantId}/jira`);
+            return reply.redirect(`/t/${tenantId}/settings#jira`);
         });
 
         app.get('/tenants/:tenantId/jira', {
@@ -684,8 +685,33 @@ function buildApp({ pool, auth, githubApp = null, atlassian = null, fetch: fetch
             const user = await getSessionUser(pool, request.cookies[SESSION_COOKIE]);
             if (!user) return reply.redirect('/auth/github/login');
             const tenants = await listTenantsForUser(pool, user.id);
-            return reply.redirect(tenants.length ? `/t/${tenants[0].id}/` : '/me');
+            return reply.redirect(tenants.length ? `/t/${tenants[0].id}/` : '/start');
         });
+
+        // The server's own pages: settings per tenant, and creating a first workspace.
+        const ui = loadUiAssets(UI_DIR, assets);
+        const sendUi = (reply, name) => {
+            const page = ui.get(name);
+            if (!page) return reply.code(503).send({ error: 'Settings files are not deployed' });
+            return reply.headers({ ...DASHBOARD_HEADERS, 'content-type': page.type }).send(page.body);
+        };
+        app.get('/start', { preHandler: requireUserOrSignIn }, async (request, reply) => sendUi(reply, 'start.html'));
+        app.get('/t/:tenantId/settings', {
+            preHandler: requireUserOrSignIn,
+            schema: { params: tenantParams },
+        }, async (request, reply) => {
+            await assertMemberOf(request.params.tenantId, request.user.id);
+            return sendUi(reply, 'settings.html');
+        });
+        app.get('/ui/:asset', {
+            schema: { params: { type: 'object', required: ['asset'], properties: { asset: { type: 'string', pattern: '^[a-z-]+\\.(js|css|svg)$' } } } },
+        }, async (request, reply) => {
+            const asset = ui.get(request.params.asset);
+            if (!asset) return reply.code(404).send({ error: 'Not found' });
+            return reply.headers({ ...DASHBOARD_HEADERS, 'content-type': asset.type }).send(asset.body);
+        });
+        // Which optional parts this server has, so the settings page doesn't offer what isn't there.
+        app.get('/api/features', async () => ({ githubApp: Boolean(githubApp), jira: Boolean(atlassian) }));
 
         // Relative asset URLs in index.html only resolve under the trailing slash.
         app.get('/t/:tenantId', { schema: { params: tenantParams } }, async (request, reply) => reply.redirect(`/t/${request.params.tenantId}/`));

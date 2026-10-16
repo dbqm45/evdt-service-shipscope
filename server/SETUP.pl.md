@@ -83,15 +83,19 @@ serwisów (`render.yaml` ustawia `DATABASE_URL` sam; sekrety mają `sync: false`
 
 ## 3. Pierwsze uruchomienie (po stronie użytkownika)
 
-1. Zaloguj się przez GitHuba i utwórz tenanta (organizację w ShipScope).
-2. Jako admin tenanta zainstaluj GitHub App na repozytoriach z deploymentami
-   (`/tenants/<id>/github/install`) i wybierz śledzone repozytoria.
+Wszystko poniżej da się zrobić na stronie ustawień `/t/<id>/settings` (link „Settings” w nagłówku dashboardu);
+w nawiasach są odpowiadające jej wywołania API, gdyby ktoś wolał skrypt.
+
+1. Zaloguj się przez GitHuba — bez tenanta trafisz na `/start`, gdzie go tworzysz (`POST /tenants`).
+2. Jako admin tenanta zainstaluj GitHub App na repozytoriach z deploymentami (sekcja GitHub → „Install the GitHub
+   App”, `/tenants/<id>/github/install`) i wybierz śledzone repozytoria („Repositories” → „Track”).
 3. Opcjonalnie, per repozytorium: plik wersji i ścieżki ignorowane przy rozjeździe
    (`PUT /tenants/<id>/github/repos/<repoId>/settings`), np.
    `{ "versionFile": "trigger.properties", "driftIgnorePaths": [".github/", "README.md"] }`.
-4. Opcjonalnie: czas przechowywania historii deploymentów (`PUT /tenants/<id>/settings`,
+4. Opcjonalnie: czas przechowywania historii deploymentów (sekcja Workspace, `PUT /tenants/<id>/settings`,
    `deploymentRetentionDays` 7–730, domyślnie 90).
-5. Zaproś resztę zespołu linkiem (`POST /tenants/<id>/invitations`).
+5. Zaproś resztę zespołu linkiem (sekcja Workspace → „Create invitation link”, `POST /tenants/<id>/invitations`).
+   Link jest pokazywany tylko raz.
 
 Pierwsze dane pojawią się po najbliższej synchronizacji workera (do 15 minut).
 

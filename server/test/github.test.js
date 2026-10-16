@@ -69,7 +69,7 @@ test('an admin connects the GitHub App and chooses tracked repos', async (t) => 
 
     const callback = await connect(app, alice, 'alice', tenantId, ACME);
     assert.strictEqual(callback.statusCode, 302, callback.body);
-    assert.strictEqual(callback.headers.location, `/tenants/${tenantId}/github`);
+    assert.strictEqual(callback.headers.location, `/t/${tenantId}/settings#github`);
 
     const connections = await app.inject({ method: 'GET', url: `/tenants/${tenantId}/github`, cookies: { sid: alice } });
     assert.deepStrictEqual(connections.json(), {

@@ -111,7 +111,7 @@ GitHub App routes (only when the `GITHUB_APP_*` variables are set):
 |---|---|---|
 | `GET /tenants/:tenantId/github` | session + member | `{ installations: [{ installationId, accountLogin, accountType }], repos: [{ repoId, fullName, installationId }] }`. |
 | `GET /tenants/:tenantId/github/install` | session + admin | Redirects to GitHub to install the App (state cookie). |
-| `GET /github/setup` | session | The App's Setup URL. Checks the state, then signs the user in again so the callback can verify the installation (below) and link it; ends on `/tenants/:tenantId/github`. `setup_action=request` (an org owner must approve) returns 202. |
+| `GET /github/setup` | session | The App's Setup URL. Checks the state, then signs the user in again so the callback can verify the installation (below) and link it; ends on the settings page (`/t/:tenantId/settings#github`). `setup_action=request` (an org owner must approve) returns 202. |
 | `GET /tenants/:tenantId/github/installations/:installationId/repositories` | session + admin | The installation's repos from GitHub, each with `tracked`. |
 | `PUT /tenants/:tenantId/github/repos/:repoId` | session + admin | Body `{ "installationId": 123 }`. Tracks the repo if GitHub lists it for that installation. Idempotent. |
 | `DELETE /tenants/:tenantId/github/repos/:repoId` | session + admin | Stops tracking. 204, or 404. |
@@ -122,7 +122,11 @@ Dashboard:
 
 | Route | Auth | What it does |
 |---|---|---|
-| `GET /` | — | Signed out: to sign-in. Signed in: to the first tenant's dashboard, or `/me` without a tenant. |
+| `GET /` | — | Signed out: to sign-in. Signed in: to the first tenant's dashboard, or `/start` without a tenant. |
+| `GET /start` | session (else sign-in and back) | Get started: create a first workspace (the page posts to `POST /tenants`, then opens its settings). |
+| `GET /t/:tenantId/settings` | session + member (else sign-in and back) | The settings page (`ui/settings.html` + `ui/settings.js`): workspace (retention, members, invitations), GitHub (installations, tracked repos and their version file / drift-ignore paths), Jira (connect, site, boards and each board's rhythm, sync now) and feature-flag sources (tokens shown once). It only calls the JSON routes below, which check roles; members see it read-only. Linked from the dashboard header (`#settingsLink`, shown only when served by this server). |
+| `GET /ui/:asset` | — | The settings pages' scripts and styles (`ui/*.js`, `ui/settings.css`) and the dashboard files they reuse (`style.css`, `favicon.svg`, `app-html.js`); an allowlist, like `/t/:tenantId/:asset`. |
+| `GET /api/features` | — | `{ githubApp, jira }`: which optional parts this server has configured, so the settings page doesn't offer the others. |
 | `GET /t/:tenantId/` | session + member (else sign-in and back) | The dashboard page (`docs/index.html`, minus its `data/*.json` preload hints). |
 | `GET /t/:tenantId/:asset` | — | `style.css`, `favicon.svg`, `app-*.js` only (the same public code GitHub Pages serves). |
 | `GET /api/tenants/:tenantId/jira-issues?pi=PI-27.3` | session + member | One PI's issues (what a `data/jira-issues/<PI>.json` shard holds); `pi=@now` gives every board's current increment together. |
@@ -141,7 +145,7 @@ Jira (only when the `ATLASSIAN_*` variables and `TOKEN_ENCRYPTION_KEY` are set):
 | Route | Auth | What it does |
 |---|---|---|
 | `GET /tenants/:tenantId/jira/connect` | session + admin | Redirects to Atlassian's consent screen (state cookie naming the tenant). |
-| `GET /auth/atlassian/callback` | session + admin | The app's callback URL. Checks the state, exchanges the code, keeps the Jira sites the grant can read; ends on `/tenants/:tenantId/jira`. 400 for a bad state, declined consent or no Jira site; 502 when Atlassian rejects the code or grants no offline access. |
+| `GET /auth/atlassian/callback` | session + admin | The app's callback URL. Checks the state, exchanges the code, keeps the Jira sites the grant can read; ends on the settings page (`/t/:tenantId/settings#jira`). 400 for a bad state, declined consent or no Jira site; 502 when Atlassian rejects the code or grants no offline access. |
 | `GET /tenants/:tenantId/jira` | session + member | `{ connected: false }` or `{ connected: true, site: { cloudId, url, name } \| null, sites?, connectedAt, lastError }` (`sites` only while none is chosen). Never a token. |
 | `PUT /tenants/:tenantId/jira/site` | session + admin | Body `{ "cloudId": "..." }`, one of the sites the grant covers. Choosing another site drops the chosen boards and synced issues (board ids belong to one site). |
 | `GET /tenants/:tenantId/jira/boards` | session + admin | Every board of the site `{ boards: [{ boardId, name, type, projectKey, projectName, selected }] }`; `type` is `scrum`, `simple` (a team-managed project's board) or `kanban`. |
