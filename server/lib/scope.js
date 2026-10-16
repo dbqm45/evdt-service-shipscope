@@ -10,13 +10,14 @@
  * Sets the RLS scope for the rest of the current transaction. Must be called after BEGIN.
  *
  * @param {import('pg').PoolClient} client
- * @param {{ tenantId?: string, userId?: string, inviteTokenHash?: string }} scope
+ * @param {{ tenantId?: string, userId?: string, inviteTokenHash?: string, ingestTokenHash?: string }} scope
  * @returns {Promise<void>}
  */
-async function setScope(client, { tenantId, userId, inviteTokenHash }) {
+async function setScope(client, { tenantId, userId, inviteTokenHash, ingestTokenHash }) {
     if (tenantId !== undefined) await client.query("SELECT set_config('app.current_tenant_id', $1, true)", [tenantId]);
     if (userId !== undefined) await client.query("SELECT set_config('app.current_user_id', $1, true)", [userId]);
     if (inviteTokenHash !== undefined) await client.query("SELECT set_config('app.invite_token_hash', $1, true)", [inviteTokenHash]);
+    if (ingestTokenHash !== undefined) await client.query("SELECT set_config('app.ingest_token_hash', $1, true)", [ingestTokenHash]);
 }
 
 /**
@@ -25,7 +26,7 @@ async function setScope(client, { tenantId, userId, inviteTokenHash }) {
  *
  * @template T
  * @param {import('pg').Pool} pool
- * @param {{ tenantId?: string, userId?: string, inviteTokenHash?: string }} scope
+ * @param {{ tenantId?: string, userId?: string, inviteTokenHash?: string, ingestTokenHash?: string }} scope
  * @param {(client: import('pg').PoolClient) => Promise<T>} fn
  * @returns {Promise<T>}
  */

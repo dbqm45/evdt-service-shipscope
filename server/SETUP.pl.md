@@ -92,3 +92,71 @@ serwisów (`render.yaml` ustawia `DATABASE_URL` sam; sekrety mają `sync: false`
 5. Zaproś resztę zespołu linkiem (`POST /tenants/<id>/invitations`).
 
 Pierwsze dane pojawią się po najbliższej synchronizacji workera (do 15 minut).
+
+## 4. Feature flagi (opcjonalnie)
+
+ShipScope nie odczytuje flag sam: każdy trzyma je po swojemu (pliki build-time, API w runtime, usługa
+zewnętrzna typu LaunchDarkly/Unleash), więc to Twój system **wysyła** ich stan. Bez flag po prostu nic nie
+wysyłasz — dashboard działa, panel flag jest pusty.
+
+### Źródła flag
+
+Źródło to nazwany nadawca, np. „LaunchDarkly”, „CI frontendu”, „Backend API”. Admin tworzy je raz:
+
+```
+POST /tenants/<id>/flag-sources
+{ "name": "LaunchDarkly", "kind": "runtime" }
+```
+
+- `kind`: `build` (wartość wbudowana przy budowaniu aplikacji) albo `runtime` (przełączana na żywo — backend,
+  usługa flag).
+- `priority` (opcjonalnie, 0–1000; domyślnie 0 dla `build`, 100 dla `runtime`): gdy kilka źródeł tego samego
+  rodzaju podaje tę samą flagę, wygrywa wyższy priorytet, a przy równym — nowsza zmiana. Dashboard pokazuje
+  wartość `runtime`, jeśli jest, inaczej `build`.
+- `repoId` (opcjonalnie): śledzone repozytorium, do którego należą flagi tego źródła (komponent w dashboardzie).
+  Usługa flag wspólna dla wielu serwisów może go nie mieć.
+
+W odpowiedzi jest token (`shpi_...`) — pokazany **tylko raz**, zapisz go od razu jako sekret (np. GitHub Actions
+secret `SHIPSCOPE_FLAGS_TOKEN`). Kolejny token do tego samego źródła (rotacja bez przerwy w działaniu):
+`POST /tenants/<id>/flag-sources/<sourceId>/tokens`; unieważnienie: `DELETE /tenants/<id>/ingest-tokens/<tokenId>`.
+Lista źródeł z datą ostatniego użycia tokenów: `GET /tenants/<id>/flag-sources`; zmiana nazwy, rodzaju, priorytetu
+lub komponentu: `PUT /tenants/<id>/flag-sources/<sourceId>`.
+
+### Wysyłanie stanu
+
+Źródło wysyła **pełny stan** swoich flag dla środowisk, które zna — po każdej zmianie albo cyklicznie (wysłanie
+tego samego stanu niczego nie zmienia):
+
+```bash
+curl -sf -X POST "$SHIPSCOPE_URL/api/flags/ingest" \
+  -H "Authorization: Bearer $SHIPSCOPE_FLAGS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "schemaVersion": 2,
+    "changedBy": "ci",
+    "observations": [
+      { "key": "newCheckout", "env": "test", "state": "on" },
+      { "key": "newCheckout", "env": "prod", "state": "partial", "rollout": 25 },
+      { "key": "darkMode",    "env": "prod", "state": "off", "changedAt": "2026-10-16T09:30:00Z" }
+    ],
+    "flags": [
+      { "key": "newCheckout", "description": "Nowy proces zakupu", "jiraKeys": ["ABC-123"] }
+    ]
+  }'
+```
+
+- `state`: `on`, `off` albo `partial` (włączona dla części użytkowników; `rollout` to procent, opcjonalnie).
+- `env`: `test`, `qa` albo `prod`.
+- **Pełny stan:** flaga, której źródło już nie podaje w środowisku obecnym w wiadomości, zostaje oznaczona jako
+  usunięta (np. kod z flagą został wycięty) i znika z dashboardu; wróci, gdy znów się pojawi. Inne środowiska
+  wiadomość zostawia w spokoju. Środowiska można podać jawnie: `"environments": ["prod"]` z pustą listą
+  `observations` oznacza „w prod nie ma już żadnych flag z tego źródła”.
+- Tylko zmiany zamiast pełnego stanu: `"complete": false` — wtedy nic nie jest usuwane.
+- `changedAt` (opcjonalnie): kiedy flaga naprawdę się zmieniła, jeśli wysyłasz z opóźnieniem; inaczej liczy się
+  moment odbioru. Musi być w przedziale od 7 dni wstecz do 5 minut naprzód. Spóźniona wiadomość ze starszą datą
+  nie nadpisze nowszej wartości (w odpowiedzi liczona jako `stale`).
+- `flags` (opcjonalnie): opis i powiązane zadania z Jiry, tylko dla flag z tej samej wiadomości — to po nich
+  dashboard liczy, czy funkcja jest już dostępna dla użytkowników („released”), czy tylko wdrożona.
+
+Odpowiedź: `{ source, flags, changed, removed, stale, created }`. Usunięcie źródła usuwa jego tokeny, wartości
+i historię; przestanie śledzenia repozytorium zostawia źródło, tylko bez komponentu.
