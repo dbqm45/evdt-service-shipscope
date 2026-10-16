@@ -31,6 +31,7 @@ const {
     IngestTokenError, IngestPayloadError, FlagSourceNotFoundError, FlagSourceConflictError,
 } = require('./lib/flags');
 const { loadDashboardAssets, loadUiAssets, ASSET_PATTERN } = require('./lib/dashboard-assets');
+const { WebhookAuthError, verifyGitHubSignature, verifyAtlassianJwt, githubSyncKeys, jiraSyncKeys, requestSync } = require('./lib/webhooks');
 
 const SESSION_COOKIE = 'sid';
 const STATE_COOKIE = 'oauth_state';
@@ -58,6 +59,7 @@ const UUID_SOURCE = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12
 const RETURN_TO_PATTERN = new RegExp(`^(/invitations/${TOKEN_PATTERN.source.slice(1, -1)}|/t/${UUID_SOURCE}/(settings)?|/start)$`);
 const DEFAULT_DASHBOARD_DIR = path.join(__dirname, '..', 'docs');
 const UI_DIR = path.join(__dirname, 'ui');
+const WEBHOOK_BODY_LIMIT = 5 * 1024 * 1024; // GitHub's own cap is 25 MB, but deployment and issue events are a few KB
 
 const UUID_PARAM = { type: 'string', format: 'uuid' };
 const TOKEN_PARAM = { type: 'string', pattern: TOKEN_PATTERN.source };
@@ -410,6 +412,7 @@ function buildApp({ pool, auth, githubApp = null, atlassian = null, fetch: fetch
 
     registerFlagRoutes();
     registerDashboardRoutes();
+    registerWebhookRoutes();
     if (githubApp) registerGitHubRoutes();
     if (atlassian) registerJiraRoutes();
 
@@ -711,7 +714,10 @@ function buildApp({ pool, auth, githubApp = null, atlassian = null, fetch: fetch
             return reply.headers({ ...DASHBOARD_HEADERS, 'content-type': asset.type }).send(asset.body);
         });
         // Which optional parts this server has, so the settings page doesn't offer what isn't there.
-        app.get('/api/features', async () => ({ githubApp: Boolean(githubApp), jira: Boolean(atlassian) }));
+        app.get('/api/features', async () => ({
+            githubApp: Boolean(githubApp), jira: Boolean(atlassian),
+            githubWebhooks: Boolean(githubApp?.webhookSecret), jiraWebhooks: Boolean(atlassian?.webhookUrl),
+        }));
 
         // Relative asset URLs in index.html only resolve under the trailing slash.
         app.get('/t/:tenantId', { schema: { params: tenantParams } }, async (request, reply) => reply.redirect(`/t/${request.params.tenantId}/`));
@@ -907,6 +913,56 @@ function buildApp({ pool, auth, githubApp = null, atlassian = null, fetch: fetch
             });
             if (!removed) return reply.code(404).send({ error: 'That repository is not tracked' });
             return reply.code(204).send();
+        });
+    }
+
+    // Webhooks (migration 013): verified against the raw body, then only the key of what to sync is queued for the
+    // worker. Answers fast and never says more than accepted / refused.
+    function registerWebhookRoutes() {
+        if (!(githubApp && githubApp.webhookSecret) && !atlassian) return;
+        app.register(async (scope) => {
+            // The signature covers the exact bytes sent, so the body stays a Buffer until it is verified.
+            scope.addContentTypeParser('application/json', { parseAs: 'buffer', bodyLimit: WEBHOOK_BODY_LIMIT }, (req, body, done) => done(null, body));
+            const parse = (buffer) => {
+                try {
+                    return JSON.parse(buffer.toString('utf8'));
+                } catch {
+                    return undefined;
+                }
+            };
+            const refused = (reply, err) => {
+                if (!(err instanceof WebhookAuthError)) throw err;
+                return reply.code(401).send({ error: 'Webhook signature is not valid' });
+            };
+
+            if (githubApp && githubApp.webhookSecret) {
+                scope.post('/webhooks/github', async (request, reply) => {
+                    try {
+                        verifyGitHubSignature({ secret: githubApp.webhookSecret, rawBody: request.body, signature: request.headers['x-hub-signature-256'] });
+                    } catch (err) {
+                        return refused(reply, err);
+                    }
+                    const payload = parse(request.body);
+                    if (payload === undefined) return reply.code(400).send({ error: 'Body is not JSON' });
+                    const keys = githubSyncKeys(request.headers['x-github-event'], payload);
+                    await requestSync(pool, { source: 'github', keys });
+                    return reply.code(202).send({ queued: keys.length });
+                });
+            }
+            if (atlassian) {
+                scope.post('/webhooks/jira', async (request, reply) => {
+                    try {
+                        verifyAtlassianJwt({ secret: atlassian.clientSecret, authorization: request.headers.authorization });
+                    } catch (err) {
+                        return refused(reply, err);
+                    }
+                    const payload = parse(request.body);
+                    if (payload === undefined) return reply.code(400).send({ error: 'Body is not JSON' });
+                    const keys = jiraSyncKeys(payload);
+                    await requestSync(pool, { source: 'jira', keys });
+                    return reply.code(202).send({ queued: keys.length });
+                });
+            }
         });
     }
 

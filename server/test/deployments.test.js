@@ -45,7 +45,7 @@ async function setup(t, repos) {
         await c.query("INSERT INTO github_installations (tenant_id, installation_id, account_login, account_type) VALUES ($1, $2, 'acme', 'Organization')", [tenantId, ACME]);
         await c.query("INSERT INTO tracked_repos (tenant_id, repo_id, installation_id, full_name) VALUES ($1, 1, $2, 'acme/web'), ($1, 2, $2, 'acme/api')", [tenantId, ACME]);
     });
-    const sync = () => syncAll({ pool, app: githubApp, fetch, now: NOW });
+    const sync = (extra = {}) => syncAll({ pool, app: githubApp, fetch, now: NOW, ...extra });
     const rows = (sql, params = []) => withScope(pool, { tenantId }, async (c) => (await c.query(sql, params)).rows);
     return { pool, app, alice, tenantId, sync, rows, calls };
 }
@@ -160,6 +160,16 @@ test('sync: one failing repo records its error and the others still sync', async
     assert.ok(repos[0].last_synced_at);
     assert.match(repos[1].last_sync_error, /HTTP 500/);
     assert.strictEqual(repos[1].last_synced_at, null);
+});
+
+test('sync: a webhook\'s targeted sync touches only the repos it names', async (t) => {
+    const web = { ...emptyRepo(), fail: 500 };
+    const api = { ...emptyRepo(), deployments: [{ id: 301, environment: 'prod', sha: sha(31), created_at: at(5) }], statuses: { 301: [status('success', 4)] } };
+    const { sync, calls } = await setup(t, { 'acme/web': web, 'acme/api': api });
+    assert.deepStrictEqual(await sync({ repoIds: [2] }), { repos: 1, inserted: 1, failed: 0 });
+    assert.ok(!calls.some((u) => u.includes('acme/web')), 'the other repo is not even asked');
+    assert.deepStrictEqual(await sync({ repoIds: [999] }), { repos: 0, inserted: 0, failed: 0 });
+    assert.deepStrictEqual(await sync({ repoIds: [] }), { repos: 0, inserted: 0, failed: 0 });
 });
 
 test('sync: the per-run cap processes the oldest first and the cursor follows it', async (t) => {

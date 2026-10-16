@@ -241,10 +241,12 @@ async function syncRepo({ pool, token, tenantId, repo, fetch: fetchFn = fetch, n
  * One sync pass over every tenant's tracked repos. Each tenant is read under its own RLS scope (the worker
  * has no cross-tenant view). One failing repo records its error on its row and the pass moves on.
  *
- * @param {{ pool: import('pg').Pool, app: { appId: string, privateKey: import('crypto').KeyObject }, fetch?: typeof fetch, now?: number, log?: (msg: string) => void, options?: object }} input
+ * `repoIds` limits the pass to those repos (in every tenant that tracks them): a webhook's targeted sync.
+ *
+ * @param {{ pool: import('pg').Pool, app: { appId: string, privateKey: import('crypto').KeyObject }, fetch?: typeof fetch, now?: number, log?: (msg: string) => void, options?: object, repoIds?: number[] }} input
  * @returns {Promise<{ repos: number, inserted: number, failed: number }>}
  */
-async function syncAll({ pool, app, fetch: fetchFn = fetch, now = Date.now(), log = () => {}, options = {} }) {
+async function syncAll({ pool, app, fetch: fetchFn = fetch, now = Date.now(), log = () => {}, options = {}, repoIds = null }) {
     const tokens = new Map(); // installationId -> Promise<token>, for this pass only
     const tokenFor = (installationId) => {
         if (!tokens.has(installationId)) tokens.set(installationId, createInstallationToken({ app, installationId, fetch: fetchFn }));
@@ -257,8 +259,8 @@ async function syncAll({ pool, app, fetch: fetchFn = fetch, now = Date.now(), lo
         const caches = createCaches(); // per tenant: one tenant's lookups never answer another's
         const repos = await withScope(pool, { tenantId }, async (client) => (await client.query(
             `SELECT repo_id, full_name, installation_id, deployments_cursor, version_file, drift_ignore_paths, drift
-             FROM tracked_repos WHERE tenant_id = $1 ORDER BY full_name`,
-            [tenantId]
+             FROM tracked_repos WHERE tenant_id = $1 AND ($2::bigint[] IS NULL OR repo_id = ANY($2)) ORDER BY full_name`,
+            [tenantId, repoIds]
         )).rows);
         for (const row of repos) {
             totals.repos += 1;

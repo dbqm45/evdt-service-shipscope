@@ -30,16 +30,22 @@ test('loadAtlassianConfig: off when unset, all three or nothing, a 32-byte base6
     for (const bad of ['short', crypto.randomBytes(16).toString('base64'), crypto.randomBytes(32).toString('hex')]) {
         assert.throws(() => loadAtlassianConfig({ ...good, TOKEN_ENCRYPTION_KEY: bad }), /32 bytes, base64/);
     }
+    // Jira webhooks need a public https address; local http (or none) just leaves them off.
+    assert.strictEqual(loadAtlassianConfig(good).webhookUrl, null);
+    assert.strictEqual(loadAtlassianConfig({ ...good, PUBLIC_BASE_URL: 'http://localhost:3000' }).webhookUrl, null);
+    assert.strictEqual(loadAtlassianConfig({ ...good, PUBLIC_BASE_URL: 'https://shipscope.example.com/' }).webhookUrl, 'https://shipscope.example.com/webhooks/jira');
+    assert.strictEqual(loadAtlassianConfig({ ...good, PUBLIC_BASE_URL: 'https://shipscope.example.com/app' }).webhookUrl, null);
 });
 
-test('atlassian client: authorize URL asks for read scopes plus offline access; responses are checked', async () => {
+test('atlassian client: authorize URL asks for read scopes, its own webhooks and offline access; responses are checked', async () => {
     const url = new URL(buildAuthorizeUrl({ clientId: 'cid', redirectUri: 'http://localhost:3000/auth/atlassian/callback', state: 's1' }));
     assert.strictEqual(url.origin + url.pathname, 'https://auth.atlassian.com/authorize');
     assert.deepStrictEqual(Object.fromEntries(url.searchParams), {
         audience: 'api.atlassian.com', client_id: 'cid', scope: SCOPES.join(' '), redirect_uri: 'http://localhost:3000/auth/atlassian/callback',
         state: 's1', response_type: 'code', prompt: 'consent',
     });
-    assert.ok(SCOPES.includes('offline_access') && SCOPES.every((s) => s.startsWith('read:') || s === 'offline_access'), 'read-only');
+    // Read-only on Jira's data; the one write is ShipScope's own webhook registration (lib/jira-sync.js ensureWebhook()).
+    assert.ok(SCOPES.includes('offline_access') && SCOPES.every((s) => s.startsWith('read:') || s === 'offline_access' || s === 'manage:jira-webhook'), 'read-only');
     assert.ok(SCOPES.includes('read:project:jira'), 'the Agile board list needs it');
 
     const reject = (status, body) => async () => json(body, status);

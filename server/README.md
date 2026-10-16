@@ -126,7 +126,14 @@ Dashboard:
 | `GET /start` | session (else sign-in and back) | Get started: create a first workspace (the page posts to `POST /tenants`, then opens its settings). |
 | `GET /t/:tenantId/settings` | session + member (else sign-in and back) | The settings page (`ui/settings.html` + `ui/settings.js`): workspace (retention, members, invitations), GitHub (installations, tracked repos and their version file / drift-ignore paths), Jira (connect, site, boards and each board's rhythm, sync now) and feature-flag sources (tokens shown once). It only calls the JSON routes below, which check roles; members see it read-only. Linked from the dashboard header (`#settingsLink`, shown only when served by this server). |
 | `GET /ui/:asset` | — | The settings pages' scripts and styles (`ui/*.js`, `ui/settings.css`) and the dashboard files they reuse (`style.css`, `favicon.svg`, `app-html.js`); an allowlist, like `/t/:tenantId/:asset`. |
-| `GET /api/features` | — | `{ githubApp, jira }`: which optional parts this server has configured, so the settings page doesn't offer the others. |
+| `GET /api/features` | — | `{ githubApp, jira, githubWebhooks, jiraWebhooks }`: which optional parts this server has configured, so the settings page doesn't offer the others. |
+
+Webhooks (migration `013`; the worker picks up what they ask for every 30 seconds):
+
+| Route | Auth | What it does |
+|---|---|---|
+| `POST /webhooks/github` | `X-Hub-Signature-256` with `GITHUB_APP_WEBHOOK_SECRET` (route off without it) | A `deployment_status` (or `deployment`) event queues a sync of its repo, in every tenant that tracks it. Other events are accepted and ignored. 202 `{ queued }`; 401 for a missing or wrong signature, 400 for a body that isn't JSON, 415 for one that isn't `application/json`. |
+| `POST /webhooks/jira` | `Authorization: Bearer <JWT>`, HS256 with `ATLASSIAN_CLIENT_SECRET` | An issue event from a webhook ShipScope registered queues a sync of the tenant(s) it names (`matchedWebhookIds`, else the issue's site). 202 `{ queued }`; 401 for a missing, forged, expired or non-HS256 token. |
 | `GET /t/:tenantId/` | session + member (else sign-in and back) | The dashboard page (`docs/index.html`, minus its `data/*.json` preload hints). |
 | `GET /t/:tenantId/:asset` | — | `style.css`, `favicon.svg`, `app-*.js` only (the same public code GitHub Pages serves). |
 | `GET /api/tenants/:tenantId/jira-issues?pi=PI-27.3` | session + member | One PI's issues (what a `data/jira-issues/<PI>.json` shard holds); `pi=@now` gives every board's current increment together. |
@@ -206,6 +213,15 @@ not stripped or coerced).
   decides (GitHub's `inactive` marker is ignored); a redeploy of the same commit inherits the previous
   record's issues instead of comparing a commit with itself; at most 200 new deployments per repo per pass,
   oldest first.
+- **Webhooks**: verified before anything else -- GitHub's HMAC-SHA256 over the exact raw body (the JSON parser is
+  bypassed on these routes), Atlassian's JWT pinned to HS256 with `exp`/`iat` checked (5 minutes of skew) -- and
+  both compared in constant time. A delivery only ever queues a key (`sync_requests`: a repo id, a Jira webhook id
+  or site), never data: the worker then reads the real state through the API, so a replayed or reordered delivery
+  can at most cause one extra sync. `sync_requests` holds no tenant data and is the one table outside RLS: the web
+  service can't know which tenants a repo belongs to; the worker matches them while walking tenants under their
+  own scope, under the same advisory locks as the periodic syncs. Jira webhooks are registered by the worker per
+  tenant with the `manage:jira-webhook` scope (filtered to the selected boards' projects, refreshed before
+  Atlassian's 30-day expiry); a failure is shown in settings and never fails the sync.
 - **Retention**: records older than the tenant's `deployment_retention_days` are deleted daily, except each
   repo/environment's latest deployment and latest successful one. `issue_deployments` ("issue X first reached
   ENV") is never trimmed. Untracking a repo deletes its deployments.
@@ -303,7 +319,8 @@ Service and the Background Worker). The Web Service refuses to start without `GI
 `GITHUB_APP_PRIVATE_KEY`); set them in Render's environment settings (they're declared
 with `sync: false`, so Render asks for them and never reads them from the repo). The dashboard files are read from `../docs` (override with `DASHBOARD_DIR`); with `rootDir: server`, check
 after the first deploy that `/t/<tenantId>/` doesn't answer 503 (the log says "dashboard files not found" if
-Render's build doesn't include the repo's `docs/`). Migrations are not run
+Render's build doesn't include the repo's `docs/`). For instant updates set `GITHUB_APP_WEBHOOK_SECRET` (web) and `PUBLIC_BASE_URL` on the worker too (it registers the
+Jira webhooks). Migrations are not run
 automatically on deploy yet: run `npm run migrate` against the Render database after a deploy that adds one.
 See `@context/foundation/infrastructure.md`'s "Getting Started" and "Operational Story" sections for the full
 deploy/rollback/secrets workflow.

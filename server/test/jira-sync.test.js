@@ -128,7 +128,7 @@ const { buildApp } = require('../web');
 const { AUTH, fakeGitHub, signIn } = require('./helpers/auth');
 const { fakeAtlassian } = require('./helpers/atlassian');
 const { withScope } = require('../lib/scope');
-const { syncAllJira } = require('../lib/jira-sync');
+const { syncAllJira, syncTenant, WEBHOOK_RECONNECT } = require('../lib/jira-sync');
 
 const USERS = { alice: { id: 890_000_001, login: 'alice' }, bob: { id: 890_000_002, login: 'bob' } };
 const ATLASSIAN = { clientId: 'atl-client', clientSecret: 'atl-secret', encryptionKey: crypto.randomBytes(32) };
@@ -170,14 +170,15 @@ function siteData() {
     };
 }
 
-async function setup(t, { sites = [SITE_A], pageSize = 50 } = {}) {
+async function setup(t, { sites = [SITE_A], pageSize = 50, scope, webhookUrl = null, fail = {} } = {}) {
     const { pool, teardown } = await createTestDb();
     t.after(teardown);
     const jira = { 'cloud-a': siteData(), 'cloud-b': { boards: [{ id: 77, name: 'Labs', type: 'scrum' }], sprints: {}, fields: [], issues: [] } };
-    const atlassian = fakeAtlassian({ codes: { c1: sites }, jira, pageSize });
+    const atlassian = fakeAtlassian({ codes: { c1: sites }, jira, pageSize, fail, ...(scope ? { scope } : {}) });
     const github = fakeGitHub(USERS);
     const fetch = (url, init) => (/^https:\/\/(auth|api)\.atlassian\.com\//.test(url) ? atlassian.handler(url, init) : github(url, init));
-    const app = buildApp({ pool, auth: AUTH, atlassian: ATLASSIAN, fetch });
+    const config = { ...ATLASSIAN, webhookUrl };
+    const app = buildApp({ pool, auth: AUTH, atlassian: config, fetch });
     t.after(() => app.close());
     const alice = await signIn(app, 'alice');
     const tenantId = (await app.inject({ method: 'POST', url: '/tenants', cookies: { sid: alice }, payload: { name: 'Acme' } })).json().tenant.id;
@@ -189,7 +190,7 @@ async function setup(t, { sites = [SITE_A], pageSize = 50 } = {}) {
     const call = (method, url, payload, sid = alice) => app.inject({ method, url: `/tenants/${tenantId}${url}`, cookies: { sid }, payload });
     const api = async (url) => (await app.inject({ method: 'GET', url: `/api/tenants/${tenantId}${url}`, cookies: { sid: alice } })).json();
     const rows = (sql) => withScope(pool, { tenantId }, async (c) => (await c.query(sql)).rows);
-    return { pool, app, alice, tenantId, call, api, rows, jira, atlassian, fetch };
+    return { pool, app, alice, tenantId, call, api, rows, jira, atlassian, fetch, config };
 }
 
 test('FR-008: admins see every board of the site with its type and choose which to sync (kanban too); unknown ids are refused', async (t) => {
@@ -412,4 +413,63 @@ test('flow: a kanban board syncs by calendar month -- resolved in it, plus what 
     assert.deepStrictEqual(jiraIndex.pis[0].includes, [thisMonth.name, 'PI-27.3']);
     assert.deepStrictEqual((await api(`/jira-issues?pi=${thisMonth.name}`)).map((i) => [i.key, i.sprint]), [['SUP-1', thisMonth.name], ['SUP-2', thisMonth.name]]);
     assert.deepStrictEqual((await api(`/jira-issues?pi=${lastMonth.name}`)).map((i) => i.key), ['SUP-3']);
+});
+
+test('webhooks: the sync registers one for the selected boards\' projects, re-registers when they change, refreshes before 30 days', async (t) => {
+    const url = 'https://shipscope.example/webhooks/jira';
+    const { pool, call, tenantId, atlassian, fetch, config } = await setup(t, { scope: 'read:jira-work manage:jira-webhook offline_access', webhookUrl: url });
+    const events = ['jira:issue_created', 'jira:issue_updated', 'jira:issue_deleted'];
+    await call('PUT', '/jira/boards', { boardIds: [10] });
+    await call('POST', '/jira/sync');
+    assert.deepStrictEqual(atlassian.webhookCalls.map((c) => [c.cloudId, c.method, c.body]), [['cloud-a', 'POST', { url, webhooks: [{ events, jqlFilter: 'project in ("ABC")' }] }]]);
+    const { webhook } = (await call('GET', '/jira')).json();
+    assert.deepStrictEqual([webhook.active, webhook.error], [true, null]);
+    assert.ok(Date.parse(webhook.expiresAt) - Date.now() > 29 * 24 * 3600_000);
+
+    await call('POST', '/jira/sync');
+    assert.strictEqual(atlassian.webhookCalls.length, 1, 'nothing to do while it is fresh and the projects are the same');
+
+    await call('PUT', '/jira/boards', { boardIds: [10, 11, 12] });
+    await call('POST', '/jira/sync');
+    assert.deepStrictEqual(atlassian.webhookCalls.slice(1).map((c) => [c.method, c.body]), [
+        ['DELETE', { webhookIds: [1000] }],
+        ['POST', { url, webhooks: [{ events, jqlFilter: 'project in ("ABC", "SUP")' }] }],
+    ], 'one webhook per tenant, over every selected board\'s project (ABC once)');
+
+    await syncTenant(pool, { tenantId, atlassian: config, fetch, now: new Date(Date.now() + 25 * 24 * 3600_000) });
+    assert.deepStrictEqual(atlassian.webhookCalls.slice(3).map((c) => [c.method, c.path, c.body]), [['PUT', '/rest/api/3/webhook/refresh', { webhookIds: [1001] }]]);
+    assert.strictEqual((await call('GET', '/jira')).json().webhook.expiresAt, '2026-12-01T00:00:00.000Z');
+
+    // A delivery names the tenant by its webhook, its cloud or its site; nothing else syncs it.
+    for (const [keys, tenants] of [[['webhook:1001'], 1], [['cloud:cloud-a'], 1], [['site:https://acme.atlassian.net'], 1], [['webhook:1000'], 0], [['site:https://other.atlassian.net'], 0]]) {
+        assert.strictEqual((await syncAllJira({ pool, atlassian: config, fetch, keys })).tenants, tenants, JSON.stringify(keys));
+    }
+});
+
+test('webhooks: off without the scope (an older connection) or a public URL; a refused registration never fails the sync', async (t) => {
+    const scoped = 'read:jira-work manage:jira-webhook offline_access';
+    {
+        const { call, atlassian } = await setup(t, { webhookUrl: 'https://shipscope.example/webhooks/jira' });
+        await call('PUT', '/jira/boards', { boardIds: [10] });
+        assert.strictEqual((await call('POST', '/jira/sync')).statusCode, 200);
+        assert.deepStrictEqual((await call('GET', '/jira')).json().webhook, { active: false, expiresAt: null, error: WEBHOOK_RECONNECT });
+        assert.deepStrictEqual(atlassian.webhookCalls, []);
+    }
+    {
+        const { call, atlassian } = await setup(t, { scope: scoped });
+        await call('PUT', '/jira/boards', { boardIds: [10] });
+        await call('POST', '/jira/sync');
+        assert.deepStrictEqual((await call('GET', '/jira')).json().webhook, { active: false, expiresAt: null, error: null }, 'no https URL to be called on');
+        assert.deepStrictEqual(atlassian.webhookCalls, []);
+    }
+    {
+        const { call } = await setup(t, { scope: scoped, webhookUrl: 'https://shipscope.example/webhooks/jira', fail: { '/rest/api/3/webhook': 403 } });
+        await call('PUT', '/jira/boards', { boardIds: [10] });
+        const sync = await call('POST', '/jira/sync');
+        assert.deepStrictEqual(sync.json(), { boards: 1, issues: 6, currentPi: 'PI-27.3' }, 'the issues still synced');
+        const { webhook, lastError } = (await call('GET', '/jira')).json();
+        assert.strictEqual(webhook.active, false);
+        assert.match(webhook.error, /^Instant updates are off: POST \/ex\/jira\/cloud-a\/rest\/api\/3\/webhook failed with HTTP 403$/);
+        assert.strictEqual(lastError, null, 'a webhook problem is not a sync error');
+    }
 });
