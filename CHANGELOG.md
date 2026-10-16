@@ -7,6 +7,12 @@ dashboard, not a published package), so entries are grouped by date instead. See
 ShipScope is, `CLAUDE.md` for the technical reference, and `FAQ.md` for how specific numbers/badges are
 calculated.
 
+## [0.1.18] - 2026-10-16
+
+### Added
+
+- **SHP:** let admins delete a workspace and all its data (#29)
+
 ## [0.1.17] - 2026-10-16
 
 ### Fixed
