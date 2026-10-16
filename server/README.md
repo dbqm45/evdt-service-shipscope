@@ -264,7 +264,7 @@ first steps for a tenant) is collected in [SETUP.pl.md](SETUP.pl.md) (Polish).
 
 2. Register a GitHub App for development (GitHub → Settings → Developer settings → GitHub Apps → New):
    - **Callback URL**: `http://localhost:3000/auth/github/callback`
-   - **Webhook**: untick "Active" (not used yet)
+   - **Webhook**: untick "Active" locally (GitHub can't reach localhost; see SETUP.pl.md for the deployed App)
    - **Permissions**: none needed for sign-in
    - Copy the **Client ID**, generate a **client secret**, put both in `.env`.
 
@@ -283,10 +283,10 @@ first steps for a tenant) is collected in [SETUP.pl.md](SETUP.pl.md) (Polish).
      **private key** (the `.pem` file's contents) into `.env` as `GITHUB_APP_ID`, `GITHUB_APP_SLUG` and
      `GITHUB_APP_PRIVATE_KEY`. Without these three, sign-in still works and the GitHub routes are off.
 
-3. `npm run dev`, then open `http://localhost:3000/`. After GitHub you land on `/me` until you have a tenant,
-   and on its dashboard (`/t/<tenantId>/`) afterwards.
-   Create a tenant with e.g. `fetch('/tenants', { method: 'POST', headers: { 'content-type':
-   'application/json' }, body: JSON.stringify({ name: 'Acme' }) })` from the browser console on that page.
+3. `npm run dev`, then open `http://localhost:3000/`. After GitHub you land on `/start` (create a workspace) until
+   you have one, and on its dashboard (`/t/<tenantId>/`) afterwards; configuration is on `/t/<tenantId>/settings`.
+   A manual test checklist for everything that needs real GitHub, Atlassian and Render accounts is in
+   [TESTY-RECZNE.pl.md](TESTY-RECZNE.pl.md) (Polish).
 
 Other commands: `npm start` (Web Service, env from the process), `npm run worker` (heartbeat, deployment sync when the `GITHUB_APP_*` variables are set, daily retention cleanup),
 `npm run migrate` (pending `migrations/*.sql`).

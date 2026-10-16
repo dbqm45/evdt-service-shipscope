@@ -1,7 +1,8 @@
 # Konfiguracja ShipScope (serwer): wymagania i ustawienia
 
 Co trzeba ustawić **poza kodem** (na GitHubie, w Renderze, w `.env`), żeby serwer w `server/` działał.
-Szczegóły techniczne (trasy, model bezpieczeństwa, testy) są w [README.md](README.md).
+Szczegóły techniczne (trasy, model bezpieczeństwa, testy) są w [README.md](README.md). Lista testów ręcznych do przejścia
+po konfiguracji (GitHub, Atlassian, Render, webhooki): [TESTY-RECZNE.pl.md](TESTY-RECZNE.pl.md).
 
 Sekretów (client secret, klucz prywatny `.pem`, hasła do bazy) nigdy nie wklejaj do repo, czatu ani issue —
 tylko do `server/.env` (lokalnie, jest w `.gitignore`) albo do zmiennych środowiskowych w Renderze.
