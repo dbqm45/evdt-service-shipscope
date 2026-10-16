@@ -1,7 +1,9 @@
 const { withScope } = require('./scope');
 const { assertAdmin, roleOf, TenantNotFoundError } = require('./tenants');
 const { accessTokenFor, JiraNotConnectedError } = require('./jira-connections');
-const { AtlassianError, fetchBoards, fetchSprints, fetchVersions, fetchFieldIds, searchIssues } = require('./atlassian');
+const {
+    AtlassianError, WEBHOOK_SCOPE, fetchBoards, fetchSprints, fetchVersions, fetchFieldIds, searchIssues, registerWebhooks, refreshWebhooks, deleteWebhooks,
+} = require('./atlassian');
 const {
     RhythmTemplateError, compileTemplate, extractPiFromSprintName, rhythmOf, piOfSprint, comparePiDesc, currentPiOf, previousPiOf,
     releaseName, currentReleaseOf, previousReleaseOf, flowMonth, releaseJql, flowJql, issueFields, mapIssue,
@@ -25,6 +27,10 @@ class JiraBoardError extends Error {}
 const NOW_KEY = '@now';
 
 const EPIC_BATCH = 100;
+const DAY_MS = 24 * 3600_000;
+const WEBHOOK_LIFETIME_MS = 30 * DAY_MS; // Atlassian drops a dynamic webhook 30 days after registering or refreshing it
+const WEBHOOK_REFRESH_BEFORE_MS = 7 * DAY_MS;
+const WEBHOOK_RECONNECT = 'Reconnect Jira to allow instant updates (this connection was made before ShipScope asked for webhooks)';
 const ERROR_MAX_LENGTH = 300;
 
 /**
@@ -274,23 +280,85 @@ async function syncTenantUnrecorded(pool, { tenantId, atlassian, fetch: fetchFn,
         );
         return opensOn;
     });
+    await ensureWebhook(pool, { tenantId, atlassian, accessToken, cloudId, fetch: fetchFn, now });
     return { boards: boards.length, issues: plan.reduce((n, p) => n + p.issues.length, 0), currentPi };
 }
 
 /**
- * One pass over every tenant with a Jira connection. One failing tenant is logged and the pass moves on.
+ * Keeps the tenant's Jira webhook in line with its boards: registered for the selected boards' projects, refreshed
+ * before Atlassian's 30 days run out, re-registered when the projects change. Best effort: a failure is recorded
+ * in `webhook_error` and never fails the sync (the periodic sync still runs). Off without a public https URL
+ * (`atlassian.webhookUrl`) or the `manage:jira-webhook` scope (a connection made before it was asked for).
+ */
+async function ensureWebhook(pool, { tenantId, atlassian, accessToken, cloudId, fetch: fetchFn, now }) {
+    if (!atlassian.webhookUrl) return;
+    const { conn, projectKeys } = await withScope(pool, { tenantId }, async (client) => ({
+        conn: (await client.query('SELECT scopes, webhook_ids, webhook_jql, webhook_expires_at, webhook_error FROM jira_connections WHERE tenant_id = $1', [tenantId])).rows[0],
+        projectKeys: (await client.query('SELECT DISTINCT project_key FROM jira_boards WHERE tenant_id = $1 AND project_key IS NOT NULL', [tenantId])).rows.map((r) => r.project_key),
+    }));
+    if (!conn) return;
+    const save = (fields) => withScope(pool, { tenantId }, (client) => client.query(
+        'UPDATE jira_connections SET webhook_ids = $2, webhook_jql = $3, webhook_expires_at = $4, webhook_error = $5 WHERE tenant_id = $1',
+        [tenantId, fields.ids, fields.jql, fields.expiresAt, fields.error]
+    ));
+    if (!conn.scopes.includes(WEBHOOK_SCOPE)) {
+        if (conn.webhook_error !== WEBHOOK_RECONNECT) await save({ ids: [], jql: null, expiresAt: null, error: WEBHOOK_RECONNECT });
+        return;
+    }
+    const keys = [...new Set(projectKeys.filter((k) => /^[A-Z][A-Z0-9_]*$/.test(k)))].sort();
+    const jql = keys.length ? `project in (${keys.map((k) => `"${k}"`).join(', ')})` : null;
+    let ids = conn.webhook_ids.map(Number);
+    let expiresAt = conn.webhook_expires_at;
+    let error = null;
+    const unchanged = conn.webhook_jql === jql && ids.length > 0;
+    const fresh = expiresAt && expiresAt.getTime() - now.getTime() > WEBHOOK_REFRESH_BEFORE_MS;
+    if (unchanged && fresh && !conn.webhook_error) return;
+    try {
+        if (ids.length && !unchanged) {
+            // Another set of projects: the old webhook goes (it may already be gone on Atlassian's side).
+            await deleteWebhooks({ accessToken, cloudId, ids, fetch: fetchFn }).catch((err) => {
+                if (!(err instanceof AtlassianError)) throw err;
+            });
+            ids = [];
+            expiresAt = null;
+        }
+        if (jql && !ids.length) {
+            ids = await registerWebhooks({ accessToken, cloudId, url: atlassian.webhookUrl, jql, fetch: fetchFn });
+            expiresAt = new Date(now.getTime() + WEBHOOK_LIFETIME_MS);
+        } else if (jql && !fresh) {
+            const until = await refreshWebhooks({ accessToken, cloudId, ids, fetch: fetchFn });
+            expiresAt = until ? new Date(until) : new Date(now.getTime() + WEBHOOK_LIFETIME_MS);
+        }
+    } catch (err) {
+        if (!(err instanceof AtlassianError)) throw err;
+        error = `Instant updates are off: ${err.message}`.slice(0, ERROR_MAX_LENGTH);
+        // A refresh that failed: the webhook may be gone; register anew next time.
+        if (ids.length && unchanged) ids = [];
+    }
+    await save({ ids, jql: ids.length ? jql : null, expiresAt: ids.length ? expiresAt : null, error });
+}
+
+/**
+ * One pass over every tenant with a Jira connection. One failing tenant is logged and the pass moves on. `keys`
+ * limits it to the tenants a webhook delivery names (lib/webhooks.js jiraSyncKeys(): `webhook:<id>` of the
+ * connection's webhook, `cloud:<cloudId>` or `site:<url>`).
  *
- * @param {{ pool: import('pg').Pool, atlassian: object, fetch?: typeof fetch, log?: (msg: string) => void, now?: Date }} input
+ * @param {{ pool: import('pg').Pool, atlassian: object, fetch?: typeof fetch, log?: (msg: string) => void, now?: Date, keys?: string[] }} input
  * @returns {Promise<{ tenants: number, issues: number, failed: number }>}
  */
-async function syncAllJira({ pool, atlassian, fetch: fetchFn = fetch, log = () => {}, now = new Date() }) {
+async function syncAllJira({ pool, atlassian, fetch: fetchFn = fetch, log = () => {}, now = new Date(), keys = null }) {
     const totals = { tenants: 0, issues: 0, failed: 0 };
+    const wanted = keys && new Set(keys);
     const { rows: tenants } = await pool.query('SELECT id FROM tenants ORDER BY created_at');
     for (const { id: tenantId } of tenants) {
-        const connected = await withScope(pool, { tenantId }, async (client) => (
-            await client.query('SELECT 1 FROM jira_connections WHERE tenant_id = $1 AND cloud_id IS NOT NULL', [tenantId])
-        ).rows.length > 0);
-        if (!connected) continue;
+        const conn = await withScope(pool, { tenantId }, async (client) => (
+            await client.query('SELECT cloud_id, site_url, webhook_ids FROM jira_connections WHERE tenant_id = $1 AND cloud_id IS NOT NULL', [tenantId])
+        ).rows[0]);
+        if (!conn) continue;
+        if (wanted) {
+            const own = [`cloud:${conn.cloud_id}`, `site:${String(conn.site_url || '').replace(/\/+$/, '')}`, ...conn.webhook_ids.map((id) => `webhook:${id}`)];
+            if (!own.some((k) => wanted.has(k))) continue;
+        }
         totals.tenants += 1;
         try {
             const result = await syncTenant(pool, { tenantId, atlassian, fetch: fetchFn, now });
@@ -372,4 +440,4 @@ async function listPiIssues(pool, { tenantId, actorUserId, pi }) {
     });
 }
 
-module.exports = { NOW_KEY, JiraBoardError, listBoards, setBoards, configureBoard, syncTenant, syncAllJira, readDashboardJira, listPiIssues };
+module.exports = { WEBHOOK_RECONNECT, NOW_KEY, JiraBoardError, listBoards, setBoards, configureBoard, syncTenant, syncAllJira, readDashboardJira, listPiIssues };

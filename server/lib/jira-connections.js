@@ -47,14 +47,17 @@ async function saveConnection(pool, { tenantId, actorUserId, refreshToken, scope
  *
  * @param {import('pg').Pool} pool
  * @param {{ tenantId: string, actorUserId: string }} input
- * @returns {Promise<{ connected: false }|{ connected: true, site: { cloudId: string, url: string, name: string }|null, sites?: object[], connectedAt: Date, lastError: string|null, currentPi: string|null, lastSyncedAt: Date|null }>}
+ * @returns {Promise<{ connected: false }|{ connected: true, site: { cloudId: string, url: string, name: string }|null, sites?: object[], connectedAt: Date, lastError: string|null, currentPi: string|null, lastSyncedAt: Date|null, webhook: { active: boolean, expiresAt: Date|null, error: string|null } }>}
+ *   webhook.active: Jira tells ShipScope about issue changes right away (else only the periodic sync)
  * @throws {TenantNotFoundError}
  */
 async function getConnection(pool, { tenantId, actorUserId }) {
     return withScope(pool, { tenantId }, async (client) => {
         if (!(await roleOf(client, { tenantId, userId: actorUserId }))) throw new TenantNotFoundError('Tenant not found');
         const { rows: [row] } = await client.query(
-            'SELECT available_sites, cloud_id, site_url, site_name, connected_at, last_error, current_pi, last_synced_at FROM jira_connections WHERE tenant_id = $1',
+            `SELECT available_sites, cloud_id, site_url, site_name, connected_at, last_error, current_pi, last_synced_at,
+                    webhook_ids, webhook_expires_at, webhook_error
+             FROM jira_connections WHERE tenant_id = $1`,
             [tenantId]
         );
         if (!row) return { connected: false };
@@ -62,6 +65,11 @@ async function getConnection(pool, { tenantId, actorUserId }) {
         return {
             connected: true, site, ...(site ? {} : { sites: row.available_sites }), connectedAt: row.connected_at, lastError: row.last_error,
             currentPi: row.current_pi, lastSyncedAt: row.last_synced_at,
+            webhook: {
+                active: row.webhook_ids.length > 0 && row.webhook_expires_at !== null && row.webhook_expires_at > new Date(),
+                expiresAt: row.webhook_expires_at,
+                error: row.webhook_error,
+            },
         };
     });
 }
@@ -92,7 +100,11 @@ async function selectSite(pool, { tenantId, actorUserId, cloudId }) {
 async function forgetSiteData(client, tenantId) {
     await client.query('DELETE FROM jira_boards WHERE tenant_id = $1', [tenantId]);
     await client.query('DELETE FROM jira_pis WHERE tenant_id = $1', [tenantId]); // and, by cascade, their issues
-    await client.query('UPDATE jira_connections SET current_pi = NULL, last_synced_at = NULL WHERE tenant_id = $1', [tenantId]);
+    // The webhook belongs to the old site too; that site stops calling once Atlassian's 30 days run out.
+    await client.query(
+        "UPDATE jira_connections SET current_pi = NULL, last_synced_at = NULL, webhook_ids = '{}', webhook_jql = NULL, webhook_expires_at = NULL, webhook_error = NULL WHERE tenant_id = $1",
+        [tenantId]
+    );
 }
 
 /**

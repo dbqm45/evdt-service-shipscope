@@ -11,9 +11,12 @@ const json = (body, status = 200) => new Response(JSON.stringify(body), { status
  *   `key in (keys)`, sprint ids matched against the `customfield_10020` entries; a release `project = "K" AND
  *   fixVersion = id` against `fields.fixVersions`; a flow month by `fields.resolutiondate` and the status category).
  *   `versions`: projectKey -> raw versions, served by /rest/api/3/project/{key}/version. `pageSize` makes every list page short.
+ * - Dynamic webhooks (/rest/api/3/webhook): registering returns new ids (a jqlFilter containing BAD is refused),
+ *   refresh returns `webhookExpiry`, delete answers 202; each such call is kept in `webhookCalls`.
+ * - `scope`: what a token response says was granted.
  * - `fail`: path substring -> HTTP status to answer with.
  */
-function fakeAtlassian({ codes = {}, offline = true, jira = {}, pageSize = 50, fail = {} } = {}) {
+function fakeAtlassian({ codes = {}, offline = true, jira = {}, pageSize = 50, fail = {}, scope = 'read:jira-work offline_access', webhookExpiry = '2026-12-01T00:00:00.000Z' } = {}) {
     const live = new Map();
     const access = new Map();
     let n = 0;
@@ -21,7 +24,7 @@ function fakeAtlassian({ codes = {}, offline = true, jira = {}, pageSize = 50, f
         n += 1;
         access.set(`access-${n}`, sites);
         live.set(`refresh-${n}`, sites);
-        return { access_token: `access-${n}`, expires_in: 3600, token_type: 'Bearer', scope: 'read:jira-work offline_access', ...(offline ? { refresh_token: `refresh-${n}` } : {}) };
+        return { access_token: `access-${n}`, expires_in: 3600, token_type: 'Bearer', scope, ...(offline ? { refresh_token: `refresh-${n}` } : {}) };
     };
     const page = (values, url) => {
         const params = new URL(url).searchParams;
@@ -30,6 +33,8 @@ function fakeAtlassian({ codes = {}, offline = true, jira = {}, pageSize = 50, f
         return { startAt: start, values: values.slice(start, start + size), isLast: start + size >= values.length };
     };
     const calls = [];
+    const webhookCalls = [];
+    let nextWebhookId = 1000;
     const handler = async (url, init = {}) => {
         calls.push(url);
         for (const [needle, status] of Object.entries(fail)) if (url.includes(needle)) return json({ errorMessages: ['boom'] }, status);
@@ -71,6 +76,15 @@ function fakeAtlassian({ codes = {}, offline = true, jira = {}, pageSize = 50, f
         }
         if ((sub = path.match(/^\/rest\/api\/3\/project\/([A-Z0-9_]+)\/version$/))) return json(page((site.versions || {})[sub[1]] || [], url));
         if (path === '/rest/api/3/field') return json(site.fields || []);
+        if (path === '/rest/api/3/webhook' || path === '/rest/api/3/webhook/refresh') {
+            const body = JSON.parse(init.body);
+            webhookCalls.push({ cloudId: m[1], method: init.method, path, body });
+            if (init.method === 'POST') {
+                return json({ webhookRegistrationResult: body.webhooks.map((w) => (w.jqlFilter.includes('BAD') ? { errors: ['Invalid JQL'] } : { createdWebhookId: nextWebhookId++ })) });
+            }
+            if (init.method === 'PUT') return json({ expirationDate: webhookExpiry });
+            if (init.method === 'DELETE') return new Response(null, { status: 202 });
+        }
         if (path === '/rest/api/3/search/jql') {
             const params = new URL(url).searchParams;
             const jql = params.get('jql');
@@ -99,7 +113,7 @@ function fakeAtlassian({ codes = {}, offline = true, jira = {}, pageSize = 50, f
         }
         throw new Error(`unexpected fetch ${url}`);
     };
-    return { handler, calls, revokeAll: () => live.clear() };
+    return { handler, calls, webhookCalls, revokeAll: () => live.clear() };
 }
 
 module.exports = { fakeAtlassian };

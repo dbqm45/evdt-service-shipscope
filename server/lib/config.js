@@ -65,9 +65,12 @@ function loadGitHubAppConfig(env) {
             problems.push('GITHUB_APP_PRIVATE_KEY is not a valid RSA private key in PEM format');
         }
     }
+    // The App's webhook secret (GitHub App settings -> Webhook). Optional: without it /webhooks/github is off and
+    // deployments only arrive with the periodic sync.
+    if (env.GITHUB_APP_WEBHOOK_SECRET && env.GITHUB_APP_WEBHOOK_SECRET.length < 20) problems.push('GITHUB_APP_WEBHOOK_SECRET must be at least 20 characters');
     if (problems.length > 0) throw new Error(`Invalid configuration: ${problems.join('; ')}`);
 
-    return { appId: env.GITHUB_APP_ID, slug: env.GITHUB_APP_SLUG, privateKey };
+    return { appId: env.GITHUB_APP_ID, slug: env.GITHUB_APP_SLUG, privateKey, webhookSecret: env.GITHUB_APP_WEBHOOK_SECRET || null };
 }
 
 /**
@@ -76,7 +79,10 @@ function loadGitHubAppConfig(env) {
  * TOKEN_ENCRYPTION_KEY is 32 random bytes, base64-encoded (`openssl rand -base64 32`).
  *
  * @param {NodeJS.ProcessEnv} env
- * @returns {{ clientId: string, clientSecret: string, encryptionKey: Buffer }|null}
+ * PUBLIC_BASE_URL (optional here) is where Atlassian sends Jira webhooks (`<url>/webhooks/jira`): the worker
+ * registers them, so it needs the web service's public https address too; without one Jira only syncs periodically.
+ *
+ * @returns {{ clientId: string, clientSecret: string, encryptionKey: Buffer, webhookUrl: string|null }|null}
  * @throws {Error} naming every missing/invalid variable
  */
 function loadAtlassianConfig(env) {
@@ -91,7 +97,10 @@ function loadAtlassianConfig(env) {
     }
     if (problems.length > 0) throw new Error(`Invalid configuration: ${problems.join('; ')}`);
 
-    return { clientId: env.ATLASSIAN_CLIENT_ID, clientSecret: env.ATLASSIAN_CLIENT_SECRET, encryptionKey };
+    // Atlassian only calls public https URLs: an http one (local development) means no Jira webhooks, not an error.
+    const base = (env.PUBLIC_BASE_URL || '').replace(/\/+$/, '');
+    const webhookUrl = /^https:\/\/[A-Za-z0-9.-]+(:\d+)?$/.test(base) ? `${base}/webhooks/jira` : null;
+    return { clientId: env.ATLASSIAN_CLIENT_ID, clientSecret: env.ATLASSIAN_CLIENT_SECRET, encryptionKey, webhookUrl };
 }
 
 module.exports = { loadAuthConfig, loadGitHubAppConfig, loadAtlassianConfig };

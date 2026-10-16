@@ -26,7 +26,9 @@ Zalecane są **dwie aplikacje**: jedna do pracy lokalnej (`http://localhost:3000
 | Setup URL | `<adres>/github/setup` | Powrót po instalacji aplikacji na repozytoriach |
 | Redirect on update | zaznaczone | Powrót do ShipScope także po zmianie listy repozytoriów |
 | Request user authorization (OAuth) during installation | **odznaczone** | ShipScope sam loguje użytkownika po instalacji, żeby sprawdzić, że ma on dostęp do tej instalacji |
-| Webhook → Active | odznaczone | Webhooki nie są jeszcze używane |
+| Webhook → Active | zaznaczone (opcjonalnie) | Deploy pojawia się w ShipScope w ciągu minuty, a nie przy następnej synchronizacji |
+| Webhook URL | `<adres>/webhooks/github` | Musi być publiczny (lokalnie: zostaw webhook wyłączony) |
+| Webhook secret | losowy, min. 20 znaków (`openssl rand -hex 32`) | Ten sam do `GITHUB_APP_WEBHOOK_SECRET`; ShipScope odrzuca dostawy bez zgodnego podpisu |
 | Where can this GitHub App be installed? | Any account | Żeby mogły ją zainstalować inne organizacje (tenanci) |
 
 `<adres>` to `http://localhost:3000` lokalnie albo publiczny adres https serwisu `shipscope-web` w Renderze.
@@ -43,6 +45,9 @@ Wszystkie tylko do odczytu (**Read-only**). Nic więcej nie jest potrzebne — �
 | Deployments | tak | Lista deploymentów i ich statusów | Synchronizacja nic nie pobierze (błąd przy repo) |
 | Contents | tak | Zakres commitów między deployami (zadania z Jiry), tagi i release'y (wersja), plik wersji, drzewa git (rozjazd środowisk) | Brak wersji, powiązanych zadań i rozjazdu; synchronizacja zgłasza błąd przy repo |
 | Actions | opcjonalne | Rozpoznanie, czy deploy uruchomiono ręcznie (`workflow_dispatch`) | Wszystko działa, tylko znaczek „manual” nigdy się nie pojawia |
+
+Przy włączonym webhooku w **Subscribe to events** (na dole tej zakładki) zaznacz **Deployment status**. Nic
+więcej nie jest potrzebne; inne zdarzenia ShipScope przyjmuje i pomija.
 
 Po dodaniu nowego uprawnienia do istniejącej aplikacji (**Save changes** na dole strony) GitHub prosi
 właściciela każdej instalacji o akceptację. Zaakceptuj ją w **Settings → Applications → Installed GitHub
@@ -73,7 +78,8 @@ serwisów (`render.yaml` ustawia `DATABASE_URL` sam; sekrety mają `sync: false`
 |---|---|---|---|
 | `DATABASE_URL` | tak | tak | Lokalnie z kontenera Postgresa; w Renderze z bazy `shipscope-db` |
 | `DATABASE_SSL=false` | tylko lokalnie | tylko lokalnie | W Renderze nie ustawiaj (TLS jest wymagany) |
-| `PUBLIC_BASE_URL` | tak | — | Adres serwisu widziany z przeglądarki; `https` włącza ciasteczka `Secure` |
+| `PUBLIC_BASE_URL` | tak | opcjonalnie | Adres serwisu widziany z przeglądarki; `https` włącza ciasteczka `Secure`. Workerowi potrzebny do webhooków Jiry (rejestruje je na `<adres>/webhooks/jira`); bez publicznego `https` Jira synchronizuje się tylko okresowo |
+| `GITHUB_APP_WEBHOOK_SECRET` | opcjonalnie | — | Sekret webhooka GitHub App (sekcja 1); bez niego `/webhooks/github` jest wyłączone |
 | `GITHUB_APP_CLIENT_ID`, `GITHUB_APP_CLIENT_SECRET` | tak | — | Logowanie |
 | `GITHUB_APP_ID`, `GITHUB_APP_SLUG`, `GITHUB_APP_PRIVATE_KEY` | tak | tak | Podłączanie repozytoriów (web) i synchronizacja (worker) |
 | `SYNC_INTERVAL_MINUTES` | — | opcjonalnie | Co ile minut synchronizacja (1–1440, domyślnie 15) |
@@ -177,9 +183,16 @@ widoczna dla użytkownika na ekranie zgody Atlassian.
 |---|---|
 | Permissions → Jira API | `read:jira-work`, `read:jira-user`, `read:project:jira` (ten ostatni wśród uprawnień szczegółowych / granular; bez niego lista tablic zwraca 401) |
 | Permissions → Jira Software (jeśli konsola pokazuje ją osobno) | `read:board-scope:jira-software`, `read:sprint:jira-software` |
+| Permissions → Jira API (klasyczne) | `manage:jira-webhook` — rejestracja webhooków, które informują ShipScope o zmianach zadań. **Musi być dodane w konsoli**: ShipScope prosi o nie przy łączeniu, a Atlassian odrzuca zgodę na zakres, którego aplikacja nie ma |
 | Authorization → Callback URL | `<adres>/auth/atlassian/callback` (lokalnie `http://localhost:3000/auth/atlassian/callback`) |
 | Settings → Client ID / Secret | do `ATLASSIAN_CLIENT_ID` / `ATLASSIAN_CLIENT_SECRET` |
 | Dostęp / dystrybucja | do pracy lokalnej: prywatna (tylko Ty); do wdrożenia: udostępniona (inne firmy łączą swoje Jiry) — Atlassian wymaga wtedy danych dostawcy i polityki prywatności |
+
+Webhooki Jiry: worker sam rejestruje jeden webhook na tenanta (zmiany zadań w projektach wybranych tablic),
+odnawia go przed upływem 30 dni i rejestruje od nowa po zmianie tablic. Działa to tylko przy publicznym adresie
+`https` (`PUBLIC_BASE_URL` u workera) i połączeniu z zakresem `manage:jira-webhook`. Połączenie sprzed tej zmiany
+trzeba odnowić („Reconnect Jira” w ustawieniach); do tego czasu strona ustawień pokazuje „instant updates off”, a
+synchronizacja działa jak dotąd, co 15 minut.
 
 `offline_access` (odświeżanie dostępu bez obecności użytkownika) ShipScope prosi sam przy łączeniu — w konsoli się
 go nie zaznacza. Wszystkie uprawnienia są tylko do odczytu. ShipScope prosi dokładnie o zakresy z listy w kodzie

@@ -43,7 +43,11 @@ test('loadGitHubAppConfig: accepts a PEM with real or escaped newlines', () => {
         assert.strictEqual(config.appId, '123');
         assert.strictEqual(config.slug, 'shipscope-dev');
         assert.strictEqual(config.privateKey.asymmetricKeyType, 'rsa');
+        assert.strictEqual(config.webhookSecret, null, 'no webhook secret: /webhooks/github is off');
     }
+    const withSecret = loadGitHubAppConfig({ GITHUB_APP_ID: '1', GITHUB_APP_SLUG: 'x', GITHUB_APP_PRIVATE_KEY: pem, GITHUB_APP_WEBHOOK_SECRET: 'a'.repeat(20) });
+    assert.strictEqual(withSecret.webhookSecret, 'a'.repeat(20));
+    assert.throws(() => loadGitHubAppConfig({ GITHUB_APP_ID: '1', GITHUB_APP_SLUG: 'x', GITHUB_APP_PRIVATE_KEY: pem, GITHUB_APP_WEBHOOK_SECRET: 'short' }), /at least 20 characters/);
 });
 
 test('loadGitHubAppConfig: a partial or malformed set fails fast, naming each problem', () => {

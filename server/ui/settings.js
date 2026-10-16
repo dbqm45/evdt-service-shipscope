@@ -133,8 +133,8 @@ function syncTag(repo){
     return repo.lastSyncedAt ? html`<span class="state-tag ok">synced ${fmtDateTime(repo.lastSyncedAt)}</span>` : html`<span class="state-tag warn">not synced yet</span>`;
 }
 
-/** @param {{ enabled: boolean, github: { installations: object[], repos: object[] }|null, installationRepos: object, admin: boolean }} props */
-function renderGitHub({ enabled, github, installationRepos, admin }){
+/** @param {{ enabled: boolean, webhooks: boolean, github: { installations: object[], repos: object[] }|null, installationRepos: object, admin: boolean }} props */
+function renderGitHub({ enabled, webhooks, github, installationRepos, admin }){
     if (!enabled) {
         return Section({ id: 'github', title: 'GitHub', body: html`<p class="settings-hint">The GitHub App is not configured on this server (GITHUB_APP_* variables).</p>` });
     }
@@ -171,7 +171,10 @@ function renderGitHub({ enabled, github, installationRepos, admin }){
         id: 'github',
         title: 'GitHub',
         hint: 'ShipScope reads deployments, releases and tags of the repositories you track, through the GitHub App.',
-        body: html`${install}<h3>Installations</h3>
+        body: html`<p class="settings-hint">${webhooks
+            ? html`<span class="state-tag ok">instant updates on</span> A deployment shows up within a minute of finishing.`
+            : 'New deployments arrive with the periodic sync (every 15 minutes by default); set GITHUB_APP_WEBHOOK_SECRET for instant updates.'}</p>
+            ${install}<h3>Installations</h3>
             ${installations.length ? html`<table class="settings-table"><tbody>${installations}</tbody></table>` : html`<p class="settings-hint">No installation linked yet.</p>`}
             <h3>Tracked repositories</h3>
             ${tracked.length ? html`<table class="settings-table"><tbody>${tracked}</tbody></table>` : html`<p class="settings-hint">No repository tracked yet.</p>`}`,
@@ -196,8 +199,18 @@ function BoardRow(board, admin){
         <div class="settings-row-meta">${board.projectName || ''}${board.projectKey ? ` (${board.projectKey})` : ''}</div>${rhythm}</td></tr>`;
 }
 
-/** @param {{ enabled: boolean, jira: object|null, boards: object[]|null|{ error: string }, admin: boolean }} props */
-function renderJira({ enabled, jira, boards, admin }){
+function webhookLine(webhooks, webhook){
+    if (!webhooks || !webhook) {
+        return html``;
+    }
+    if (webhook.active) {
+        return html`<p class="settings-hint"><span class="state-tag ok">instant updates on</span> Issue changes show up within a minute.</p>`;
+    }
+    return html`<p class="settings-hint"><span class="state-tag warn">instant updates off</span> ${webhook.error || 'Turned on with the next sync of the selected boards.'}</p>`;
+}
+
+/** @param {{ enabled: boolean, webhooks: boolean, jira: object|null, boards: object[]|null|{ error: string }, admin: boolean }} props */
+function renderJira({ enabled, webhooks, jira, boards, admin }){
     const section = (body, hint) => Section({ id: 'jira', title: 'Jira', hint, body });
     if (!enabled) {
         return section(html`<p class="settings-hint">Jira is not configured on this server (ATLASSIAN_* variables and TOKEN_ENCRYPTION_KEY).</p>`);
@@ -211,7 +224,7 @@ function renderJira({ enabled, jira, boards, admin }){
             'Read-only access through Atlassian: issues, boards and sprints of the boards you choose.');
     }
     const status = html`<p>${jira.site ? html`Connected to <strong>${jira.site.name}</strong> <span class="settings-row-meta">${jira.site.url}</span>` : 'Connected — choose a site.'}
-        ${jira.lastError ? html` <span class="state-tag fail">${jira.lastError}</span>` : ''}</p>`;
+        ${jira.lastError ? html` <span class="state-tag fail">${jira.lastError}</span>` : ''}</p>${jira.site ? webhookLine(webhooks, jira.webhook) : ''}`;
     if (!admin) {
         return section(status);
     }
@@ -287,8 +300,8 @@ function renderSettings(){
     const s = settingsState;
     const admin = isAdmin();
     return html`${renderWorkspace({ workspace: s.workspace, admin, meId: s.me && s.me.user.id, once: s.once })}
-        ${renderGitHub({ enabled: s.features.githubApp, github: s.github, installationRepos: s.installationRepos, admin })}
-        ${renderJira({ enabled: s.features.jira, jira: s.jira, boards: s.boards, admin })}
+        ${renderGitHub({ enabled: s.features.githubApp, webhooks: s.features.githubWebhooks, github: s.github, installationRepos: s.installationRepos, admin })}
+        ${renderJira({ enabled: s.features.jira, webhooks: s.features.jiraWebhooks, jira: s.jira, boards: s.boards, admin })}
         ${renderFlags({ flags: s.flags, repos: (s.github && s.github.repos) || [], admin, once: s.once, origin: location.origin })}`;
 }
 

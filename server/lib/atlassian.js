@@ -16,8 +16,13 @@ const API_BASE = 'https://api.atlassian.com/ex/jira';
 // worker can sync without the user present. The authorize URL asks for exactly these: a scope only added in the
 // developer console is not granted.
 const SCOPES = [
-    'read:jira-work', 'read:jira-user', 'read:board-scope:jira-software', 'read:sprint:jira-software', 'read:project:jira', 'offline_access',
+    'read:jira-work', 'read:jira-user', 'read:board-scope:jira-software', 'read:sprint:jira-software', 'read:project:jira',
+    // Registering the dynamic webhooks that tell ShipScope an issue changed (lib/jira-sync.js ensureWebhook()).
+    'manage:jira-webhook',
+    'offline_access',
 ];
+const WEBHOOK_SCOPE = 'manage:jira-webhook';
+const WEBHOOK_EVENTS = ['jira:issue_created', 'jira:issue_updated', 'jira:issue_deleted'];
 const REQUIRED_SITE_SCOPE = 'read:jira-work';
 const MAX_PAGES = 20;
 
@@ -279,7 +284,63 @@ async function searchIssues({ accessToken, cloudId, jql, fields, fetch: fetchFn 
     throw new AtlassianError(`issue search exceeded ${MAX_ISSUE_PAGES * ISSUE_PAGE_SIZE} issues`);
 }
 
+async function sendJson(method, url, accessToken, body, fetchFn) {
+    let res;
+    try {
+        res = await fetchFn(url, {
+            method,
+            headers: { accept: 'application/json', 'content-type': 'application/json', authorization: `Bearer ${accessToken}` },
+            body: JSON.stringify(body),
+        });
+    } catch (err) {
+        throw new AtlassianError(`${method} ${new URL(url).pathname} failed: ${err.message}`);
+    }
+    if (!res.ok) throw new AtlassianError(`${method} ${new URL(url).pathname} failed with HTTP ${res.status}`, { reconnect: res.status === 401, status: res.status });
+    return res.status === 204 ? null : res.json().catch(() => null);
+}
+
+/**
+ * Registers one dynamic webhook for issue changes matching `jql` (Atlassian keeps it 30 days unless refreshed).
+ *
+ * @param {{ accessToken: string, cloudId: string, url: string, jql: string, fetch?: typeof fetch }} input
+ * @returns {Promise<number[]>} the created webhook ids
+ * @throws {AtlassianError} also when Atlassian answers 2xx but refuses the webhook (e.g. an unsupported JQL)
+ */
+async function registerWebhooks({ accessToken, cloudId, url, jql, fetch: fetchFn = fetch }) {
+    const body = await sendJson('POST', `${API_BASE}/${encodeURIComponent(cloudId)}/rest/api/3/webhook`, accessToken,
+        { url, webhooks: [{ events: WEBHOOK_EVENTS, jqlFilter: jql }] }, fetchFn);
+    const results = Array.isArray(body?.webhookRegistrationResult) ? body.webhookRegistrationResult : [];
+    const ids = results.map((r) => r?.createdWebhookId).filter((id) => Number.isSafeInteger(id) && id > 0);
+    if (!ids.length) {
+        const errors = results.flatMap((r) => (Array.isArray(r?.errors) ? r.errors : [])).filter((e) => typeof e === 'string');
+        throw new AtlassianError(`webhook registration refused${errors.length ? `: ${errors.join('; ').slice(0, 200)}` : ''}`);
+    }
+    return ids;
+}
+
+/**
+ * Extends the webhooks another 30 days.
+ *
+ * @param {{ accessToken: string, cloudId: string, ids: number[], fetch?: typeof fetch }} input
+ * @returns {Promise<string|null>} their new expiry (ISO 8601), if Atlassian says
+ * @throws {AtlassianError}
+ */
+async function refreshWebhooks({ accessToken, cloudId, ids, fetch: fetchFn = fetch }) {
+    const body = await sendJson('PUT', `${API_BASE}/${encodeURIComponent(cloudId)}/rest/api/3/webhook/refresh`, accessToken, { webhookIds: ids }, fetchFn);
+    return isDate(body?.expirationDate) ? new Date(body.expirationDate).toISOString() : null;
+}
+
+/**
+ * @param {{ accessToken: string, cloudId: string, ids: number[], fetch?: typeof fetch }} input
+ * @returns {Promise<void>}
+ * @throws {AtlassianError}
+ */
+async function deleteWebhooks({ accessToken, cloudId, ids, fetch: fetchFn = fetch }) {
+    await sendJson('DELETE', `${API_BASE}/${encodeURIComponent(cloudId)}/rest/api/3/webhook`, accessToken, { webhookIds: ids }, fetchFn);
+}
+
 module.exports = {
+    WEBHOOK_SCOPE, registerWebhooks, refreshWebhooks, deleteWebhooks,
     SCOPES, AtlassianError, buildAuthorizeUrl, exchangeCode, refreshAccessToken, fetchJiraSites, fetchProjects,
     fetchBoards, fetchSprints, fetchVersions, fetchFieldIds, searchIssues,
 };

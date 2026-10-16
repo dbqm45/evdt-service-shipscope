@@ -79,6 +79,8 @@ test('settings page: the GitHub section -- installations, their repositories to 
     assert.match(admin, /title="boom &quot;quoted&quot;">sync failed/);
     assert.match(admin, /data-action="unlink-installation" data-installation-id="8"/);
 
+    assert.match(admin, /every 15 minutes by default/);
+    assert.match(str(ui.renderGitHub({ enabled: true, webhooks: true, github, installationRepos: {}, admin: true })), /instant updates on/);
     const member = str(ui.renderGitHub({ enabled: true, github, installationRepos: {}, admin: false }));
     assert.ok(!/data-action=|github\/install/.test(member), 'read-only for members');
     assert.match(member, /Version file: trigger\.properties · Ignored for drift: \.github\/, README\.md/);
@@ -115,6 +117,11 @@ test('settings page: the Jira section -- connect, choose a site, pick boards and
     assert.match(admin, /data-action="disconnect-jira"/);
 
     assert.match(str(ui.renderJira({ enabled: true, jira, boards: { error: 'Jira request failed' }, admin: true })), /settings-error">Jira request failed/);
+    assert.ok(!/instant updates/.test(admin), 'no webhook line when the server has no Jira webhooks');
+    const live = { ...jira, webhook: { active: true, expiresAt: '2026-11-15T00:00:00Z', error: null } };
+    assert.match(str(ui.renderJira({ enabled: true, webhooks: true, jira: live, boards: [], admin: true })), /instant updates on/);
+    const off = { ...jira, webhook: { active: false, expiresAt: null, error: 'Reconnect Jira <now>' } };
+    assert.match(str(ui.renderJira({ enabled: true, webhooks: true, jira: off, boards: [], admin: true })), /instant updates off<\/span> Reconnect Jira &lt;now&gt;/);
     const member = str(ui.renderJira({ enabled: true, jira, boards: null, admin: false }));
     assert.ok(!/data-action=|boardIds/.test(member));
     assert.match(member, /Connected to <strong>acme<\/strong>/);
@@ -302,8 +309,8 @@ test('get started: someone without a workspace lands on /start and creates one; 
     assert.strictEqual(anonymous.headers.location, '/auth/github/login?returnTo=%2Fstart');
     assert.strictEqual((await signInWithRedirect(app, 'mallory', anonymous.headers.location)).location, '/start');
 
-    assert.deepStrictEqual((await app.inject({ method: 'GET', url: '/api/features' })).json(), { githubApp: false, jira: false });
+    assert.deepStrictEqual((await app.inject({ method: 'GET', url: '/api/features' })).json(), { githubApp: false, jira: false, githubWebhooks: false, jiraWebhooks: false });
     const full = buildApp({ pool: null, auth: AUTH, githubApp: { appId: 1, slug: 's', privateKey: 'k' }, atlassian: { clientId: 'a', clientSecret: 'b', encryptionKey: Buffer.alloc(32) } });
     t.after(() => full.close());
-    assert.deepStrictEqual((await full.inject({ method: 'GET', url: '/api/features' })).json(), { githubApp: true, jira: true });
+    assert.deepStrictEqual((await full.inject({ method: 'GET', url: '/api/features' })).json(), { githubApp: true, jira: true, githubWebhooks: false, jiraWebhooks: false });
 });

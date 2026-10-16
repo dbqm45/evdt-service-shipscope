@@ -3,8 +3,10 @@ const { loadGitHubAppConfig, loadAtlassianConfig } = require('./lib/config');
 const { syncAllJira } = require('./lib/jira-sync');
 const { syncAll } = require('./lib/deployment-sync');
 const { cleanupAll } = require('./lib/retention');
+const { pendingSyncRequests, finishSyncRequests } = require('./lib/webhooks');
 
 const HEARTBEAT_INTERVAL_MS = 30_000;
+const WEBHOOK_INTERVAL_MS = 30_000; // how often webhook-requested syncs are picked up
 const CLEANUP_INTERVAL_MS = 24 * 3600_000;
 const DEFAULT_SYNC_INTERVAL_MINUTES = 15;
 // Postgres advisory lock keys: one sync and one cleanup at a time, even with more than one worker instance.
@@ -81,6 +83,30 @@ async function jiraTick(pool, atlassian, log = console.log, deps = { syncAllJira
     }
 }
 
+/**
+ * Picks up what webhooks asked for (migration 013) and syncs just that: the named repos, the named Jira
+ * connections. Under the same locks as the periodic syncs, so never alongside one; a request that couldn't run
+ * (lock held, or the sync failed as a whole) stays queued for the next tick. Errors are logged, never thrown.
+ */
+async function webhookTick(pool, { app, atlassian }, log = console.log, deps = { syncAll, syncAllJira }) {
+    const sources = [
+        app && ['github', SYNC_LOCK, (requests) => deps.syncAll({ pool, app, log: (m) => log(`${stamp()} ${m}`), repoIds: requests.map((r) => Number(r.key)).filter(Number.isSafeInteger) })],
+        atlassian && ['jira', JIRA_LOCK, (requests) => deps.syncAllJira({ pool, atlassian, log: (m) => log(`${stamp()} ${m}`), keys: requests.map((r) => r.key) })],
+    ].filter(Boolean);
+    for (const [source, lock, sync] of sources) {
+        try {
+            const requests = await pendingSyncRequests(pool, source);
+            if (!requests.length) continue;
+            const run = await runExclusive(pool, lock, () => sync(requests));
+            if (run.skipped) continue;
+            await finishSyncRequests(pool, source, requests);
+            log(`${stamp()} ${source} webhook sync done: ${requests.length} request(s)`);
+        } catch (err) {
+            log(`${stamp()} ${source} webhook sync failed: ${err.message}`);
+        }
+    }
+}
+
 /** The daily retention cleanup, never overlapping another. Errors are logged, never thrown. */
 async function cleanupTick(pool, log = console.log, deps = { cleanupAll }) {
     try {
@@ -111,6 +137,7 @@ if (require.main === module) {
     } else {
         console.log(`${stamp()} ATLASSIAN_* not set: Jira sync is off`);
     }
+    if (app || atlassian) timers.push(setInterval(() => webhookTick(pool, { app, atlassian }), WEBHOOK_INTERVAL_MS));
     timers.push(setInterval(() => cleanupTick(pool), CLEANUP_INTERVAL_MS));
     cleanupTick(pool);
 
@@ -120,4 +147,4 @@ if (require.main === module) {
     });
 }
 
-module.exports = { heartbeatTick, runExclusive, syncIntervalMinutes, syncTick, jiraTick, cleanupTick };
+module.exports = { heartbeatTick, runExclusive, syncIntervalMinutes, syncTick, jiraTick, webhookTick, cleanupTick };
