@@ -6,6 +6,7 @@ const { createPool, checkConnection } = require('./lib/db');
 const { loadAuthConfig, loadGitHubAppConfig, loadAtlassianConfig } = require('./lib/config');
 const { AtlassianError, buildAuthorizeUrl: buildAtlassianAuthorizeUrl, exchangeCode: exchangeAtlassianCode, fetchJiraSites } = require('./lib/atlassian');
 const { JiraNotConnectedError, JiraSiteError, saveConnection, getConnection, selectSite, disconnect, listProjects } = require('./lib/jira-connections');
+const { JiraBoardError, listBoards, setBoards, syncTenant: syncJiraTenant, listPiIssues } = require('./lib/jira-sync');
 const { APP_VERSION } = require('./lib/version');
 const { buildAuthorizeUrl, exchangeCode, fetchGitHubUser, GitHubOAuthError } = require('./lib/github-oauth');
 const { createSession, getSessionUser, deleteSession } = require('./lib/sessions');
@@ -78,6 +79,7 @@ const ERROR_STATUS = [
     [FlagSourceConflictError, 409],
     [JiraNotConnectedError, 409],
     [JiraSiteError, 400],
+    [JiraBoardError, 400],
     [AtlassianError, 502],
 ];
 
@@ -494,6 +496,40 @@ function buildApp({ pool, auth, githubApp = null, atlassian = null, fetch: fetch
             return reply.code(204).send();
         });
 
+        // FR-008: which Scrum boards to sync (a board's sprints define the PIs and scope the issues to its team).
+        app.get('/tenants/:tenantId/jira/boards', {
+            preHandler: requireUser,
+            schema: { params: tenantParams },
+        }, async (request) => ({
+            boards: await listBoards(pool, { tenantId: request.params.tenantId, actorUserId: request.user.id, atlassian, fetch: fetchFn }),
+        }));
+
+        app.put('/tenants/:tenantId/jira/boards', {
+            preHandler: requireUser,
+            schema: {
+                params: tenantParams,
+                body: {
+                    type: 'object',
+                    required: ['boardIds'],
+                    additionalProperties: false,
+                    properties: { boardIds: { type: 'array', maxItems: 50, uniqueItems: true, items: { type: 'integer', minimum: 1 } } },
+                },
+            },
+        }, async (request) => ({
+            boards: await setBoards(pool, {
+                tenantId: request.params.tenantId, actorUserId: request.user.id, boardIds: request.body.boardIds, atlassian, fetch: fetchFn,
+            }),
+        }));
+
+        // FR-009 on demand (the worker also runs it every pass), e.g. right after choosing boards.
+        app.post('/tenants/:tenantId/jira/sync', {
+            preHandler: requireUser,
+            schema: { params: tenantParams },
+        }, async (request) => {
+            await assertAdminOf(request.params.tenantId, request.user.id);
+            return syncJiraTenant(pool, { tenantId: request.params.tenantId, atlassian, fetch: fetchFn });
+        });
+
         app.get('/tenants/:tenantId/jira/projects', {
             preHandler: requireUser,
             schema: { params: tenantParams },
@@ -661,6 +697,18 @@ function buildApp({ pool, auth, githubApp = null, atlassian = null, fetch: fetch
         }, async (request, reply) => {
             reply.header('cache-control', 'no-store');
             return buildDashboardData(pool, { tenantId: request.params.tenantId, actorUserId: request.user.id });
+        });
+
+        // One PI's Jira issues (what a data/jira-issues/<PI>.json shard holds); app-data.js's loadJiraIssuesForPi.
+        app.get('/api/tenants/:tenantId/jira-issues', {
+            preHandler: requireUser,
+            schema: {
+                params: tenantParams,
+                querystring: { type: 'object', required: ['pi'], additionalProperties: false, properties: { pi: { type: 'string', minLength: 1, maxLength: 200 } } },
+            },
+        }, async (request, reply) => {
+            reply.header('cache-control', 'no-store');
+            return listPiIssues(pool, { tenantId: request.params.tenantId, actorUserId: request.user.id, pi: request.query.pi });
         });
     }
 

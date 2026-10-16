@@ -78,8 +78,8 @@ serwisów (`render.yaml` ustawia `DATABASE_URL` sam; sekrety mają `sync: false`
 | `GITHUB_APP_ID`, `GITHUB_APP_SLUG`, `GITHUB_APP_PRIVATE_KEY` | tak | tak | Podłączanie repozytoriów (web) i synchronizacja (worker) |
 | `SYNC_INTERVAL_MINUTES` | — | opcjonalnie | Co ile minut synchronizacja (1–1440, domyślnie 15) |
 | `DASHBOARD_DIR` | opcjonalnie | — | Gdzie są pliki dashboardu (`docs/`); bez nich strona `/t/<id>/` odpowiada 503 |
-| `ATLASSIAN_CLIENT_ID`, `ATLASSIAN_CLIENT_SECRET` | tak | — | Aplikacja OAuth w Atlassian (sekcja 5); bez nich połączenie z Jirą jest wyłączone |
-| `TOKEN_ENCRYPTION_KEY` | tak | — | Klucz szyfrujący zapisane tokeny Jiry: `openssl rand -base64 32`. Zmiana klucza = każdy tenant łączy Jirę od nowa |
+| `ATLASSIAN_CLIENT_ID`, `ATLASSIAN_CLIENT_SECRET` | tak | tak | Aplikacja OAuth w Atlassian (sekcja 5); bez nich połączenie z Jirą jest wyłączone |
+| `TOKEN_ENCRYPTION_KEY` | tak | tak | Klucz szyfrujący zapisane tokeny Jiry: `openssl rand -base64 32`. Zmiana klucza = każdy tenant łączy Jirę od nowa |
 
 ## 3. Pierwsze uruchomienie (po stronie użytkownika)
 
@@ -184,3 +184,17 @@ Połączenie (admin tenanta): otwórz `/tenants/<id>/jira/connect`, zaakceptuj d
 kilka witryn Jira, wybierz jedną: `PUT /tenants/<id>/jira/site` z `{ "cloudId": "..." }` (lista w
 `GET /tenants/<id>/jira`). Działanie sprawdzisz przez `GET /tenants/<id>/jira/projects`. Gdy dostęp zostanie
 odwołany w Atlassian albo wygaśnie, `GET /tenants/<id>/jira` pokaże `lastError` — wystarczy połączyć ponownie.
+
+Synchronizacja zadań (admin tenanta):
+
+1. Lista tablic Scrum z witryny: `GET /tenants/<id>/jira/boards`. Tablice Kanban się nie pojawiają — nie mają
+   sprintów, więc nie da się z nich wyznaczyć PI.
+2. Wybór tablic: `PUT /tenants/<id>/jira/boards` z `{ "boardIds": [10, 11] }`. Tablica wyznacza zespół: synchronizowane
+   są tylko zadania z jej sprintów.
+3. Synchronizacja od razu: `POST /tenants/<id>/jira/sync` (worker i tak robi to co przebieg, domyślnie co 15 minut).
+   Pierwsza synchronizacja tablicy pobiera bieżące i poprzednie PI, kolejne tylko bieżące.
+
+PI wynika z nazw sprintów: `Sparks 27.3.2` należy do `PI-27.3`. Jeśli sprinty nazywają się inaczej (np. `Sprint 42`),
+każdy sprint jest osobnym „PI” w widokach. Zmiana witryny Jira usuwa wybrane tablice i pobrane zadania.
+Worker potrzebuje tych samych trzech zmiennych (`ATLASSIAN_*`, `TOKEN_ENCRYPTION_KEY`) co serwis web.
+

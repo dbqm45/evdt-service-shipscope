@@ -60,6 +60,13 @@ services:
         sync: false
       - key: GITHUB_APP_PRIVATE_KEY
         sync: false
+      # Jira issue sync (FR-009) uses the tenants' stored Jira tokens: same three values as the Web Service.
+      - key: ATLASSIAN_CLIENT_ID
+        sync: false
+      - key: ATLASSIAN_CLIENT_SECRET
+        sync: false
+      - key: TOKEN_ENCRYPTION_KEY
+        sync: false
 
 databases:
   - name: shipscope-db

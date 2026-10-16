@@ -16,7 +16,7 @@ test('heartbeatTick: logs a failure without throwing', async () => {
     assert.match(lines[0], /heartbeat failed: connection refused/);
 });
 
-const { runExclusive, syncIntervalMinutes, syncTick, cleanupTick } = require('../worker');
+const { runExclusive, syncIntervalMinutes, syncTick, jiraTick, cleanupTick } = require('../worker');
 
 /** A pool whose client answers the advisory-lock queries; `locked` decides whether the lock is free. */
 function lockPool(locked) {
@@ -68,4 +68,17 @@ test('syncTick and cleanupTick log their outcome and never throw', async () => {
     assert.match(lines[2], /sync failed: db down/);
     assert.match(lines[3], /cleanup done: 4 old deployment records deleted/);
     assert.match(lines[4], /cleanup failed: no db/);
+});
+
+test('jiraTick runs the Jira sync under its own lock, logs its outcome and never throws', async () => {
+    const lines = [];
+    const log = (l) => lines.push(l);
+    const { pool, queries } = lockPool(true);
+    await jiraTick(pool, { clientId: 'x' }, log, { syncAllJira: async ({ atlassian }) => { assert.strictEqual(atlassian.clientId, 'x'); return { tenants: 2, issues: 30, failed: 1 }; } });
+    await jiraTick(lockPool(false).pool, {}, log, { syncAllJira: async () => assert.fail('must not run') });
+    await jiraTick(lockPool(true).pool, {}, log, { syncAllJira: async () => { throw new Error('db down'); } });
+    assert.deepStrictEqual(queries[0], ['SELECT pg_try_advisory_lock($1) AS locked', [727_003]], 'not the deployment sync\'s lock');
+    assert.match(lines[0], /jira sync done: 2 tenants, 30 issues, 1 failed/);
+    assert.match(lines[1], /jira sync skipped/);
+    assert.match(lines[2], /jira sync failed: db down/);
 });

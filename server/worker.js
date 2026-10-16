@@ -1,5 +1,6 @@
 const { createPool, checkConnection } = require('./lib/db');
-const { loadGitHubAppConfig } = require('./lib/config');
+const { loadGitHubAppConfig, loadAtlassianConfig } = require('./lib/config');
+const { syncAllJira } = require('./lib/jira-sync');
 const { syncAll } = require('./lib/deployment-sync');
 const { cleanupAll } = require('./lib/retention');
 
@@ -9,6 +10,7 @@ const DEFAULT_SYNC_INTERVAL_MINUTES = 15;
 // Postgres advisory lock keys: one sync and one cleanup at a time, even with more than one worker instance.
 const SYNC_LOCK = 727_001;
 const CLEANUP_LOCK = 727_002;
+const JIRA_LOCK = 727_003;
 
 const stamp = () => new Date().toISOString();
 
@@ -68,6 +70,17 @@ async function syncTick(pool, app, log = console.log, deps = { syncAll }) {
     }
 }
 
+/** One Jira issue sync pass (FR-009), never overlapping another. Errors are logged, never thrown. */
+async function jiraTick(pool, atlassian, log = console.log, deps = { syncAllJira }) {
+    try {
+        const run = await runExclusive(pool, JIRA_LOCK, () => deps.syncAllJira({ pool, atlassian, log: (m) => log(`${stamp()} ${m}`) }));
+        if (run.skipped) log(`${stamp()} jira sync skipped: another run holds the lock`);
+        else log(`${stamp()} jira sync done: ${run.result.tenants} tenants, ${run.result.issues} issues, ${run.result.failed} failed`);
+    } catch (err) {
+        log(`${stamp()} jira sync failed: ${err.message}`);
+    }
+}
+
 /** The daily retention cleanup, never overlapping another. Errors are logged, never thrown. */
 async function cleanupTick(pool, log = console.log, deps = { cleanupAll }) {
     try {
@@ -91,6 +104,13 @@ if (require.main === module) {
     } else {
         console.log(`${stamp()} GITHUB_APP_* not set: deployment sync is off`);
     }
+    const atlassian = loadAtlassianConfig(process.env);
+    if (atlassian) {
+        timers.push(setInterval(() => jiraTick(pool, atlassian), syncMinutes * 60_000));
+        jiraTick(pool, atlassian);
+    } else {
+        console.log(`${stamp()} ATLASSIAN_* not set: Jira sync is off`);
+    }
     timers.push(setInterval(() => cleanupTick(pool), CLEANUP_INTERVAL_MS));
     cleanupTick(pool);
 
@@ -100,4 +120,4 @@ if (require.main === module) {
     });
 }
 
-module.exports = { heartbeatTick, runExclusive, syncIntervalMinutes, syncTick, cleanupTick };
+module.exports = { heartbeatTick, runExclusive, syncIntervalMinutes, syncTick, jiraTick, cleanupTick };

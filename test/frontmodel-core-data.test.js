@@ -294,6 +294,25 @@ test('API mode: one request to the tenant API, live badge with the last sync tim
     assert.match(boxes.statusBadgeTime.textContent, /^synced \d\d:\d\d · source: ShipScope API$/);
 });
 
+test('API mode: one PI\'s issues come from the tenant API, never from data/jira-issues/*.json', async () => {
+    const urls = [];
+    const fetchImpl = (url, init) => {
+        urls.push([url, init && init.credentials]);
+        return url.includes('PI-27.3') ? jsonResponse([{ key: 'ABC-1' }]) : url.includes('broken') ? jsonResponse({}, 500) : Promise.reject(new Error('offline'));
+    };
+    const { run } = loadApp({ fetchImpl, loc: apiLocation() });
+    run('state = { isFallback: false, jiraIndex: { pis: [{ pi: "PI-27.3", file: "PI-27.3.json" }, { pi: "broken", file: "x.json" }, { pi: "Sprint 4", file: "y.json" }] } }');
+    assert.deepEqual(JSON.parse(JSON.stringify(await run('loadJiraIssuesForPi("PI-27.3")'))), [{ key: 'ABC-1' }]);
+    assert.equal((await run('loadJiraIssuesForPi("broken")')).length, 0);
+    assert.equal((await run('loadJiraIssuesForPi("Sprint 4")')).length, 0);
+    assert.equal((await run('loadJiraIssuesForPi("missing")')).length, 0, 'not in the index: no request');
+    assert.deepEqual(urls, [
+        [`/api/tenants/${TENANT}/jira-issues?pi=PI-27.3`, 'same-origin'],
+        [`/api/tenants/${TENANT}/jira-issues?pi=broken`, 'same-origin'],
+        [`/api/tenants/${TENANT}/jira-issues?pi=Sprint%204`, 'same-origin'],
+    ]);
+});
+
 test('API mode: never falls back to the sample data -- an error shows an empty dashboard with an error badge', async () => {
     for (const fetchImpl of [() => jsonResponse({}, 500), () => Promise.reject(new Error('offline'))]) {
         const { boxes, run } = loadApp({ fetchImpl, loc: apiLocation() });

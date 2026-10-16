@@ -134,4 +134,111 @@ async function fetchProjects({ accessToken, cloudId, fetch: fetchFn = fetch }) {
     return projects;
 }
 
-module.exports = { SCOPES, AtlassianError, buildAuthorizeUrl, exchangeCode, refreshAccessToken, fetchJiraSites, fetchProjects };
+const ISSUE_PAGE_SIZE = 100;
+// A board's or a search's pages beyond this are not read: a guard against a runaway loop, far above any real PI.
+const MAX_ISSUE_PAGES = 50;
+
+/** Agile API pages (`values` + `isLast`), each value kept only if `pick` returns it. */
+async function agilePages(url, accessToken, fetchFn, pick) {
+    const out = [];
+    for (let page = 0, startAt = 0; page < MAX_PAGES; page++) {
+        const sep = url.includes('?') ? '&' : '?';
+        const body = await getJson(`${url}${sep}startAt=${startAt}&maxResults=50`, accessToken, fetchFn);
+        if (!Array.isArray(body?.values)) throw new AtlassianError(`${new URL(url).pathname} response has no values list`);
+        for (const v of body.values) {
+            const picked = pick(v);
+            if (picked) out.push(picked);
+        }
+        if (body.isLast !== false || body.values.length === 0) break;
+        startAt += body.values.length;
+    }
+    return out;
+}
+
+/**
+ * The site's Scrum boards (kanban boards have no sprints, so no PI).
+ *
+ * @param {{ accessToken: string, cloudId: string, fetch?: typeof fetch }} input
+ * @returns {Promise<Array<{ boardId: number, name: string, projectKey: string|null, projectName: string|null }>>}
+ * @throws {AtlassianError}
+ */
+function fetchBoards({ accessToken, cloudId, fetch: fetchFn = fetch }) {
+    return agilePages(`${API_BASE}/${encodeURIComponent(cloudId)}/rest/agile/1.0/board?type=scrum`, accessToken, fetchFn, (b) => (
+        Number.isSafeInteger(b?.id) && b.id > 0 && typeof b.name === 'string'
+            ? {
+                boardId: b.id,
+                name: b.name.slice(0, 200),
+                projectKey: typeof b.location?.projectKey === 'string' ? b.location.projectKey : null,
+                projectName: typeof b.location?.projectName === 'string' ? b.location.projectName.slice(0, 200) : null,
+            }
+            : null
+    ));
+}
+
+const isDate = (v) => typeof v === 'string' && !Number.isNaN(Date.parse(v));
+
+/**
+ * Every sprint of a board (active, future and closed).
+ *
+ * @param {{ accessToken: string, cloudId: string, boardId: number, fetch?: typeof fetch }} input
+ * @returns {Promise<Array<{ id: number, name: string, state: 'active'|'future'|'closed', startDate: string|null, endDate: string|null }>>}
+ * @throws {AtlassianError}
+ */
+function fetchSprints({ accessToken, cloudId, boardId, fetch: fetchFn = fetch }) {
+    return agilePages(`${API_BASE}/${encodeURIComponent(cloudId)}/rest/agile/1.0/board/${boardId}/sprint`, accessToken, fetchFn, (sp) => (
+        Number.isSafeInteger(sp?.id) && typeof sp.name === 'string' && ['active', 'future', 'closed'].includes(sp.state)
+            ? { id: sp.id, name: sp.name.slice(0, 200), state: sp.state, startDate: isDate(sp.startDate) ? sp.startDate : null, endDate: isDate(sp.endDate) ? sp.endDate : null }
+            : null
+    ));
+}
+
+/**
+ * The ids of the custom fields the issue mapping reads. Sprint and Epic Link by their fixed schema type; Flagged
+ * by name (it has no dedicated type) -- the same lookup as the file-based scripts/lib/jira-issues.js.
+ *
+ * @param {{ accessToken: string, cloudId: string, fetch?: typeof fetch }} input
+ * @returns {Promise<{ sprintFieldId: string|null, epicLinkFieldId: string|null, flaggedFieldId: string|null }>}
+ * @throws {AtlassianError}
+ */
+async function fetchFieldIds({ accessToken, cloudId, fetch: fetchFn = fetch }) {
+    const fields = await getJson(`${API_BASE}/${encodeURIComponent(cloudId)}/rest/api/3/field`, accessToken, fetchFn);
+    if (!Array.isArray(fields)) throw new AtlassianError('field list response is not a list');
+    const idOf = (match) => {
+        const f = fields.find((x) => typeof x?.id === 'string' && match(x));
+        return f ? f.id : null;
+    };
+    return {
+        sprintFieldId: idOf((f) => f.schema?.custom === 'com.pyxis.greenhopper.jira:gh-sprint'),
+        epicLinkFieldId: idOf((f) => f.schema?.custom === 'com.pyxis.greenhopper.jira:gh-epic-link'),
+        flaggedFieldId: idOf((f) => typeof f.name === 'string' && f.name.toLowerCase() === 'flagged'),
+    };
+}
+
+/**
+ * All issues matching a JQL query (the token-paged /search/jql endpoint), raw.
+ *
+ * @param {{ accessToken: string, cloudId: string, jql: string, fields: string[], fetch?: typeof fetch }} input
+ * @returns {Promise<object[]>}
+ * @throws {AtlassianError}
+ */
+async function searchIssues({ accessToken, cloudId, jql, fields, fetch: fetchFn = fetch }) {
+    const issues = [];
+    let token = null;
+    for (let page = 0; page < MAX_ISSUE_PAGES; page++) {
+        // The jql goes with every page: the endpoint ties nextPageToken to the query it was issued for.
+        let url = `${API_BASE}/${encodeURIComponent(cloudId)}/rest/api/3/search/jql?maxResults=${ISSUE_PAGE_SIZE}`
+            + `&fields=${encodeURIComponent(fields.join(','))}&jql=${encodeURIComponent(jql)}`;
+        if (token) url += `&nextPageToken=${encodeURIComponent(token)}`;
+        const body = await getJson(url, accessToken, fetchFn);
+        if (!Array.isArray(body?.issues)) throw new AtlassianError('issue search response has no issues list');
+        issues.push(...body.issues);
+        token = typeof body.nextPageToken === 'string' && body.nextPageToken ? body.nextPageToken : null;
+        if (body.isLast === true || !token) return issues;
+    }
+    throw new AtlassianError(`issue search exceeded ${MAX_ISSUE_PAGES * ISSUE_PAGE_SIZE} issues`);
+}
+
+module.exports = {
+    SCOPES, AtlassianError, buildAuthorizeUrl, exchangeCode, refreshAccessToken, fetchJiraSites, fetchProjects,
+    fetchBoards, fetchSprints, fetchFieldIds, searchIssues,
+};

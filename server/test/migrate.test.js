@@ -40,6 +40,7 @@ test('runMigrations: applies cleanly from empty and creates the expected tables'
         '007_manual_and_display_names.sql',
         '008_flags.sql',
         '009_jira_connections.sql',
+        '010_jira_issues.sql',
     ]);
 });
 
