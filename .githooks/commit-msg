@@ -1,0 +1,3 @@
+#!/bin/sh
+# Rejects commit messages that do not follow Conventional Commits. Enable once per clone: npm run hooks:install
+exec node scripts/check-commit-message.js --file "$1"

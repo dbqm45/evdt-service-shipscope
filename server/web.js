@@ -3,6 +3,7 @@ const Fastify = require('fastify');
 const cookie = require('@fastify/cookie');
 const { createPool, checkConnection } = require('./lib/db');
 const { loadAuthConfig } = require('./lib/config');
+const { APP_VERSION } = require('./lib/version');
 const { buildAuthorizeUrl, exchangeCode, fetchGitHubUser, GitHubOAuthError } = require('./lib/github-oauth');
 const { createSession, getSessionUser, deleteSession } = require('./lib/sessions');
 const { upsertUser, createTenantWithOwner, listTenantsForUser, listMembersIfMember } = require('./lib/tenants');
@@ -47,7 +48,7 @@ function buildApp({ pool, auth, fetch: fetchFn = fetch, logger = false }) {
         return reply.code(500).send({ error: 'Internal Server Error' });
     });
 
-    app.get('/health', async () => ({ status: 'ok' }));
+    app.get('/health', async () => ({ status: 'ok', version: APP_VERSION }));
 
     app.get('/health/db', async (request, reply) => {
         try {

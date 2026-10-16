@@ -7,6 +7,16 @@ dashboard, not a published package), so entries are grouped by date instead. See
 ShipScope is, `CLAUDE.md` for the technical reference, and `FAQ.md` for how specific numbers/badges are
 calculated.
 
+## [0.1.0] - 2026-10-16
+
+First versioned release. From here on every merge to `main` that contains a `feat`, `fix`, `perf` or breaking
+change gets the next version automatically (see `RELEASING.md`); the dated sections below predate versioning.
+
+### Added
+
+- **SHP:** GitHub sign-in, sessions and tenant-scoped HTTP routes in `server/` (FR-001)
+- **SHP:** automatic versioning: Conventional Commits, `chore(release)` commit, tag `vX.Y.Z` and GitHub Release on `main`
+
 ## 2026-10-16
 
 - **Added: GitHub sign-in for the `server/` backend (FR-001).** Users sign in through the ShipScope GitHub

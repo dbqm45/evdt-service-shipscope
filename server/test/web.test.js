@@ -1,6 +1,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const { buildApp } = require('../web');
+const { version } = require('../package.json');
 
 const AUTH = {
     githubClientId: 'Iv1.test',
@@ -16,7 +17,8 @@ test('GET /health returns ok without touching the pool', async (t) => {
 
     const res = await app.inject({ method: 'GET', url: '/health' });
     assert.strictEqual(res.statusCode, 200);
-    assert.deepStrictEqual(res.json(), { status: 'ok' });
+    assert.deepStrictEqual(res.json(), { status: 'ok', version });
+    assert.match(version, /^\d+\.\d+\.\d+$/);
     assert.strictEqual(query.mock.callCount(), 0);
 });
 

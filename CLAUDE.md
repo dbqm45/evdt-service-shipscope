@@ -106,6 +106,18 @@ read returns zero rows and an unscoped write is an RLS error (migration `002`). 
 inside `server/`; see `@server/README.md` for routes, the security model, local sign-in with a dev GitHub App,
 and the real-Postgres test setup.
 
+## Versioning (`RELEASING.md`)
+
+One SemVer number for the whole application, in `package.json`, `server/package.json` and
+`server/package-lock.json` (kept equal; `test/release.test.js` checks it), shown by the server in `GET /health`.
+Commits and PR titles follow Conventional Commits (`feat(SHP): ...`; PRs are squash-merged, so the title counts),
+checked by `.github/workflows/pr-title.yml` and the optional `.githooks/commit-msg` (`npm run hooks:install`).
+After every merge to `main`, `.github/workflows/release.yml` runs `scripts/release.js --ci`, commits
+`chore(release): X.Y.Z` with the bumped versions and an entry on top of `CHANGELOG.md`/`CHANGELOG.pl.md`, runs the
+tests on that commit, then tags `vX.Y.Z` and creates a GitHub Release from `scripts/release-notes.js`. Same
+mechanism as `dbqm45/ci_for_sdlc` (no Docker image here); `scripts/lib/conventional.js` holds the rules. Never
+edit the version or the `## [X.Y.Z]` changelog entries by hand outside a `chore(release)` PR.
+
 ## Branch model: `main` vs `live`
 
 This is the most important structural thing to understand:

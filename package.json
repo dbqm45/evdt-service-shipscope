@@ -1,8 +1,12 @@
 {
   "name": "evdt-service-shipscope",
+  "version": "0.1.0",
   "private": true,
-  "description": "ShipScope — no dependencies; this file only exposes `npm test`.",
+  "description": "ShipScope — no dependencies; this file exposes `npm test` and the release scripts (RELEASING.md).",
   "scripts": {
-    "test": "node --test \"test/*.test.js\""
+    "test": "node --test \"test/*.test.js\"",
+    "release": "node scripts/release.js",
+    "lint:commit": "node scripts/check-commit-message.js",
+    "hooks:install": "git config core.hooksPath .githooks"
   }
 }
