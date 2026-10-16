@@ -299,11 +299,11 @@ describe('range resolution', () => {
 
         const byId = Object.fromEntries(h.readJson(ws, D).map(x => [x.id, x]));
 
-        assert.deepEqual(byId['gh-21'].rollback, { toRef: 'sOld' });
+        assert.deepEqual(byId['gh-21'].rollback, { toRef: 'sNew' }, 'the ref the environment went back to');
         assert.equal(byId['gh-21'].commitUrl, 'https://github.com/org/app/compare/sOld...sNew');
         assert.deepEqual(byId['gh-21'].relatedIssues, ['EVP-9']);
         // gh-22 is the same ref as gh-21: range reused instead of collapsing to an empty self-compare.
-        assert.deepEqual(byId['gh-22'].rollback, { toRef: 'sOld' });
+        assert.deepEqual(byId['gh-22'].rollback, { toRef: 'sNew' });
         assert.equal(byId['gh-22'].commitUrl, 'https://github.com/org/app/compare/sOld...sNew');
         assert.deepEqual(byId['gh-22'].relatedIssues, ['EVP-9']);
         assert.equal(byId['gh-20'].relatedIssues.length, 0);

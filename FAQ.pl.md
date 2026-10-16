@@ -25,7 +25,7 @@ tym samym środowisku, niezależnie od tego, czy był to świadomy revert, czy b
 
 Ponieważ wykorzystuje to porównanie, które i tak jest wykonywane, wykrycie rollbacku nie wymaga żadnego
 dodatkowego zapytania do GitHuba. (Skrypt: `sync-github-deployments.js`, funkcja `issuesInRange`, która
-zwraca `status` porównania; `main()` zamienia `status === 'behind'` na `rollback: { toRef: <poprzedni commit> }`.)
+zwraca `status` porównania; `main()` zamienia `status === 'behind'` na `rollback: { toRef: <commit, do którego cofnął ten deployment> }`; ten commit pokazuje znaczek rollbacku.)
 
 Dla deploymentów zapisanych przed wprowadzeniem tego sprawdzenia, jednorazowy skrypt
 `backfill-deployment-metadata.js` wykonuje to samo porównanie retroaktywnie, jedno zapytanie do GitHub API na

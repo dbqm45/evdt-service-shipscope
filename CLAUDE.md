@@ -284,7 +284,8 @@ stale/example data, not the live state.
   `relatedIssues` (Jira keys parsed out of commit messages) and optional `resolvedFlags`. Records also carry
   `workflowRunUrl`/`durationMs` (from the deployment's GitHub Actions status history), `manual` (whether the
   triggering workflow run was `workflow_dispatch`), `commitUrl` (a `.../compare/{prev}...{sha}` range
-  once a previous successful deploy on that env exists, else a single-commit link), and `rollback: { toRef }`
+  once a previous successful deploy on that env exists, else a single-commit link), and `rollback: { toRef }` (the ref this deploy went back to -- what the
+  rollback badge names; records written before 2026-10-16 hold the previous ref instead)
   when the GitHub compare between this deploy's commit and the previous one on that same env came back
   `status: "behind"` — i.e. this commit is an *ancestor* of what was already live, so the environment moved
   backwards in history. Detected from the exact same compare call already made for `relatedIssues`/`commitUrl`,

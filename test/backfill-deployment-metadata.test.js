@@ -159,7 +159,7 @@ describe('full backfill', () => {
         assert.equal(by['gh-107'].version, 'fffffff6');
         assert.equal(by['gh-108'].version, 'v3.0.0');
         // Rollbacks.
-        assert.deepEqual(by['gh-102'].rollback, { toRef: 'aaaaaaa1' });
+        assert.deepEqual(by['gh-102'].rollback, { toRef: 'bbbbbbb2' }, 'the ref the environment went back to');
         assert.equal(by['gh-108'].rollback, null);
         assert.equal(by['gh-109'].rollback, null);
         assert.equal(by['gh-107'].rollback, null);

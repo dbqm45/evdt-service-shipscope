@@ -25,7 +25,7 @@ deliberate revert or a mistake.
 
 Because this reuses a comparison that is already performed, detecting a rollback requires no additional call
 to GitHub. (Script: `sync-github-deployments.js`, function `issuesInRange`, which returns the comparison
-`status`; `main()` converts `status === 'behind'` into `rollback: { toRef: <previous commit> }`.)
+`status`; `main()` converts `status === 'behind'` into `rollback: { toRef: <the commit this deploy went back to> }`; the rollback badge names that commit.)
 
 For deployments recorded before this check existed, the one-off `backfill-deployment-metadata.js` script
 performs the same comparison retroactively, one GitHub API call per deployment not yet checked.
