@@ -7,6 +7,17 @@ dashboard, not a published package), so entries are grouped by date instead. See
 ShipScope is, `CLAUDE.md` for the technical reference, and `FAQ.md` for how specific numbers/badges are
 calculated.
 
+## 2026-10-16
+
+- **Added: GitHub sign-in for the `server/` backend (FR-001).** Users sign in through the ShipScope GitHub
+  App, get a 14-day server-side session (only a hash of the token is stored; the GitHub token is never
+  stored), and can create a tenant and list its members over HTTP (`/auth/github/login`, `/me`,
+  `POST /tenants`, `GET /tenants/:id/members`). The backend now uses Fastify (strict input validation) and
+  `@fastify/cookie`. Row-Level Security on memberships is tightened: writes only into the tenant the request
+  is scoped to, and a user can list their own tenants. `DATABASE_SSL=false` allows a local Postgres without
+  TLS. Needs `GITHUB_APP_CLIENT_ID`, `GITHUB_APP_CLIENT_SECRET` and `PUBLIC_BASE_URL`; setup in
+  `server/README.md`.
+
 ## 2026-10-15
 
 - **Added: `server/`, a walking-skeleton backend deployed to Render.** Introduces this repo's first-ever

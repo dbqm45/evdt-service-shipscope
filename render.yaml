@@ -15,6 +15,13 @@ services:
           property: connectionString
       - key: NODE_ENV
         value: production
+      # GitHub sign-in (FR-001). sync: false = Render prompts for the value; it never comes from this file.
+      - key: GITHUB_APP_CLIENT_ID
+        sync: false
+      - key: GITHUB_APP_CLIENT_SECRET
+        sync: false
+      - key: PUBLIC_BASE_URL # the service's public https URL, e.g. https://shipscope-web.onrender.com
+        sync: false
 
   - type: worker
     name: shipscope-worker

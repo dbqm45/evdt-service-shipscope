@@ -92,13 +92,19 @@ Service and the Background Worker). It is a separate dependency boundary from th
 `package.json`, its own `node_modules/` (gitignored), its own `test/` directory — nothing at the root changes
 because of it, and root `npm test` still only ever runs the top-level `test/*.test.js` scripts.
 
-Today it is a **walking skeleton only** — `GET /health` and `GET /health/db` on the Web Service, a heartbeat
-loop on the Background Worker — proving the deploy pipeline works, not implementing any PRD feature yet. It
-introduces **this repo's first-ever third-party dependency**, `pg` (node-postgres), scoped only to
-`server/package.json`; the rest of the repo remains dependency-free. Run `npm install && npm test` inside
-`server/` to work on it; see `@server/README.md` for the full local-dev and deploy workflow. No web framework
-has been chosen yet for real feature work (OAuth, webhook handling) — that decision is deliberately deferred,
-not made by default while building the skeleton.
+It has the deploy-pipeline proof (`GET /health`, `GET /health/db`, a heartbeat Background Worker), the
+tenant data model (FR-002/FR-003, `lib/tenants.js`, migrations in `server/migrations/`, applied by the
+hand-rolled `lib/migrate.js`) and GitHub sign-in (FR-001): Fastify routes in `web.js`, the GitHub App's
+user-authorization flow in `lib/github-oauth.js`, server-side sessions in `lib/sessions.js` (only a SHA-256 of
+the cookie token is stored; the GitHub user token is never stored). Dependencies, all scoped to
+`server/package.json` (the rest of the repo remains dependency-free): `pg`, `fastify`, `@fastify/cookie`.
+Fastify was chosen for its built-in JSON-schema validation of request input; it runs with
+`removeAdditional: false, coerceTypes: false`, so unknown fields and wrong types are a 400, never silently
+fixed. **Every query on an RLS table (`memberships`) must go through `lib/scope.js`'s `withScope()`**, which
+sets `app.current_tenant_id`/`app.current_user_id` with transaction-local `set_config(..., true)`; an unscoped
+read returns zero rows and an unscoped write is an RLS error (migration `002`). Run `npm install && npm test`
+inside `server/`; see `@server/README.md` for routes, the security model, local sign-in with a dev GitHub App,
+and the real-Postgres test setup.
 
 ## Branch model: `main` vs `live`
 

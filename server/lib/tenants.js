@@ -1,3 +1,5 @@
+const { setScope, withScope } = require('./scope');
+
 const VALID_ROLES = new Set(['admin', 'member']);
 
 class TenantNotFoundError extends Error {}
@@ -11,6 +13,14 @@ function toTenant(row) {
     return { id: row.id, name: row.name, createdAt: row.created_at };
 }
 
+/**
+ * Inserts a user by GitHub identity, or refreshes githubLogin if that githubUserId already exists
+ * (logins can be renamed on GitHub; the numeric id can't). users has no RLS -- it's not tenant data.
+ *
+ * @param {import('pg').Pool|import('pg').PoolClient} client
+ * @param {{ githubUserId: number, githubLogin: string }} input
+ * @returns {Promise<{ id: string, githubUserId: number, githubLogin: string }>}
+ */
 async function upsertUser(client, { githubUserId, githubLogin }) {
     const { rows } = await client.query(
         `INSERT INTO users (github_user_id, github_login)
@@ -47,6 +57,8 @@ async function createTenantWithOwner(pool, { name, githubUserId, githubLogin }) 
             [name]
         );
         const tenant = toTenant(tenantRows[0]);
+        // The memberships write policy only accepts rows for the tenant this transaction is scoped to.
+        await setScope(client, { tenantId: tenant.id });
 
         const user = await upsertUser(client, { githubUserId, githubLogin });
 
@@ -85,6 +97,7 @@ async function addMember(pool, { tenantId, githubUserId, githubLogin, role }) {
     const client = await pool.connect();
     try {
         await client.query('BEGIN');
+        await setScope(client, { tenantId });
 
         const user = await upsertUser(client, { githubUserId, githubLogin });
 
@@ -105,4 +118,57 @@ async function addMember(pool, { tenantId, githubUserId, githubLogin, role }) {
     }
 }
 
-module.exports = { createTenantWithOwner, addMember, TenantNotFoundError, AlreadyMemberError };
+/**
+ * Lists every tenant this user belongs to, with their role in each. Reads through the
+ * memberships_self_read RLS policy (user scope), so no tenant has to be chosen first.
+ *
+ * @param {import('pg').Pool} pool
+ * @param {string} userId
+ * @returns {Promise<Array<{ id: string, name: string, role: 'admin'|'member' }>>}
+ */
+async function listTenantsForUser(pool, userId) {
+    return withScope(pool, { userId }, async (client) => {
+        const { rows } = await client.query(
+            `SELECT t.id, t.name, m.role
+             FROM memberships m JOIN tenants t ON t.id = m.tenant_id
+             WHERE m.user_id = $1
+             ORDER BY t.created_at`,
+            [userId]
+        );
+        return rows.map((row) => ({ id: row.id, name: row.name, role: row.role }));
+    });
+}
+
+/**
+ * Lists a tenant's members, but only if userId is itself a member of that tenant -- returns null
+ * otherwise, so a caller can't tell "tenant doesn't exist" apart from "not yours" (both 404).
+ * Filters by tenant in SQL and also runs under tenant scope, so RLS still hides every other
+ * tenant's rows if that WHERE clause were ever dropped.
+ *
+ * @param {import('pg').Pool} pool
+ * @param {{ tenantId: string, userId: string }} input
+ * @returns {Promise<Array<{ userId: string, githubLogin: string, role: 'admin'|'member' }>|null>}
+ */
+async function listMembersIfMember(pool, { tenantId, userId }) {
+    return withScope(pool, { tenantId }, async (client) => {
+        const { rows } = await client.query(
+            `SELECT u.id AS user_id, u.github_login, m.role
+             FROM memberships m JOIN users u ON u.id = m.user_id
+             WHERE m.tenant_id = $1
+             ORDER BY m.created_at`,
+            [tenantId]
+        );
+        if (!rows.some((row) => row.user_id === userId)) return null;
+        return rows.map((row) => ({ userId: row.user_id, githubLogin: row.github_login, role: row.role }));
+    });
+}
+
+module.exports = {
+    createTenantWithOwner,
+    addMember,
+    upsertUser,
+    listTenantsForUser,
+    listMembersIfMember,
+    TenantNotFoundError,
+    AlreadyMemberError,
+};
