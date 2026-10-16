@@ -155,6 +155,9 @@ not stripped or coerced).
 
 ## Running locally
 
+Everything to configure outside the code (GitHub App settings and permissions, environment variables,
+first steps for a tenant) is collected in [SETUP.pl.md](SETUP.pl.md) (Polish).
+
 1. Start Postgres and apply migrations:
 
    ```bash
