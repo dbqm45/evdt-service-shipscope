@@ -198,7 +198,21 @@ Synchronizacja zadań (admin tenanta):
 3. Synchronizacja od razu: `POST /tenants/<id>/jira/sync` (worker i tak robi to co przebieg, domyślnie co 15 minut).
    Pierwsza synchronizacja tablicy pobiera bieżące i poprzednie PI, kolejne tylko bieżące.
 
-PI wynika z nazw sprintów: `Sparks 27.3.2` należy do `PI-27.3`. Jeśli sprinty nazywają się inaczej (np. `Sprint 42`),
-każdy sprint jest osobnym „PI” w widokach. Zmiana witryny Jira usuwa wybrane tablice i pobrane zadania.
+Rytm tablicy (każda tablica osobno, więc zespoły SAFe i nie-SAFe mogą być w jednym tenancie):
+`PUT /tenants/<id>/jira/boards/<boardId>` z `{ "rhythm": "...", "piTemplate": null }`.
+
+| `rhythm` | Działanie |
+|---|---|
+| `auto` (domyślnie) | Jeśli któryś sprint tablicy ma nazwę w konwencji PI (`Sparks 27.3.2` → `PI-27.3`), sprinty są grupowane w PI; w przeciwnym razie każdy sprint jest osobnym przyrostem. |
+| `pi` | Sprinty grupowane w PI według szablonu nazwy (albo domyślnej konwencji `27.3.1`). Sprint niepasujący do szablonu jest osobnym przyrostem. |
+| `sprint` | Każdy sprint osobno (Scrum), nawet gdy nazwy wyglądają jak PI. |
+
+`piTemplate` — własna konwencja nazw PI, np. `PI {pi} / Iteration {n}` albo `Release {pi} (week {n})`: `{pi}` (wymagane,
+dokładnie raz) to numer PI z kropkami, `{n}` numer sprintu, `*` dowolny tekst, reszta dosłownie, bez rozróżniania
+wielkości liter. Zmiana rytmu usuwa zapisane zadania tablicy; następna synchronizacja pobiera je ponownie.
+
+Gdy wybrane tablice są w różnych bieżących przyrostach (np. jeden zespół w `PI-27.3`, drugi w `Sprint 7`), dashboard
+otwiera się na „Now: PI-27.3, Sprint 7” — zadaniach bieżącego przyrostu każdej tablicy razem. Pozostałe przyrosty
+są dalej do wyboru w selektorze. Zmiana witryny Jira usuwa wybrane tablice i pobrane zadania.
 Worker potrzebuje tych samych trzech zmiennych (`ATLASSIAN_*`, `TOKEN_ENCRYPTION_KEY`) co serwis web.
 

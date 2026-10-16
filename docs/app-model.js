@@ -245,9 +245,10 @@ function issueLastChange(issue){
     return dates.reduce((latest, d) => (d > latest ? d : latest));
 }
 
-/** True if this looks like a real PI value (e.g. "PI-24.4"), not a placeholder like "—". */
+/** True for a real increment -- a SAFe PI ("PI-24.4") or, for a team that doesn't work in PIs, a sprint ("PAY Sprint
+ *  1") -- and false for a placeholder like "—" or nothing at all. */
 function isRealPi(pi){
-    return !!pi && pi !== '—' && /PI-?\d+\.\d+/i.test(pi);
+    return !!pi && pi !== '—';
 }
 
 /** Sorts PI labels ("PI-27.2") and sprint names (any string with a "27.2.3"-shaped run of numbers in it,
@@ -433,6 +434,26 @@ function currentPi(){
     return (state.jiraIndex && state.jiraIndex.currentPi) || null;
 }
 
+/** The index entry of an increment (`data/jira-issues/index.json`'s `pis`), or null. */
+function incrementEntry(pi){
+    return ((state.jiraIndex && state.jiraIndex.pis) || []).find(e => e.pi === pi) || null;
+}
+
+/** How an increment is shown: its label when the index gives one (the server's "Now" entry), else its name. */
+function incrementLabel(pi){
+    const entry = incrementEntry(pi);
+
+    return (entry && entry.label) || pi;
+}
+
+/** The real increments the selected one stands for: itself, or -- for the server's "Now" entry, which joins every
+ *  team's current increment (a SAFe PI next to a Scrum team's sprint) -- each of those. */
+function selectedIncrements(){
+    const entry = incrementEntry(state.selectedPi);
+
+    return entry && Array.isArray(entry.includes) ? entry.includes : [state.selectedPi];
+}
+
 /** The one sentinel `state.selectedSprint` value — anything else is a literal sprint name (`issue.sprint`,
  *  e.g. "Sparks 27.3.1") to filter down to directly. `''` ("All sprints") is Product view's long-standing
  *  default scope (the whole PI). Deliberately no separate "current sprint" sentinel, for the same reason
@@ -518,7 +539,7 @@ function issuesInSprintScope(issues){
 function piContinuationBadge(issueKey){
     const entry = state.issueStatusIndex[issueKey];
 
-    if (!entry || !entry.pi || entry.pi === state.selectedPi) {
+    if (!entry || !entry.pi || selectedIncrements().includes(entry.pi)) {
         return '';
     }
 

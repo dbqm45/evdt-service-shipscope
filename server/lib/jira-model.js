@@ -5,21 +5,67 @@
  * board being synced, so the file-based Team-field and label heuristics are not needed.
  */
 
+const DEFAULT_PI_PATTERN = /(\d+\.\d+)\.\d+/;
+const TEMPLATE_MAX_LENGTH = 100;
+
+class RhythmTemplateError extends Error {}
+
 /** "Sparks 27.3.1" -> "PI-27.3" (the SAFe naming the file-based sync relies on). */
-function extractPiFromSprintName(name) {
-    const match = /(\d+\.\d+)\.\d+/.exec(name || '');
+function extractPiFromSprintName(name, pattern = DEFAULT_PI_PATTERN) {
+    const match = pattern.exec(name || '');
     return match ? `PI-${match[1]}` : null;
 }
 
 /**
- * The PI a sprint belongs to. Teams that don't name sprints after a PI ("Sprint 42") still get a dashboard: the
- * sprint itself is their increment.
+ * An admin's PI naming as a pattern. `{pi}` (required, once) is the PI number, dotted digits like "27.3"; `{n}` is
+ * the sprint number within it; `*` is any text; everything else is literal (case-insensitive, matched anywhere in
+ * the sprint name). Not a raw regular expression on purpose: a user-supplied regex can be made to backtrack for
+ * ever, this only ever builds simple, bounded ones.
+ *
+ * @param {string} template e.g. "PI {pi} / Iteration {n}"
+ * @returns {RegExp}
+ * @throws {RhythmTemplateError}
+ */
+function compileTemplate(template) {
+    if (typeof template !== 'string' || !template.trim() || template.length > TEMPLATE_MAX_LENGTH) {
+        throw new RhythmTemplateError(`The PI template must be 1-${TEMPLATE_MAX_LENGTH} characters`);
+    }
+    if (template.split('{pi}').length !== 2) throw new RhythmTemplateError('The PI template must contain {pi} exactly once');
+    const source = template.split(/(\{pi\}|\{n\}|\*)/).filter(Boolean).map((part) => {
+        if (part === '{pi}') return '(\\d+(?:\\.\\d+)?)';
+        if (part === '{n}') return '\\d+';
+        if (part === '*') return '.*?';
+        return part.replace(/[.+?^${}()|[\]\\*]/g, '\\$&').replace(/\s+/g, '\\s+');
+    }).join('');
+    return new RegExp(source, 'i');
+}
+
+/**
+ * How a board's sprints group into increments. `pi`: by the PI in their names (the admin's template, else the SAFe
+ * default), a sprint without one being its own increment; `sprint`: every sprint on its own; `auto`: `pi` when any
+ * of the board's sprints follows the PI naming.
+ *
+ * @param {{ rhythm: 'auto'|'pi'|'sprint', piTemplate: string|null }} board
+ * @param {Array<{ name: string }>} sprints
+ * @returns {{ kind: 'pi'|'sprint', pattern: RegExp|null }}
+ */
+function rhythmOf({ rhythm, piTemplate }, sprints) {
+    if (rhythm === 'sprint') return { kind: 'sprint', pattern: null };
+    const pattern = piTemplate ? compileTemplate(piTemplate) : DEFAULT_PI_PATTERN;
+    if (rhythm === 'pi' || sprints.some((s) => pattern.test(s.name))) return { kind: 'pi', pattern };
+    return { kind: 'sprint', pattern: null };
+}
+
+/**
+ * The increment a sprint belongs to under a rhythm (by default the SAFe one). A sprint not named after a PI is its
+ * own increment, so a team that doesn't use PIs still gets a dashboard.
  *
  * @param {string} name
+ * @param {{ kind: string, pattern: RegExp|null }} [rhythm]
  * @returns {string}
  */
-function piOfSprint(name) {
-    return extractPiFromSprintName(name) || name;
+function piOfSprint(name, rhythm = { kind: 'pi', pattern: DEFAULT_PI_PATTERN }) {
+    return (rhythm.kind === 'pi' && extractPiFromSprintName(name, rhythm.pattern)) || name;
 }
 
 /** Descending by every embedded number, left to right ("PI-27.3" before "PI-27.2"); same as comparePiDesc in scripts/. */
@@ -35,31 +81,44 @@ function comparePiDesc(a, b) {
 }
 
 /**
- * The board's PI right now: its active sprint's; between sprints, the next one to start, else the last one that
- * ended (the gap between two sprints is not "no current PI" -- a real bug the file-based sync once had).
+ * The board's increment right now: its active sprint's; between sprints, the next one to start, else the last one
+ * that ended (the gap between two sprints is not "no current PI" -- a real bug the file-based sync once had).
  *
  * @param {Array<{ name: string, state: string, startDate: string|null, endDate: string|null }>} sprints
+ * @param {{ kind: string, pattern: RegExp|null }} [rhythm]
  * @returns {string|null}
  */
-function currentPiOf(sprints) {
-    const active = sprints.filter((s) => s.state === 'active').map((s) => piOfSprint(s.name)).sort(comparePiDesc);
+function currentPiOf(sprints, rhythm) {
+    const active = sprints.filter((s) => s.state === 'active').map((s) => piOfSprint(s.name, rhythm)).sort(comparePiDesc);
     if (active.length) return active[0];
     const time = (d, fallback) => (d ? Date.parse(d) : fallback);
     const future = sprints.filter((s) => s.state === 'future').sort((a, b) => time(a.startDate, Infinity) - time(b.startDate, Infinity));
-    if (future.length) return piOfSprint(future[0].name);
+    if (future.length) return piOfSprint(future[0].name, rhythm);
     const closed = sprints.filter((s) => s.state === 'closed').sort((a, b) => time(b.endDate, -Infinity) - time(a.endDate, -Infinity));
-    return closed.length ? piOfSprint(closed[0].name) : null;
+    return closed.length ? piOfSprint(closed[0].name, rhythm) : null;
 }
 
 /**
- * The PI just before `pi` among a board's sprints, or null.
+ * The increment just before `pi` among a board's sprints (by when its sprints started), or null.
  *
- * @param {Array<{ name: string }>} sprints
+ * @param {Array<{ name: string, startDate?: string|null }>} sprints
  * @param {string} pi
+ * @param {{ kind: string, pattern: RegExp|null }} [rhythm]
  * @returns {string|null}
  */
-function previousPiOf(sprints, pi) {
-    const pis = [...new Set(sprints.map((s) => piOfSprint(s.name)))].sort(comparePiDesc);
+function previousPiOf(sprints, pi, rhythm) {
+    // Ordered by time when every increment has a date ("Sprint 10" comes after "Sprint 9", and sprint names need
+    // not contain numbers at all); a future sprint without one is the newest. Otherwise by name.
+    const firstStart = new Map();
+    for (const s of sprints) {
+        const inc = piOfSprint(s.name, rhythm);
+        const date = s.startDate || s.endDate;
+        const t = date ? Date.parse(date) : s.state === 'future' ? Infinity : NaN;
+        const before = firstStart.get(inc);
+        firstStart.set(inc, before === undefined || t < before ? t : before);
+    }
+    const datedAll = [...firstStart.values()].every((t) => !Number.isNaN(t));
+    const pis = [...firstStart.keys()].sort((a, b) => (datedAll && (firstStart.get(b) - firstStart.get(a))) || comparePiDesc(a, b));
     const i = pis.indexOf(pi);
     return i >= 0 && i + 1 < pis.length ? pis[i + 1] : null;
 }
@@ -144,4 +203,6 @@ function mapIssue(raw, fieldIds, { pi, sprintsInScope }) {
     };
 }
 
-module.exports = { extractPiFromSprintName, piOfSprint, comparePiDesc, currentPiOf, previousPiOf, issueType, issueFields, mapIssue };
+module.exports = {
+    RhythmTemplateError, extractPiFromSprintName, compileTemplate, rhythmOf, piOfSprint, comparePiDesc, currentPiOf, previousPiOf, issueType, issueFields, mapIssue,
+};

@@ -12,10 +12,11 @@ function renderReleaseNotesSummary(){
     // global PI selector while the org has already moved on to a newer one), and `state.jiraIssues` only
     // ever holds `selectedPi`'s issues, so filtering by `currentPi()` here would silently find nothing.
     const pi = state.selectedPi;
-    const released = state.jiraIssues.filter(i => i.type !== ISSUE_TYPE.EPIC && i.pi === pi && issueIsReleasedToProd(i));
+    const inScope = selectedIncrements();
+    const released = state.jiraIssues.filter(i => i.type !== ISSUE_TYPE.EPIC && inScope.includes(i.pi) && issueIsReleasedToProd(i));
     const features = released.filter(i => i.type !== ISSUE_TYPE.BUG).length;
     const bugs = released.filter(i => i.type === ISSUE_TYPE.BUG).length;
-    const piNote = pi ? `in ${pi}${pi === currentPi() ? ' (current PI)' : ''}` : 'no PI selected';
+    const piNote = pi ? `in ${incrementLabel(pi)}${pi === currentPi() ? ' (current PI)' : ''}` : 'no PI selected';
 
     const cards = [
         { label: 'Features & improvements released', value: String(features) },

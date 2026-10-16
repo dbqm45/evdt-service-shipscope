@@ -63,6 +63,13 @@ Each deploy also records whether its GitHub Actions run was started by hand (`ma
   board's first sync also takes the previous PI; earlier PIs stay as the snapshot taken while they were current
   (the file-based per-PI shard model). The dashboard reads the index from `dashboard-data` and one PI's issues from
   `/api/tenants/:id/jira-issues`.
+- Each board has its own rhythm, so SAFe and non-SAFe teams can share a tenant: `auto` (default: PIs when any of the
+  board's sprints follows the PI naming, else every sprint on its own), `pi` (sprints grouped by PI; an admin's
+  template such as `PI {pi} / Iteration {n}` replaces the default `27.3.1` naming -- `{pi}` dotted digits, `{n}` a
+  number, `*` any text, the rest literal, never a raw regex) or `sprint`. Increments are ordered by when their sprints
+  started (names need not contain numbers). When the selected boards are in more than one current increment, the index
+  starts with `@now` (`kind: "now"`, `label: "Now: PI-27.3, Sprint 7"`, `includes`), the default, whose issues are every
+  board's current increment together.
 
 Not yet: GitHub webhooks.
 
@@ -109,8 +116,8 @@ Dashboard:
 | `GET /` | — | Signed out: to sign-in. Signed in: to the first tenant's dashboard, or `/me` without a tenant. |
 | `GET /t/:tenantId/` | session + member (else sign-in and back) | The dashboard page (`docs/index.html`, minus its `data/*.json` preload hints). |
 | `GET /t/:tenantId/:asset` | — | `style.css`, `favicon.svg`, `app-*.js` only (the same public code GitHub Pages serves). |
-| `GET /api/tenants/:tenantId/jira-issues?pi=PI-27.3` | session + member | One PI's issues (what a `data/jira-issues/<PI>.json` shard holds). |
-| `GET /api/tenants/:tenantId/dashboard-data` | session + member | Everything the page loads, in the `data/*.json` shapes: `deployments` (repo short name as `component`; `version` is the resolved release/tag/version-file/message label, else the short sha; `driftBehind` on each environment's latest successful deploy), `issueDeployments`, `componentsOrder` (tracked repos), `lastSyncedAt`, `flagsMeta`/`flagStates`/`flagStateHistory` (flags some source still reports; each value also carries `state`, `rollout` and `sourceName`); `jiraIndex` (current PI and every synced PI with its sprints) and `issueStatusIndex` (per issue key, its newest PI). |
+| `GET /api/tenants/:tenantId/jira-issues?pi=PI-27.3` | session + member | One PI's issues (what a `data/jira-issues/<PI>.json` shard holds); `pi=@now` gives every board's current increment together. |
+| `GET /api/tenants/:tenantId/dashboard-data` | session + member | Everything the page loads, in the `data/*.json` shapes: `deployments` (repo short name as `component`; `version` is the resolved release/tag/version-file/message label, else the short sha; `driftBehind` on each environment's latest successful deploy), `issueDeployments`, `componentsOrder` (tracked repos), `lastSyncedAt`, `flagsMeta`/`flagStates`/`flagStateHistory` (flags some source still reports; each value also carries `state`, `rollout` and `sourceName`); `jiraIndex` (current increment -- `@now` when boards are in different ones -- and every synced increment with its `kind` (`pi`/`sprint`/`now`) and sprints) and `issueStatusIndex` (per issue key, its newest PI). |
 
 Deployments and settings:
 
@@ -130,6 +137,7 @@ Jira (only when the `ATLASSIAN_*` variables and `TOKEN_ENCRYPTION_KEY` are set):
 | `PUT /tenants/:tenantId/jira/site` | session + admin | Body `{ "cloudId": "..." }`, one of the sites the grant covers. Choosing another site drops the chosen boards and synced issues (board ids belong to one site). |
 | `GET /tenants/:tenantId/jira/boards` | session + admin | Every board of the site `{ boards: [{ boardId, name, type, projectKey, projectName, selected }] }`; `type` is `scrum`, `simple` (a team-managed project's board) or `kanban`. |
 | `PUT /tenants/:tenantId/jira/boards` | session + admin | Body `{ "boardIds": [10, 11] }` (at most 50): the boards to sync, replacing the selection; each must be a board of the site and not a kanban board (no sprints, so no PI; else 400). A team-managed board with sprints turned off is accepted but contributes nothing. Issues of boards no longer selected are removed. |
+| `PUT /tenants/:tenantId/jira/boards/:boardId` | session + admin | Body `{ "rhythm": "auto" \| "pi" \| "sprint", "piTemplate": null \| "PI {pi} / Iteration {n}" }` (both required): how a selected board's sprints group into increments. A template only goes with `pi`/`auto` and must contain `{pi}` once (else 400). A change drops the board's stored issues; the next sync takes them again in the new rhythm. `GET .../jira/boards` returns `rhythm`, `piTemplate` and `currentIncrement` for selected boards. |
 | `POST /tenants/:tenantId/jira/sync` | session + admin | Syncs now (the worker also does every pass). Returns `{ boards, issues, currentPi }`. |
 | `GET /tenants/:tenantId/jira/projects` | session + admin | The chosen site's projects `{ projects: [{ id, key, name }] }`; proves the connection works. 409 when not connected, no site is chosen, or the grant was revoked. |
 | `DELETE /tenants/:tenantId/jira` | session + admin | Forgets the connection and its token. 204, or 404. |

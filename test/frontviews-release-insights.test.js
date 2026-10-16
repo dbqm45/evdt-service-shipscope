@@ -279,11 +279,11 @@ test('comparePriorityDesc ranks the org scheme then unknown names alphabetically
     assert.equal(ev("comparePriorityDesc('Mystery','Blocker')"), 1);
 });
 
-test('sprintLabelFor extracts the PI.sprint label or null', () => {
+test('sprintLabelFor extracts the PI.sprint label, else the sprint itself, or null without a sprint', () => {
     const { ev } = loadApp();
 
     assert.equal(ev("sprintLabelFor({ sprint: 'Sparks 27.3.3' })"), 'PI-27.3.3');
-    assert.equal(ev("sprintLabelFor({ sprint: 'Sprint 42' })"), null);
+    assert.equal(ev("sprintLabelFor({ sprint: 'Sprint 42' })"), 'Sprint 42');
     assert.equal(ev("sprintLabelFor({ sprint: null })"), null);
     assert.equal(ev('sprintLabelFor({})'), null);
 });
@@ -302,7 +302,9 @@ test('sprintReleaseStatusBreakdown buckets prod status per sprint, newest first'
     });
     const rows = ev('sprintReleaseStatusBreakdown()');
 
-    assert.deepEqual(rows.map(r => r.label), ['PI-27.3.2', 'PI-27.3.1']);
+    // A sprint not named after a PI (a team that doesn't work in PIs) is its own bucket, not dropped.
+    assert.deepEqual(rows.map(r => r.label), ['PI-27.3.2', 'PI-27.3.1', 'plain']);
+    assert.equal(rows[2].total, 1);
     assert.deepEqual(rows[0].counts, { none: 0, deployedHidden: 2, released: 1, partial: 0 });
     assert.equal(rows[0].total, 3);
     assert.equal(rows[1].counts.none, 1);
@@ -442,7 +444,8 @@ test('leadTimeToProdBySprint: median per sprint, clamping and exclusions', () =>
     assert.deepEqual(ev('leadTimeToProdBySprint()'), [
         { label: 'PI-27.3.2', median: 4, count: 3 },
         { label: 'PI-27.3.1', median: 3, count: 2 },
-    ]);
+        { label: 'nosprint', median: 6, count: 1 },
+    ], 'a sprint not named after a PI is its own bucket');
 });
 
 test('renderLeadTimeChart: empty state and bars', () => {
