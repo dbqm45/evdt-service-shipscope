@@ -3,7 +3,7 @@ const assert = require('node:assert');
 const crypto = require('crypto');
 const {
     piOfSprint, currentPiOf, previousPiOf, issueType, mapIssue, comparePiDesc, compileTemplate, rhythmOf, RhythmTemplateError,
-    releaseName, currentReleaseOf, previousReleaseOf, flowMonth, releaseJql, flowJql,
+    releaseName, currentReleaseOf, previousReleaseOf, flowMonth, releaseJql, flowJql, extractFlagKeys, issueFields,
 } = require('../lib/jira-model');
 
 const FIELD_IDS = { sprintFieldId: 'customfield_10020', epicLinkFieldId: 'customfield_10014', flaggedFieldId: 'customfield_10021' };
@@ -95,6 +95,27 @@ test('jira model: boards without sprints -- releases by fixVersion, or Kanban fl
     assert.strictEqual(issue.sprint, 'Flow 2026-10', 'a release or a flow month is its own sprint');
 });
 
+test('jira model: feature flags an issue names -- in a field (text, labels, options) or in prefixed labels', () => {
+    const field = { type: 'field', id: 'customfield_10050' };
+    assert.deepStrictEqual(extractFlagKeys({ customfield_10050: 'newCheckout, darkMode;beta.v2  newCheckout' }, field), ['newCheckout', 'darkMode', 'beta.v2'], 'text, any separators, deduplicated');
+    assert.deepStrictEqual(extractFlagKeys({ customfield_10050: ['newCheckout', 'darkMode'] }, field), ['newCheckout', 'darkMode'], 'a labels field');
+    assert.deepStrictEqual(extractFlagKeys({ customfield_10050: [{ value: 'newCheckout' }, { value: 'darkMode' }] }, field), ['newCheckout', 'darkMode'], 'multi-select options');
+    assert.deepStrictEqual(extractFlagKeys({ customfield_10050: { value: 'newCheckout' } }, field), ['newCheckout'], 'single select');
+    assert.deepStrictEqual(extractFlagKeys({ customfield_10050: null }, field), []);
+    assert.deepStrictEqual(extractFlagKeys({ customfield_10050: '<script> 1bad ok_one' }, field), ['ok_one'], 'only valid flag keys');
+    assert.deepStrictEqual(extractFlagKeys({ customfield_10050: Array.from({ length: 30 }, (_, i) => `f${i}`).join(' ') }, field).length, 20, 'bounded');
+
+    const label = { type: 'label', prefix: 'flag:' };
+    assert.deepStrictEqual(extractFlagKeys({ labels: ['flag:newCheckout', 'FLAG:darkMode', 'team-sparks', 'flag:', 'flagged'] }, label), ['newCheckout', 'darkMode']);
+    assert.deepStrictEqual(extractFlagKeys({ labels: ['flag:newCheckout'] }, null), [], 'no convention: nothing');
+    assert.deepStrictEqual(extractFlagKeys({}, label), []);
+
+    assert.ok(issueFields({ flagLink: field }).includes('customfield_10050'), 'the flag field is fetched');
+    assert.ok(!issueFields({ flagLink: label }).some((f) => f.startsWith('customfield_')), 'labels are fetched anyway');
+    const issue = mapIssue(raw('ABC-9', 'Story', [], { labels: ['flag:newCheckout'] }), { ...FIELD_IDS, flagLink: label }, { pi: 'PI-27.3', sprintsInScope: new Map() });
+    assert.deepStrictEqual(issue.featureFlags, ['newCheckout']);
+});
+
 test('jira model: an issue mapped to the dashboard shape, its sprint taken from the board being synced', () => {
     const scope = { pi: 'PI-27.3', sprintsInScope: new Map([[2, sp(2, 'Sparks 27.3.1', 'closed')], [3, sp(3, 'Sparks 27.3.2', 'active')]]) };
     const issue = mapIssue(raw('ABC-1', 'Story', [{ id: 2, name: 'Sparks 27.3.1' }, { id: 3, name: 'Sparks 27.3.2' }, { id: 99, name: 'Rocket 27.3.9' }], {
@@ -106,7 +127,7 @@ test('jira model: an issue mapped to the dashboard shape, its sprint taken from 
     assert.deepStrictEqual(issue, {
         key: 'ABC-1', type: 'Story', title: 'ABC-1 title', pi: 'PI-27.3', sprint: 'Sparks 27.3.2', status: 'In Progress', statusCategory: 'indeterminate',
         dependencyBlocked: true, projectName: 'eMobility Sparks', epicKey: 'ABC-10', epicTitle: 'The epic', impediment: true, subtasks: { done: 1, total: 2 },
-        priority: 'Major', created: '2026-09-01T10:00:00.000+0000', resolvedAt: null, dependencyNote: 'Blocked by XYZ-9: API first',
+        priority: 'Major', created: '2026-09-01T10:00:00.000+0000', resolvedAt: null, featureFlags: [], dependencyNote: 'Blocked by XYZ-9: API first',
     });
     assert.strictEqual(mapIssue(raw('ABC-2', 'Bug', [{ id: 99, name: 'Rocket 27.3.9' }]), FIELD_IDS, scope).sprint, null, 'another board\'s sprint is not this issue\'s here');
     assert.strictEqual(mapIssue(raw('ABC-3', 'Task', [], { customfield_10014: 'ABC-11' }), FIELD_IDS, scope).epicKey, 'ABC-11', 'legacy Epic Link');

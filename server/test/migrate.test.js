@@ -46,6 +46,7 @@ test('runMigrations: applies cleanly from empty and creates the expected tables'
         '011_jira_rhythms.sql',
         '012_jira_release_flow.sql',
         '013_webhooks.sql',
+        '014_flag_links.sql',
     ]);
 });
 

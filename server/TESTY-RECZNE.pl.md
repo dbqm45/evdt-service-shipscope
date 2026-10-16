@@ -345,6 +345,14 @@ zainstalowane na Macu i w Git Bash.
 51. To samo polecenie z innym tokenem (np. `export TOKEN=xyz`) zwraca błąd 401 — obcy nie może wysłać flag.
 52. Przy źródle kliknij **New token**, wyślij flagi nowym tokenem (krok 50), potem przy starym tokenie kliknij
     **revoke**. Stary przestaje działać (401), nowy działa.
+52a. Powiązanie z Jirą przez pole: poproś admina Jiry o pole „Feature flag” (SETUP.pl.md §4, „Powiązanie flag z
+    zadaniami w Jirze”) i wpisz w nim `newCheckout` w jednym zadaniu z synchronizowanej tablicy. W ShipScope:
+    Jira → „Feature flags in Jira” → **In a field** → wybierz pole → **Save** → **Sync now**. Powinno być: w sekcji
+    Feature flags przy `newCheckout` to zadanie z dopiskiem „(from Jira)”.
+52b. Bez admina: zamiast pola wybierz **In labels with a prefix** (np. `flag:`) i dodaj zadaniu etykietę
+    `flag:newCheckout` → **Save** → **Sync now**. Efekt jak w 52a.
+52c. Przy fladze wpisz opis i klucz zadania (np. `ABC-12`) → **Save**. Opis zastępuje opis ze źródła, a zadanie ma
+    dopisek „(set here)”. Wyślij jeszcze raz polecenie z kroku 50: opis i ręczne powiązanie zostają.
 
 ### Ustawienia i bezpieczeństwo
 
