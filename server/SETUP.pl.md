@@ -238,3 +238,58 @@ bez zadań, się nie liczy). Pozostałe przyrosty
 są dalej do wyboru w selektorze. Zmiana witryny Jira usuwa wybrane tablice i pobrane zadania.
 Worker potrzebuje tych samych trzech zmiennych (`ATLASSIAN_*`, `TOKEN_ENCRYPTION_KEY`) co serwis web.
 
+
+## 6. Wdrożenie na Render
+
+Wszystko jest opisane w `render.yaml` (Blueprint): serwis web `shipscope-web`, worker `shipscope-worker` i baza
+`shipscope-db`. Oba serwisy budują się z katalogu głównego repozytorium (tak, żeby serwis web miał dostęp do
+`docs/`, czyli dashboardu i strony ustawień), a migracje bazy uruchamiają się same przed każdym wdrożeniem.
+
+### Przed pierwszym wdrożeniem
+
+1. Osobne aplikacje „produkcyjne”: GitHub App (sekcja 1) i aplikacja Atlassian (sekcja 5) z adresami Rendera.
+   Adres serwisu to zwykle `https://shipscope-web.onrender.com` (Render dopisuje końcówkę, gdy nazwa jest zajęta —
+   dokładny adres zobaczysz po utworzeniu serwisu i wtedy go poprawisz).
+2. Przygotuj wartości (w menedżerze haseł, nigdzie indziej):
+   - `TOKEN_ENCRYPTION_KEY`: `openssl rand -base64 32` — **zachowaj kopię**; jej utrata albo zmiana oznacza, że każdy
+     tenant łączy Jirę od nowa;
+   - `GITHUB_APP_WEBHOOK_SECRET`: `openssl rand -hex 32` (ten sam wpisujesz w GitHub App → Webhook secret);
+   - z GitHub App: Client ID, client secret, App ID, slug, klucz prywatny (zawartość `.pem`);
+   - z aplikacji Atlassian: Client ID i Secret.
+
+### Utworzenie
+
+1. Render → **New → Blueprint** → połącz repozytorium `dbqm45/evdt-service-shipscope`, gałąź `main`.
+2. Render pokaże trzy zasoby z `render.yaml`. Plan `starter` (płatny) jest celowy: darmowa baza wygasa po 30 dniach,
+   a darmowy serwis usypia (patrz `context/foundation/infrastructure.md`). Sprawdź aktualne ceny przed akceptacją.
+3. Render poprosi o każdą zmienną z `sync: false` — wpisz wartości z listy wyżej. `PUBLIC_BASE_URL` wpisz w **obu**
+   serwisach (web: logowanie i ciasteczka; worker: adres, pod który Jira wysyła webhooki).
+   `DATABASE_URL` Render ustawia sam; `DATABASE_SSL` zostaw nieustawione.
+4. **Apply**. Kolejność: baza → build → migracje (`preDeployCommand`) → start. Nieudana migracja zatrzymuje
+   wdrożenie, a poprzednia wersja działa dalej.
+
+### Po utworzeniu
+
+1. Jeśli adres serwisu różni się od wpisanego: popraw `PUBLIC_BASE_URL` w obu serwisach (Render wdroży je ponownie)
+   oraz adresy w GitHub App (Callback URL, Setup URL, Webhook URL) i w aplikacji Atlassian (Callback URL).
+2. Sprawdź:
+   - `https://<adres>/health` → `{"status":"ok","version":"…"}`, `https://<adres>/health/db` → `ok: true`;
+   - zaloguj się: bez workspace'u trafisz na `/start`, utwórz go, przejdź do ustawień;
+   - GitHub: zainstaluj aplikację, śledź repozytoria; pierwsze deploye w ciągu kilku minut (worker przy starcie
+     od razu synchronizuje);
+   - Jira: połącz, wybierz tablice, „Sync now”, otwórz dashboard (link „Dashboard” w ustawieniach).
+3. Webhooki:
+   - GitHub App → **Advanced → Recent Deliveries**: dostawy `deployment_status` powinny mieć odpowiedź **202**;
+   - Jira: w ustawieniach „instant updates on” (po pierwszej synchronizacji tablic); zmień zadanie, a w logach workera
+     pojawi się `jira webhook sync done`. Jeśli dostawy z Jiry dostają **401**, a w logach serwisu web widać odrzucone
+     żądania na `/webhooks/jira` — format podpisu Atlassian różni się od opisanego; synchronizacja co 15 minut
+     działa dalej, a logi pozwolą to poprawić.
+
+### Na co dzień
+
+- **Wdrożenia**: każdy merge do `main`, który zmienia `server/**` (albo pliki dashboardu w `docs/`), wdraża się sam;
+  commity z danymi botów nie wywołują wdrożeń.
+- **Wycofanie**: Render → serwis → **Rollback** do poprzedniego wdrożenia (bez przebudowy). Migracje są tylko „do
+  przodu”: wycofanie kodu nie cofa zmian w bazie.
+- **Własna domena** (opcjonalnie): po dodaniu w Renderze zmień `PUBLIC_BASE_URL` w obu serwisach i adresy w obu
+  aplikacjach (GitHub, Atlassian).

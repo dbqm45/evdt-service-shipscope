@@ -1,5 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
+const fs = require('fs');
 const path = require('path');
 const { createTestDb } = require('./helpers/test-db');
 const { runMigrations } = require('../lib/migrate');
@@ -46,6 +47,21 @@ test('runMigrations: applies cleanly from empty and creates the expected tables'
         '012_jira_release_flow.sql',
         '013_webhooks.sql',
     ]);
+});
+
+test('runMigrations: two at once (the web and worker pre-deploys) apply every file exactly once', async (t) => {
+    const { pool, teardown } = await createTestDb();
+    t.after(teardown);
+    await pool.query('DROP TABLE schema_migrations');
+    await pool.query('DROP TABLE sync_requests');
+    await pool.query('ALTER TABLE jira_connections DROP COLUMN webhook_ids, DROP COLUMN webhook_jql, DROP COLUMN webhook_expires_at, DROP COLUMN webhook_error');
+    await pool.query('CREATE TABLE schema_migrations (filename text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())');
+    const all = fs.readdirSync(path.join(__dirname, '..', 'migrations')).filter((f) => f.endsWith('.sql')).sort();
+    await pool.query('INSERT INTO schema_migrations (filename) SELECT unnest($1::text[])', [all.filter((f) => f !== '013_webhooks.sql')]);
+
+    const dir = path.join(__dirname, '..', 'migrations');
+    const [a, b] = await Promise.all([runMigrations(pool, dir), runMigrations(pool, dir)]);
+    assert.deepStrictEqual([...a, ...b], ['013_webhooks.sql'], 'one of them applied it, the other found nothing pending');
 });
 
 test('runMigrations: re-running is a no-op', async (t) => {

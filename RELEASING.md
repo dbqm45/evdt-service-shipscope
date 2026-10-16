@@ -3,8 +3,8 @@
 *Polska wersja: [RELEASING.pl.md](RELEASING.pl.md)*
 
 ShipScope has one version number following [Semantic Versioning 2.0.0](https://semver.org/) (`MAJOR.MINOR.PATCH`),
-carried by `package.json`, `server/package.json` and `server/package-lock.json` (server/ deploys on its own with
-`rootDir: server`, so it holds the number itself). A released version is marked by the git tag `vX.Y.Z` and has a
+carried by `package.json`, `server/package.json` and `server/package-lock.json` (server/ is its own dependency
+boundary with its own `package.json`, so it holds the number itself). A released version is marked by the git tag `vX.Y.Z` and has a
 [GitHub Release](https://github.com/dbqm45/evdt-service-shipscope/releases) with its `CHANGELOG.md` entry. The
 running server reports it in `GET /health` (`version`).
 

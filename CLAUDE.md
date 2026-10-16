@@ -87,8 +87,10 @@ new one.
 ## Backend (`server/`)
 
 `server/` is the SaaS-pivot backend scoped by `context/foundation/prd.md`, deployed to Render per
-`context/foundation/infrastructure.md` (`render.yaml` at the repo root, `rootDir: server` for both the Web
-Service and the Background Worker). It is a separate dependency boundary from the repo root: its own
+`context/foundation/infrastructure.md` (`render.yaml` at the repo root; both the Web Service and the Background Worker build
+and start from the repo root -- `npm ci --prefix server`, `node server/web.js` -- not `rootDir: server`, which would
+hide `docs/` from the Web Service; migrations run as each service's `preDeployCommand` under an advisory lock;
+`server/test/render-blueprint.test.js` guards this). It is a separate dependency boundary from the repo root: its own
 `package.json`, its own `node_modules/` (gitignored), its own `test/` directory — nothing at the root changes
 because of it, and root `npm test` still only ever runs the top-level `test/*.test.js` scripts.
 
@@ -103,8 +105,8 @@ for the data): an installation is linked only after the user's own token shows t
 /user/installations` in the sign-in callback) -- never on the `installation_id` from GitHub's setup redirect alone.
 Deployment ingestion (FR-005): the Background Worker (`worker.js`) runs `lib/deployment-sync.js` every 15 minutes
 and `lib/retention.js` daily, each behind a Postgres advisory lock; the pure rules live in `lib/deployment-logic.js`,
-a port of `scripts/lib/deployment-records.js` (server/ can't require from scripts/ -- Render deploys `server/`
-alone), so a fix to one of those rules belongs in both until the file-based sync is retired. Retention is per
+a port of `scripts/lib/deployment-records.js` (server/ doesn't require from scripts/ -- it is its own dependency
+boundary, and only `server/**` changes redeploy it), so a fix to one of those rules belongs in both until the file-based sync is retired. Retention is per
 tenant (`tenants.deployment_retention_days`, default 90, 7-730) and always keeps each repo/environment's latest
 and latest successful deployment. Version resolution (`lib/version-resolution.js`: release -> tag -> version file -> commit-message label;
 compares use only a verified release/tag or the sha, stored as `deployments.resolved_ref`) and environment drift

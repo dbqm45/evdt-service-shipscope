@@ -1,14 +1,29 @@
+# Render Blueprint for the SaaS backend (server/). Both services build and run from the repo root, not
+# `rootDir: server`: Render makes files outside a service's root directory unavailable at build and run time, and
+# the Web Service serves the dashboard and settings pages from docs/ (`../docs` seen from server/). buildFilter keeps
+# deploys to what the services actually use, so the bots' data commits and the file-based scripts don't redeploy.
+# Migrations run before every deploy of either service (lib/migrate.js holds an advisory lock, so the two never
+# apply a file twice); a migration that fails stops the deploy and the previous version keeps running.
 services:
   - type: web
     name: shipscope-web
     runtime: node
-    rootDir: server
     region: oregon
     plan: starter # confirm the current paid-tier slug in the Render dashboard/CLI before applying — never free (see infrastructure.md's risk register on 30-day Postgres expiry / cold starts)
-    buildCommand: npm ci
-    startCommand: node web.js
+    buildCommand: npm ci --prefix server
+    preDeployCommand: node server/scripts/migrate.js
+    startCommand: node server/web.js
     healthCheckPath: /health
+    buildFilter:
+      paths:
+        - server/**
+        - docs/*.html
+        - docs/*.css
+        - docs/*.js
+        - docs/*.svg
     envVars:
+      - key: NODE_VERSION
+        value: "22"
       - key: DATABASE_URL
         fromDatabase:
           name: shipscope-db
@@ -44,12 +59,17 @@ services:
   - type: worker
     name: shipscope-worker
     runtime: node
-    rootDir: server
     region: oregon
     plan: starter # same note as above — confirm current slug, never free
-    buildCommand: npm ci
-    startCommand: node worker.js
+    buildCommand: npm ci --prefix server
+    preDeployCommand: node server/scripts/migrate.js
+    startCommand: node server/worker.js
+    buildFilter:
+      paths:
+        - server/**
     envVars:
+      - key: NODE_VERSION
+        value: "22"
       - key: DATABASE_URL
         fromDatabase:
           name: shipscope-db
