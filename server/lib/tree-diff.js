@@ -1,7 +1,8 @@
 // Pure helpers for comparing two git trees (the listing GitHub returns from
 // GET /git/trees/{sha}?recursive=1) — used by lib/env-drift.js to answer "does the code of two environments
 // actually differ", independent of how many commits separate them. A copy of scripts/lib/tree-diff.js
-// (server/ deploys alone and can't require from scripts/); a fix to one belongs in both.
+// (server/ deploys alone and can't require from scripts/); a fix to one belongs in both. Without the
+// file-based parseIgnorePaths(): here the patterns come validated from tracked_repos.drift_ignore_paths.
 
 /** Max changed paths kept on a drift record (and so shown in the modal); the full count is always kept. */
 const MAX_DIFF_PATHS = 20;
@@ -28,19 +29,6 @@ function compileIgnorePattern(pattern) {
     const re = new RegExp(p.includes('/') ? `^${source}$` : `(^|/)${source}$`);
 
     return path => re.test(path);
-}
-
-/** Normalizes the raw `driftIgnorePaths` input (JSON array string or array) into a list of non-empty strings. */
-function parseIgnorePaths(raw) {
-    if (raw === undefined || raw === null || raw === '') return [];
-
-    const value = typeof raw === 'string' ? JSON.parse(raw) : raw;
-
-    if (!Array.isArray(value) || value.some(v => typeof v !== 'string')) {
-        throw new Error('driftIgnorePaths must be an array of strings');
-    }
-
-    return value.map(v => v.trim()).filter(Boolean);
 }
 
 /**
@@ -78,4 +66,4 @@ function diffTrees(treeA, treeB, ignorePatterns = []) {
     return { files: paths.length, paths: paths.slice(0, MAX_DIFF_PATHS), ignored };
 }
 
-module.exports = { MAX_DIFF_PATHS, compileIgnorePattern, parseIgnorePaths, diffTrees };
+module.exports = { diffTrees };

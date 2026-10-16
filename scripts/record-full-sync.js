@@ -1,5 +1,3 @@
-const fs = require('fs');
-const path = require('path');
 const { safeRelativePath } = require('./lib/cli');
 const { readJson, writeJson } = require('./lib/json-file');
 

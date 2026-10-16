@@ -132,4 +132,4 @@ async function buildDashboardData(pool, { tenantId, actorUserId }) {
     });
 }
 
-module.exports = { buildDashboardData, componentNames };
+module.exports = { buildDashboardData };

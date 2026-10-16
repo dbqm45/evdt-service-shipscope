@@ -1,5 +1,4 @@
 const fs = require('fs');
-const path = require('path');
 const { safeRelativePath } = require('./lib/cli');
 const { readJson } = require('./lib/json-file');
 const { discoverAllFlags } = require('./lib/extract-flags');

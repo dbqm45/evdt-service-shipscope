@@ -55,4 +55,4 @@ async function deleteSession(pool, token) {
     await pool.query('DELETE FROM sessions WHERE token_hash = $1', [hashToken(token)]);
 }
 
-module.exports = { createSession, getSessionUser, deleteSession, SESSION_TTL_DAYS };
+module.exports = { createSession, getSessionUser, deleteSession };

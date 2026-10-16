@@ -1,5 +1,3 @@
-const fs = require('fs');
-const path = require('path');
 const { fail, safeRelativePath } = require('./lib/cli');
 const { readJson, writeJson } = require('./lib/json-file');
 const { appendFlagHistoryEntries } = require('./lib/flag-history');

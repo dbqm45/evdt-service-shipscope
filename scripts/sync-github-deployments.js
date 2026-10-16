@@ -10,7 +10,6 @@ const { parseIgnorePaths, diffTrees } = require('./lib/tree-diff');
 const {
     STATE_MAP,
     ENV_ORDER,
-    mapEnvironment,
     extractIssueKeys,
     extractCommitType,
     extractPromotedVersion,
@@ -735,25 +734,6 @@ async function main() {
         );
     }
 }
-
-module.exports = {
-    mapEnvironment,
-    extractIssueKeys,
-    extractCommitType,
-    extractPromotedVersion,
-    computeDeployDurationMs,
-    extractRunId,
-    latestSuccessfulByEnv,
-    computeEnvDrift,
-    parseVersionProperty,
-    buildDeploymentPlan,
-    buildRecord,
-    githubApiAllPages,
-    updateIssueDeploymentHistory,
-    seedLastResolvedRefByEnv,
-    trimOldRecords,
-    buildSummary,
-};
 
 if (require.main === module) {
     main().catch(e => { console.error(e); process.exit(1); });

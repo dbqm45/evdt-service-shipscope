@@ -12,13 +12,6 @@ dashboardzie plikowym (GitHub Pages) zostaje stała `JIRA_BASE_URL` w `docs/app-
 więc nie da się z niego zbudować linku dla człowieka. Gdyby kiedyś trzeba było to zmienić: osobna zmienna z
 adresem witryny zapisywana przez `sync-jira.js` do `docs/data/jira-issues/index.json`.
 
-## Akcja `.github/actions/ingest-flags` opisana, ale nie ma jej w repozytorium
-
-`FLAG-INGEST.md` i `CLAUDE.md` opisują akcję złożoną `.github/actions/ingest-flags`, która wiąże komponent z
-tożsamością wywołującego repo. W historii gita tego katalogu nie ma (jest tylko `sync-with-retry`); jest sam
-skrypt `scripts/ingest-flags.js`. Albo odtworzyć akcję (projekt w `FLAG-INGEST.md`), albo usunąć wzmianki.
-Dla nowych źródeł flag właściwą drogą jest już API serwera (`POST /api/flags/ingest`, `schemaVersion: 2`).
-
 ## Ujednolicenie odczytu stanu flag przez dedykowane endpointy (`evsim`, `evam`)
 
 Warto dodać do `evsim-service-sim-adapter` i `evam-service-host` endpointy zwracające stan flag per

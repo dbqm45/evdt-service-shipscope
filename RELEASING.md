@@ -58,7 +58,7 @@ The **most serious** change since the last tag decides.
 Public API here means what users and integrations depend on: the `server/` HTTP routes (paths, methods, request
 and response fields, status codes, cookies), its environment variables, the database schema as seen by migrations,
 the `docs/data/*.json` formats the dashboard reads, and the reusable workflows app repos call (`check-flags.yml`,
-`notify-deployment.yml`, the `ingest-flags` action). Internal details (code layout, log text) don't count.
+`notify-deployment.yml`). Internal details (code layout, log text) don't count.
 
 ## How the version is bumped (automatically)
 

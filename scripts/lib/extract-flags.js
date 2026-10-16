@@ -49,4 +49,4 @@ function discoverAllFlags(root) {
     return flags;
 }
 
-module.exports = { findGeneratedFlagFiles, extractFlagKeys, discoverAllFlags };
+module.exports = { extractFlagKeys, discoverAllFlags };

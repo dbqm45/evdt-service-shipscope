@@ -151,9 +151,6 @@ function releaseNotes(changelog, version) {
 
 module.exports = {
     TYPES,
-    MAX_SUBJECT,
-    parseHeader,
-    isBreaking,
     lintMessage,
     bumpKind,
     bump,

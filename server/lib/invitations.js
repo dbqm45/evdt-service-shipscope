@@ -175,5 +175,4 @@ module.exports = {
     InvitationNotFoundError,
     InvitationUnusableError,
     TOKEN_PATTERN,
-    INVITATION_TTL_DAYS,
 };
