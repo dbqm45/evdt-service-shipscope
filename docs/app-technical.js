@@ -482,7 +482,7 @@ const DEPLOY_PAGE_SIZE = 20;
  *  chips are the union across every run in the group). Returns '' when there's nothing to show. */
 function renderChipsRow(relatedIssues, flagBadges){
     return DeployChips({
-        issues: (relatedIssues || []).map(k => ({ key: k, href: `${JIRA_BASE_URL}/${k}` })),
+        issues: (relatedIssues || []).map(k => ({ key: k, href: jiraIssueUrl(k) })),
         flagBadges: flagBadges || {},
     });
 }
@@ -908,7 +908,7 @@ function renderFlags(){
             states,
             details: FlagDetails({
                 description: f.description,
-                issues: (f.jiraKeys || []).map(k => ({ key: k, href: `${JIRA_BASE_URL}/${k}` })),
+                issues: (f.jiraKeys || []).map(k => ({ key: k, href: jiraIssueUrl(k) })),
                 components: f.components || [],
                 added: f.createdAt ? fmtDateShort(f.createdAt) : '',
             }),

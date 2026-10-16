@@ -58,10 +58,8 @@ function initGlobalPiSelect(){
         refreshProductViewFilterOptions();
         document.getElementById('btnClearFilters').click();
 
-        if (RELEASE_NOTES_ENABLED) {
-            refreshReleaseNotesFilterOptions();
-            document.getElementById('btnClearNotesFilters').click();
-        }
+        refreshReleaseNotesFilterOptions();
+        document.getElementById('btnClearNotesFilters').click();
 
         if (INSIGHTS_ENABLED) {
             renderInsights();
@@ -70,18 +68,7 @@ function initGlobalPiSelect(){
 }
 
 function initTabs(){
-    if (!PRODUCT_VIEW_ENABLED) {
-        const productTab = document.querySelector('.tab[data-view="product"]');
-
-        productTab.classList.add('tab-disabled');
-        productTab.title = "Product view isn't ready yet";
-    }
-
     switchToTab(DEFAULT_VIEW);
-
-    if (!RELEASE_NOTES_ENABLED) {
-        document.querySelector('.tab[data-view="notes"]').remove();
-    }
 
     if (!INSIGHTS_ENABLED) {
         document.querySelector('.tab[data-view="insights"]').remove();
@@ -90,10 +77,6 @@ function initTabs(){
     }
 
     document.querySelectorAll('.tab').forEach(tab=>{
-        if (tab.classList.contains('tab-disabled')) {
-            return;
-        }
-
         tab.onclick = ()=> switchToTab(tab.dataset.view);
     });
 }
@@ -275,10 +258,8 @@ async function init(){
     renderProductSummary();
     renderIssues();
 
-    if (RELEASE_NOTES_ENABLED) {
-        initReleaseNotesFilters();
-        renderReleaseNotes();
-    }
+    initReleaseNotesFilters();
+    renderReleaseNotes();
 
     if (INSIGHTS_ENABLED) {
         renderInsights();

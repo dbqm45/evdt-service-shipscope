@@ -3,20 +3,14 @@
 Dług techniczny i otwarte sprawy, które nie są nowymi funkcjami (te są w [FEATURES.pl.md](FEATURES.pl.md)).
 Każdy punkt sprawdzony z kodem 2026-10-16.
 
-## Linki do Jiry na sztywno na `circlek.atlassian.net` — także w trybie SaaS
+## Linki do Jiry w dashboardzie plikowym na sztywno na `circlek.atlassian.net`
 
-`docs/app-core.js` ma `const JIRA_BASE_URL = 'https://circlek.atlassian.net/browse'`. Z niego powstaje każdy
-klikalny link „otwórz w Jirze” (`app-product.js`, `app-release-notes.js`, `app-technical.js`). Dane nie idą tą
-drogą, tylko linki.
-
-- **Tryb SaaS (`/t/<id>/`)**: to jest błąd, nie tylko dług. Każdy workspace ma własną witrynę Jiry
-  (`jira_connections.site_url`), a linki na dashboardzie i tak prowadzą do `circlek.atlassian.net`. Naprawa:
-  `lib/dashboard-data.js` dokłada adres witryny (np. `jiraBrowseUrl`), a `docs/app-data.js` w trybie API go
-  używa.
-- **Tryb plikowy (GitHub Pages)**: frontend nie ma dostępu do sekretów, więc wartość zgadza się z sekretem
-  `JIRA_BASE_URL` (czytanym przez `scripts/sync-jira.js`) tylko przypadkiem. Naprawa: `sync-jira.js` zapisuje
-  `${JIRA_BASE_URL}/browse` jako pole w `docs/data/jira-issues/index.json`, a stała zostaje jako zapas dla
-  `file://`/`FALLBACK` i starych plików.
+Tryb SaaS jest naprawiony: serwer podaje adres witryny Jiry danego workspace'u (`jiraBrowseUrl` w danych
+dashboardu, `jiraIssueUrl()` w `docs/app-core.js`), a bez połączonej Jiry klucze zadań są bez linku. W
+dashboardzie plikowym (GitHub Pages) zostaje stała `JIRA_BASE_URL` w `docs/app-core.js`: sekret
+`JIRA_BASE_URL` synchronizacji to adres proxy API (`api.atlassian.com/ex/jira/<cloudId>`), nie adres witryny,
+więc nie da się z niego zbudować linku dla człowieka. Gdyby kiedyś trzeba było to zmienić: osobna zmienna z
+adresem witryny zapisywana przez `sync-jira.js` do `docs/data/jira-issues/index.json`.
 
 ## Akcja `.github/actions/ingest-flags` opisana, ale nie ma jej w repozytorium
 

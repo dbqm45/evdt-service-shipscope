@@ -1,7 +1,5 @@
-let activeStatusTile = null;
-
-/** Product view summary row (§4.1): a "Current PI" snapshot card + 4 status tiles that double as a
- *  PROD-status filter for the table below (see `activeStatusTile`, read by renderIssues()). */
+/** Product view summary row (§4.1): a "Current PI" snapshot card + 4 PROD-status tiles (counts only, not
+ *  controls). */
 function renderProductSummary(){
     const box = document.getElementById('pvSummary');
     const targetPi = state.selectedPi;
@@ -21,12 +19,9 @@ function renderProductSummary(){
         { key: 'none', label: 'Not deployed', color: 'var(--nd-fg-4)', value: counts.none },
     ];
 
-    // Not clickable for now (see activeStatusTile/prodStatusBucket in renderIssues, kept in place so
-    // this is a one-line revert — just re-add the .pv-tile click wiring below to turn tile-click
-    // filtering back on): plain <div>s instead of <button>s, so they don't look/focus like controls.
     const tilesHtml = tiles.map(t => StatusTile({
         tileKey: t.key, label: t.label, color: t.color, value: t.value,
-        percent: total ? Math.round(t.value/total*100) : 0, active: activeStatusTile === t.key,
+        percent: total ? Math.round(t.value/total*100) : 0,
     }));
 
     box.innerHTML = html`${piCardHtml}${tilesHtml}`;
@@ -87,7 +82,6 @@ function selectProductIssues(){
         passesDate(i)
         && (!typeFilter || i.type === typeFilter)
         && (!priorityFilter || i.priority === priorityFilter)
-        && (!activeStatusTile || prodStatusBucket(i) === activeStatusTile)
         && (!hideTasks || i.type !== ISSUE_TYPE.TASK)
     );
 
@@ -142,7 +136,7 @@ function issueRowHtml(issue, indent, showSprintBadge){
     return IssueRow({
         rowClass: indent ? 'wi-child-row' : 'wi-ungrouped-row',
         issueKey: issue.key,
-        href: `${JIRA_BASE_URL}/${issue.key}`,
+        href: jiraIssueUrl(issue.key),
         title: issue.title && issue.title !== '—' ? issue.title : '',
         type: issue.type,
         badges,
@@ -175,7 +169,7 @@ function epicHeaderHtml(group, epicChildren, showSprintBadge){
 
     return EpicHeader({
         epicKey: group.epicKey,
-        href: `${JIRA_BASE_URL}/${group.epicKey}`,
+        href: jiraIssueUrl(group.epicKey),
         title: group.epicTitle || group.epicKey,
         hasChildren: group.children.length > 0,
         collapsed: collapsedEpics.has(group.epicKey),
@@ -404,7 +398,6 @@ function initProductView(){
         document.getElementById('filterFrom').value='';
         document.getElementById('filterTo').value='';
         document.getElementById('filterHideTasks').checked = false;
-        activeStatusTile = null;
         renderProductSummary();
         resetIssuePagination();
     };

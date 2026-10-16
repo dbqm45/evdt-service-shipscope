@@ -93,8 +93,6 @@ test('barsIcon lights the first N bars; ENV_BAR_COUNT and ICONS shape', () => {
 
 test('feature switches', () => {
     assert.equal(loadApp().run('INSIGHTS_ENABLED'), false);
-    assert.equal(loadApp().run('PRODUCT_VIEW_ENABLED'), true);
-    assert.equal(loadApp().run('RELEASE_NOTES_ENABLED'), true);
     assert.equal(loadApp().run('DEFAULT_VIEW'), 'tech');
 });
 
@@ -271,6 +269,24 @@ test('loadJiraIssuesForPi: empty pi, fallback, unknown entry, ok, non-ok and net
 const TENANT = '0b0e4c3e-1d2f-4a5b-8c9d-0e1f2a3b4c5d';
 const apiLocation = (extra = {}) => ({ search: '', pathname: `/t/${TENANT}/`, assigned: [], assign(url) { this.assigned.push(url); }, ...extra });
 const jsonResponse = (body, status = 200) => Promise.resolve({ ok: status >= 200 && status < 300, status, json: () => Promise.resolve(body) });
+
+test('jiraIssueUrl: the tenant\'s own Jira site in API mode, none until Jira is connected, the org\'s site off the server', async () => {
+    const files = loadApp({ fetchImpl: () => jsonResponse({}) });
+    assert.equal(files.run('jiraIssueUrl("ABC-1")'), 'https://circlek.atlassian.net/browse/ABC-1', 'before any data');
+    files.run('state = { deployments: [] }');
+    assert.equal(files.run('jiraIssueUrl("ABC-1")'), 'https://circlek.atlassian.net/browse/ABC-1', 'file-based data has no jiraBrowseUrl');
+
+    const tenant = loadApp({ fetchImpl: () => jsonResponse({ jiraBrowseUrl: 'https://acme.atlassian.net/browse' }), loc: apiLocation() });
+    tenant.run('state = null');
+    await tenant.run('loadData().then((d) => { state = d; })');
+    assert.equal(tenant.run('jiraIssueUrl("ABC-1")'), 'https://acme.atlassian.net/browse/ABC-1');
+
+    for (const fetchImpl of [() => jsonResponse({}), () => jsonResponse({}, 500)]) {
+        const bare = loadApp({ fetchImpl, loc: apiLocation() });
+        await bare.run('loadData().then((d) => { state = d; })');
+        assert.equal(bare.run('jiraIssueUrl("ABC-1")'), null, 'no Jira connected (or no data): unlinked, never another org\'s site');
+    }
+});
 
 test('API mode: one request to the tenant API, live badge with the last sync time, missing keys defaulted', async () => {
     const urls = [];

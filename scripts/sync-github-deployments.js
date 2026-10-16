@@ -56,7 +56,7 @@ const CURSOR_PATH = safeRelativePath(process.env.CURSOR_PATH || 'docs/data/deplo
 // Tiny, never-trimmed companion to DATA_PATH, same spirit as CURSOR_PATH above but for a different gap:
 // `{ [issueKey]: { [env]: { [component]: { deployedAt, commitUrl } } } }`, recording the *first* time an
 // issue key was ever seen on a successful deployment, per env/component. Found and fixed as a real bug —
-// `docs/app.js`'s release-status/Release Notes/lead-time joins all scan `deployments.json` directly for a
+// `docs/app-*.js`'s release-status/Release Notes/lead-time joins all scan `deployments.json` directly for a
 // record whose `relatedIssues` includes a given issue key; once RETENTION_DAYS trims that record away (and
 // it isn't the one latest/latest-successful record `trimOldRecords()` always keeps), the issue silently
 // reverts to looking "not deployed" even though it genuinely shipped once. This file is never trimmed, so
@@ -67,7 +67,7 @@ const ISSUE_DEPLOYMENTS_PATH = safeRelativePath(
 );
 // Tiny, fully-recomputed-every-run companion to DATA_PATH: `{ [component]: { [env]: { current,
 // latestOverall } } }`, where both are either a full deployment record (same shape as DATA_PATH's own
-// entries — driftBehind/rollback/version included) or null. docs/app.js's currentVersion()/
+// entries — driftBehind/rollback/version included) or null. docs/app-*.js's currentVersion()/
 // componentDeployments() repeat an O(n) filter+sort over the *entire* state.deployments array once per
 // component and once per component×environment on every single first render (the Technical view's
 // summary cards and component×env matrix) — for a tracked fleet with many components and up to
@@ -76,7 +76,7 @@ const ISSUE_DEPLOYMENTS_PATH = safeRelativePath(
 // keeps, regardless of age) for that same purpose — writing them out separately costs nothing extra (no
 // new API calls, no new computation, just reusing those two already-built maps) and lets the frontend do
 // an O(1) lookup instead of re-deriving it from the full array. It's a fast-path cache, not a new source
-// of truth — docs/app.js still falls back to deriving from the full deployments.json whenever a
+// of truth — docs/app-*.js still falls back to deriving from the full deployments.json whenever a
 // component/env is missing here (e.g. this file predates a component's onboarding) — and it only ever
 // reflects whatever this component's own last *regular* sync wrote: a change made by the one-off,
 // manually-triggered backfill-deployment-metadata.js (which doesn't go through trimOldRecords) won't be

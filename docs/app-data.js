@@ -445,7 +445,7 @@ async function loadApiData(tenantId){
         document.getElementById('statusBadgeLabel').textContent = 'Error';
         document.getElementById('statusBadgeTime').textContent = 'source: ShipScope API';
 
-        return { ...emptyDashboardData(), isFallback: false };
+        return { ...emptyDashboardData(), jiraBrowseUrl: null, isFallback: false };
     }
 
     const data = await res.json();
@@ -463,7 +463,8 @@ async function loadApiData(tenantId){
         setupBanner.hidden = !nothingYet;
     }
 
-    return { ...emptyDashboardData(), ...data, isFallback: false };
+    // `jiraBrowseUrl: null` (no Jira connected) must not fall back to the file-based dashboard's Jira site.
+    return { ...emptyDashboardData(), jiraBrowseUrl: null, ...data, isFallback: false };
 }
 
 async function loadData(){

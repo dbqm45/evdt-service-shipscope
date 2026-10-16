@@ -4,6 +4,8 @@ const SERVICE_TYPE = Object.freeze({ FE: 'FE', BE: 'BE' });
 const ISSUE_TYPE = Object.freeze({ EPIC: 'Epic', STORY: 'Story', TASK: 'Task', BUG: 'Bug' });
 // What issueStatusForEnv() reports for one issue on one environment (`.level`).
 const RELEASE_LEVEL = Object.freeze({ NONE: 'none', DEPLOYED: 'deployed', DEPLOYED_CODE_ONLY: 'deployed_code_only', PARTIAL: 'partial', RELEASED: 'released' });
+// The file-based dashboard's Jira (GitHub Pages can't read the sync's secret). Served by the ShipScope server, each
+// tenant's own site comes with its data instead: see jiraIssueUrl().
 const JIRA_BASE_URL = 'https://circlek.atlassian.net/browse';
 
 /** Light/dark toggle. Dark is the default — index.html's inline head script already applies a stored
@@ -76,25 +78,12 @@ function envBadgeIcon(activeCount){
     return `<svg width="13" height="12" viewBox="0 0 13 12" aria-hidden="true">${rects}</svg>`;
 }
 
-// Product view is enabled (clickable), but Technical view stays the default landing tab for now —
-// see DEFAULT_VIEW below. Flip this back to false to disable+hide the tab again (shown, in its usual
-// first position, just unclickable) without touching docs/index.html.
-const PRODUCT_VIEW_ENABLED = true;
-
-// Which tab is active on load, independent of PRODUCT_VIEW_ENABLED — set to 'product' to restore
-// docs/index.html's own default (its `.tab.active` class on the Product view tab).
+// Which tab is active on load — set to 'product' to restore docs/index.html's own default (its `.tab.active`
+// class on the Product view tab).
 const DEFAULT_VIEW = 'tech';
 
-// Release Notes has graduated to always-on (hardcoded true), but the *mechanism* — fully removing a tab
-// from the DOM when disabled, rather than just shown-but-unclickable like PRODUCT_VIEW_ENABLED's pattern —
-// is kept as-is so the next soft-launched preview tab can reuse the same on/off switch: copy this constant
-// and the matching blocks in initTabs()/init() below, wire its condition to whatever gate it needs (a
-// query param, an env-baked flag, etc.), and flip it to false until that tab is ready to reveal.
-const RELEASE_NOTES_ENABLED = true;
-
-// First reuse of the RELEASE_NOTES_ENABLED pattern described above: hidden unless explicitly requested via
-// ?insights=1 in the URL, so it never shows up for anyone who doesn't already know to ask for it — same
-// soft-launch shape Release Notes used before it graduated to always-on.
+// The Insights tab is a soft launch: removed from the page unless asked for with ?insights=1 (initTabs()). A next
+// preview tab can be gated the same way.
 const INSIGHTS_ENABLED = new URLSearchParams(location.search).get('insights') === '1';
 
 function effectiveFlagState(envEntry){
@@ -111,6 +100,13 @@ function effectiveFlagState(envEntry){
     return null;
 }
 let state = null;
+
+/** A Jira issue's link: the tenant's own site when the server says which (`state.jiraBrowseUrl`, null until Jira
+ *  is connected: then the key is shown unlinked), else this org's site for the file-based dashboard. */
+function jiraIssueUrl(key){
+    const base = state && 'jiraBrowseUrl' in state ? state.jiraBrowseUrl : JIRA_BASE_URL;
+    return base ? `${base}/${key}` : null;
+}
 let expandedIssue = null;
 let visibleIssueCount = 20;
 const collapsedEpics = new Set();

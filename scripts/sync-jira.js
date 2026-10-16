@@ -401,7 +401,7 @@ async function runFullScopeMode(explicitProjectKeys, allowedProjectKeys, current
 
     // Board-derived current-PI results (if any) are the most authoritative signal for "what PI is the team
     // actually in right now" — falls back to the highest PI seen among non-Epic issues (the same heuristic
-    // docs/app.js's own currentPi() used client-side before this index existed) when no board is configured
+    // docs/app-*.js's own currentPi() used client-side before this index existed) when no board is configured
     // or it couldn't be resolved this run, and to `null` when even that finds nothing (e.g. a fully
     // fallback-stub run with no real PI at all).
     const currentPiFromBoards = currentPiResults

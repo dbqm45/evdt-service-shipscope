@@ -251,6 +251,7 @@ test('FR-009: the current PI of each board (plus the previous one on its first s
     assert.deepStrictEqual(sync.json(), { boards: 1, issues: 6, currentPi: 'PI-27.3', partial: false }, 'PI-27.3: ABC-1, ABC-2, Epic ABC-10; PI-27.2: ABC-1, ABC-3, Epic ABC-10');
 
     const data = await api('/dashboard-data');
+    assert.strictEqual(data.jiraBrowseUrl, 'https://acme.atlassian.net/browse', 'issue keys link to this tenant\'s own Jira site');
     assert.deepStrictEqual(data.jiraIndex, {
         currentPi: 'PI-27.3',
         pis: [
@@ -292,7 +293,9 @@ test('FR-009: deselecting a board removes its issues; switching sites starts ove
     await call('PUT', '/jira/boards', { boardIds: [10] });
     assert.ok(!(await api('/jira-issues?pi=PI-27.3')).some((i) => i.key === 'ABC-4'));
 
+    assert.strictEqual((await api('/dashboard-data')).jiraBrowseUrl, 'https://acme.atlassian.net/browse');
     await call('PUT', '/jira/site', { cloudId: 'cloud-b' });
+    assert.strictEqual((await api('/dashboard-data')).jiraBrowseUrl, 'https://acme-labs.atlassian.net/browse', 'follows the chosen site');
     assert.deepStrictEqual([await rows('SELECT * FROM jira_boards'), await rows('SELECT * FROM jira_issues'), await rows('SELECT * FROM jira_pis')], [[], [], []]);
     assert.deepStrictEqual((await api('/dashboard-data')).jiraIndex, { currentPi: null, pis: [] });
 });

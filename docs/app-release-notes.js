@@ -101,7 +101,7 @@ function renderReleaseNotes(){
 
         return ReleaseNoteItem({
             type: issue.type,
-            href: `${JIRA_BASE_URL}/${issue.key}`,
+            href: jiraIssueUrl(issue.key),
             title: issue.title,
             pill: StatusPill({ cls: statusClass(prodLevel), label: statusLabel(prodLevel), title: statusLabelTooltip(prodLevel) }),
             issueKey: issue.key,

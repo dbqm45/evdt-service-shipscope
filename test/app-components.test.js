@@ -57,6 +57,11 @@ test('ExternalLink escapes the href and can stop click propagation', () => {
     assert.match(out, /onclick="event.stopPropagation\(\)"/);
 });
 
+test('ExternalLink without an href is the same text, unlinked', () => {
+    assert.equal(run(`ExternalLink({ href: null, cls: 'issue-badge', stopClick: true, children: 'ABC-1' })`), '<span class="issue-badge">ABC-1</span>');
+    assert.equal(run(`IssueBadge({ issueKey: '<x>', href: '' })`), '<span class="issue-badge">&lt;x&gt;</span>');
+});
+
 test('EpicProgress renders nothing but a placeholder without a rollup', () => {
     assert.equal(run(`EpicProgress({ progress: null })`), '<div class="wi-epic-progress"></div>');
     assert.match(run(`EpicProgress({ progress: { released: 1, code: 0, total: 2 } })`), /wi-epic-partial/);
