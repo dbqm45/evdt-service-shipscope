@@ -248,7 +248,7 @@ async function backfillRollbacks(componentRecords) {
             const comparison = await githubApi(`/compare/${previousSha}...${currentSha}`);
 
             if (comparison.status === 'behind') {
-                rec.rollback = { toRef: previousSha };
+                rec.rollback = { toRef: currentSha }; // the ref the environment went back to
                 flagged += 1;
             }
         } catch (e) {

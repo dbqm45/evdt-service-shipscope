@@ -622,7 +622,9 @@ async function main() {
                     issueCommitTypes = range.typesByKey;
 
                     if (range.compareStatus === 'behind') {
-                        entry.rollback = { toRef: previousRef };
+                        // toRef: where the environment went back to (this deploy), not where it came from -- what
+                        // the UI's rollback badge names, and what the server stores too.
+                        entry.rollback = { toRef: currentRef };
                     }
 
                     if (previousRef && previousRef !== currentRef && APP_REPO) {
