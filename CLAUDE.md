@@ -9,7 +9,7 @@ application server or build step: plain Node scripts (no dependencies — only N
 `fetch`; `package.json` exists only to expose `npm test`) are invoked by GitHub Actions workflows to sync
 data into JSON files under `docs/data/`, and a static vanilla-JS page (`docs/index.html` + `docs/app-*.js`)
 renders that JSON. There is no linter or bundler in this repo. Tests are `node:test` files in `test/`
-(`npm test`, run in CI by `.github/workflows/test.yml` on every PR and push to `main`; i.e. `node --test "test/*.test.js"`; ~360 cases, ~99.8% line / ~97% branch coverage — measure with
+(`npm test`, run in CI by `.github/workflows/test.yml` on every PR and push to `main`; i.e. `node --test "test/*.test.js"`; ~470 cases, ~99.8% line / ~97% branch coverage — measure with
 `node --test --experimental-test-coverage "test/*.test.js"`) covering every `scripts/*.js` and `scripts/lib/*.js` file
 and every `docs/app-*.js` file. Each test file runs in its own process because `jira-config.js` reads env at
 require time, and the ones touching disk use a `test/.tmp-*` path (gitignored, removed in `after()`). Top-level
