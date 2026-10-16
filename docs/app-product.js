@@ -157,7 +157,7 @@ function epicHeaderHtml(group, epicChildren, showSprintBadge){
     const ghostCount = epicChildren.filter(c => ghostFlagAge(c, ENVIRONMENT.PROD)).length;
     const hasOpenBug = epicHasOpenBug(epicChildren);
     // Explicit, binary signal — not just the progress bar below reaching 100% — for "every one of
-    // this epic's in-scope children is released to prod" (design-docs/PRODUCT-VIEW-NOTES.md).
+    // this epic's in-scope children is released to prod" (Product view gap analysis).
     // Deliberately not extended to a Story's own sub-tasks the same way: a Story's own flag/deploy
     // status and its sub-tasks' Jira completion are different signals, and gating one on the other
     // would make a feature that's genuinely already live for users read as "not released" over

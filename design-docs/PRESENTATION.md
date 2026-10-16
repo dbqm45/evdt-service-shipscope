@@ -1,5 +1,10 @@
 # ShipScope – slide material
 
+> Slides 3–5 (how it works, comparison, summary) described the original serverless model — GitHub Actions,
+> JSON files on `live`, "no server, no database, data stays in our repository" — and were removed when
+> ShipScope became a hosted multi-tenant service (`server/`). Rewrite them together with the marketing material
+> at the launch stage (`context/foundation/prd.md` → "Deferred to the End").
+
 ## Slide 1: What ShipScope is
 
 **ShipScope is a single dashboard that shows what is actually running on TEST, QA and PROD.**
@@ -17,32 +22,3 @@ It brings three sources of truth together in one place: **deployments (GitHub)**
 - POs and the business don't read GitHub Actions, and the technical team doesn't live in Jira
 
 **ShipScope answers it at a glance, in language both sides understand.**
-
-## Slide 3: How it works
-
-1. **GitHub Actions workflows** pull data from the GitHub API and Jira on a schedule and after every deployment
-2. The data lands in **JSON files** in the repository (the `live` branch)
-3. A **static page** (plain JS, no server, no database) joins it in the browser:
-   Jira issue → commits in a deployment → flag state → status on the environment
-
-Task status on an environment: *Not deployed → Deployed (hidden) → Partial → Released*.
-
-## Slide 4: Why it beats off-the-shelf tools
-
-| | Typical market tools | ShipScope |
-|---|---|---|
-| Scope | Separate: deployments, flags or tasks | **One combined task–flag–deployment view** |
-| The business question "can the user see it?" | No answer – only "deployed" | **Takes the flag state into account, not just the deploy** |
-| Infrastructure | Paid SaaS or your own server and database | **No server – GitHub Actions + GitHub Pages** |
-| Cost and maintenance | Licences, integrations, agents | **No licences, no dependencies, a few Node scripts** |
-| Data | Outside the organisation | **Stays in our repository** |
-| Fit | Generic, configured to a standard | **Tailored to our process: PIs, sprints, teams, environments** |
-| Risk signals | Usually none | **Rollbacks, drift between environments, flag "ghosts", open bugs in an Epic** |
-
-## Slide 5: Summary
-
-> **From "we deployed" to "users can already see it" – with no new server, no licences and no manual reporting.**
-
-- Current state, not an archive – history stays in GitHub and Jira
-- Adding a component = one config entry + wiring up the workflow
-- Ready for POs, dev teams and management

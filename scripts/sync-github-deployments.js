@@ -535,7 +535,7 @@ async function main() {
             // succeeds (`auto_inactive`, on by default outside an environment literally named
             // `production` — see computeDeployDurationMs's comment). If both deployments end up fetched
             // as "new" in the same sync run (e.g. a missed notify-deployment dispatch let two pile up
-            // between syncs — a known gap, see CLAUDE.md/DEPLOYMENT-WEBHOOK-PROPOSAL.md), the earlier
+            // between syncs — a known gap, see CLAUDE.md/ONBOARDING.md), the earlier
             // one's newest status by the time this runs is that `inactive` marker, not its real outcome
             // — blindly taking `statuses[0]` would make `STATE_MAP` below find nothing and silently drop
             // this deployment from `withEnv` entirely, even though it genuinely succeeded or failed.

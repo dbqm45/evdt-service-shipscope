@@ -39,8 +39,8 @@ nie synchronizuje dla *żadnego* komponentu”.
   aplikacji muszą dodatkowo istnieć jako sekret *na każdym monitorowanym repozytorium* (przekazywany, gdy
   to repozytorium wywołuje reużywalny `notify-deployment.yml`/`check-flags.yml`) — to własny workflow
   każdego monitorowanego repozytorium generuje token ograniczony z powrotem do
-  `evdt-service-shipscope`, więc jest to jedyny element tarcia, którego nie da się scentralizować (patrz
-  `design-docs/INTEGRATION-VISION.md`).
+  `evdt-service-shipscope`, więc jest to jedyny element tarcia, którego nie da się scentralizować w modelu plikowym (połączenie GitHub App w
+  serwerze go usuwa).
 - Własne workflowy `evdt-service-shipscope` (`sync-with-retry`, `sync-main-to-live.yml`,
   `update-flag-state.yml`, `sync-runtime-be-flags.yml`) deklarują `permissions: contents: write` i
   korzystają z domyślnego, automatycznego `GITHUB_TOKEN` — żadna aplikacja GitHub App nie jest potrzebna do
@@ -198,8 +198,7 @@ W repozytorium nowego komponentu należy dodać kroki workflowa dotyczące:
   repozytorium lub organizacji, nie sekretami environmentu (job nie deklaruje `environment:`). Zweryfikuj
   jednym prawdziwym deployem: w zakładce Actions powinien uruchomić się „Notify ShipScope”, a
   `orchestrate-full-sync.yml` powinien dostać dispatch. Zmiana nazwy workflowa deploymentowego po cichu
-  przestaje pasować — wtedy zaktualizuj `workflows:`. Zob. `design-docs/DEPLOYMENT-WEBHOOK-PROPOSAL.pl.md`
-  → „Alternatywa bez serwera”.
+  przestaje pasować — wtedy zaktualizuj `workflows:`.
 - **Flag typu build-time, o ile dotyczy** — dodania workflowa wywołującego reużywalny `check-flags.yml`
   (`workflow_call`) z tego repozytorium, analogicznie do rozwiązania zastosowanego w
   `evapl-service-frontend`. Punkt ten należy pominąć, jeżeli komponent nie posiada flag typu build-time

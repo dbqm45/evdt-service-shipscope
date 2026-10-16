@@ -129,7 +129,7 @@ nie ma sekcji różnicy plików, tylko historię Gita, dopóki następna synchro
 zastąpi rekordu.
 
 **Komponenty wdrażane z branchy-wyzwalaczy `deployment/*`:** ustaw `versionFile` w `docs/components.json`, aby
-porównywane ref-y pochodziły z taga wskazanego w pliku (patrz `design-docs/DRIFT-SAME-VERSION-DIFFERENT-SHA.pl.md`),
+porównywane ref-y pochodziły z taga wskazanego w pliku (patrz `versionFile` w `ONBOARDING.pl.md`),
 i dodaj `trigger.properties` do `driftIgnorePaths`.
 
 **Przykład na realnych danych** (`evapl-service-frontend`, 2026-10-06): TEST wdrożył `v1.0.0` o 14:44 (commit
@@ -181,8 +181,7 @@ Typowa przyczyna: deployment uruchomiony z długo żyjącego brancha, np. `deplo
 workflow na tym branchu nie ma kroku `notify_shipscope` dodanego wyłącznie na `main`. Rozwiązanie bez
 serwera i bez utrzymywania kroku per branch to mały workflow na **domyślnym branchu** repozytorium serwisu,
 wyzwalany przez `workflow_run` (który odpala się tylko z YAML-a domyślnego brancha, niezależnie od brancha,
-z którego poszedł deploy) i wywołujący `notify-deployment.yml` — zob. „Alternatywa bez serwera” w
-`design-docs/DEPLOYMENT-WEBHOOK-PROPOSAL.pl.md`.
+z którego poszedł deploy) i wywołujący `notify-deployment.yml` — zob. workflow „Notify ShipScope” w `ONBOARDING.pl.md`.
 
 (Skrypt: `sync-github-deployments.js`, funkcje `trimOldRecords`, `main`. Workflow: `orchestrate-full-sync.yml`,
 job `sync_deployments`. Trigger: krok `notify_shipscope` w `notify-deployment.yml`.)

@@ -389,7 +389,7 @@ function prodStatusBucket(issue){
 /** Gap A — "ghost flag" aging: code deployed to an env but its flag has been left off (or only
  *  partially on) for too long — SAFe calls this unconsumed value accumulating as risk with zero benefit
  *  to users. Threshold is in days, not sprints, since sprint length isn't guaranteed uniform across
- *  boards/teams (see design-docs/PRODUCT-VIEW-NOTES.md, Gap A). Mirrors flagStaleWarning()'s
+ *  boards/teams (Product view gap analysis, Gap A). Mirrors flagStaleWarning()'s
  *  days-since-changedAt arithmetic in the opposite direction (OFF, not ON) — but scoped to a single
  *  issue/env via issueStatusForEnv()'s own link resolution, so this always agrees with whatever status
  *  pill the row is already showing instead of re-deriving link status from scratch. */
@@ -462,7 +462,7 @@ function selectedIncrements(){
  *  one," not two. */
 const SPRINT_ALL = '';
 
-/** Gap B's hybrid scope sentinel (design-docs/PRODUCT-VIEW-IMPLEMENTATION-PLAN.md, Phase 5) — a third,
+/** Gap B's hybrid scope sentinel (Product view gap analysis) — a third,
  *  explicit option next to "All sprints"/a literal sprint name (not a replacement for either): the
  *  current sprint's items regardless of status, plus older-sprint items in the same PI that aren't yet
  *  `released`, so an Epic spanning several sprints still shows its real completion state instead of
