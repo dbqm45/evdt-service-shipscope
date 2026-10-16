@@ -49,8 +49,14 @@ Each deploy also records whether its GitHub Actions run was started by hand (`ma
   slot by priority, then by the latest change. Not a port of `scripts/lib/flag-ingest.js` (schemaVersion 1, the
   single-tenant contract): this one replaces it for the server.
 
-Not yet: Jira data in the database (those dashboard panels are empty; FR-007 will connect Jira via Atlassian
-OAuth), GitHub webhooks.
+- **Jira connection** (FR-007, `lib/atlassian.js` + `lib/jira-connections.js`): an admin connects the tenant's
+  Jira Cloud through Atlassian OAuth 2.0 (3LO), read-only scopes plus `offline_access`. Only the refresh token is
+  stored, encrypted with AES-256-GCM (`lib/secret-box.js`, key `TOKEN_ENCRYPTION_KEY`, bound to the tenant id);
+  access tokens are minted per use under a row lock, since Atlassian rotates refresh tokens. One Jira site per
+  tenant (an admin picks it when the grant covers several). A revoked or expired grant shows up as `lastError`.
+
+Not yet: choosing Jira projects/boards and syncing issues (FR-008/FR-009; the dashboard's Jira panels are empty),
+GitHub webhooks.
 
 This directory is a separate dependency boundary from the repo root: its own `package.json` and the **only
 place in this repo with third-party dependencies** (`pg`, `fastify`, `@fastify/cookie` — see `@CLAUDE.md`'s
@@ -104,6 +110,17 @@ Deployments and settings:
 | `GET /tenants/:tenantId/deployments` | session + member | Newest first. Optional `repoId`, `environment` (`test`/`qa`/`prod`), `limit` (default 100, max 500). Each: `deploymentId, repo, environment, status, sha, deployedAt, deployedByLogin, workflowRunUrl, durationMs, commitUrl, rollbackToSha, relatedIssues, issueCommitTypes`. |
 | `GET /tenants/:tenantId/settings` | session + member | `{ name, deploymentRetentionDays }`. |
 | `PUT /tenants/:tenantId/settings` | session + admin | Body `{ "deploymentRetentionDays": 7..730 }` (default 90). Applied by the next daily cleanup. |
+
+Jira (only when the `ATLASSIAN_*` variables and `TOKEN_ENCRYPTION_KEY` are set):
+
+| Route | Auth | What it does |
+|---|---|---|
+| `GET /tenants/:tenantId/jira/connect` | session + admin | Redirects to Atlassian's consent screen (state cookie naming the tenant). |
+| `GET /auth/atlassian/callback` | session + admin | The app's callback URL. Checks the state, exchanges the code, keeps the Jira sites the grant can read; ends on `/tenants/:tenantId/jira`. 400 for a bad state, declined consent or no Jira site; 502 when Atlassian rejects the code or grants no offline access. |
+| `GET /tenants/:tenantId/jira` | session + member | `{ connected: false }` or `{ connected: true, site: { cloudId, url, name } \| null, sites?, connectedAt, lastError }` (`sites` only while none is chosen). Never a token. |
+| `PUT /tenants/:tenantId/jira/site` | session + admin | Body `{ "cloudId": "..." }`, one of the sites the grant covers. |
+| `GET /tenants/:tenantId/jira/projects` | session + admin | The chosen site's projects `{ projects: [{ id, key, name }] }`; proves the connection works. 409 when not connected, no site is chosen, or the grant was revoked. |
+| `DELETE /tenants/:tenantId/jira` | session + admin | Forgets the connection and its token. 204, or 404. |
 
 Feature flags:
 
@@ -173,7 +190,7 @@ not stripped or coerced).
   invitation whose token hash is set as `app.invite_token_hash` (how a not-yet-member reads the link).
   `github_installations` and `tracked_repos` (migration `004`), `deployments` and `issue_deployments`
   (migration `005`), `flag_sources`, `ingest_tokens`, `flags`, `flag_values` and `flag_value_history` (migration
-  `008`) are tenant-scoped the same way. An ingest request carries no session: like an invitation, it can read
+  `008`) and `jira_connections` (migration `009`) are tenant-scoped the same way. An ingest request carries no session: like an invitation, it can read
   exactly the one `ingest_tokens` row whose hash it holds (`app.ingest_token_hash`), then works under that row's
   tenant, one ingest per tenant at a time (a transaction advisory lock).
   An unscoped query fails closed: zero rows, or an RLS error for a write.

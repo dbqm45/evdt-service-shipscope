@@ -78,6 +78,8 @@ serwisów (`render.yaml` ustawia `DATABASE_URL` sam; sekrety mają `sync: false`
 | `GITHUB_APP_ID`, `GITHUB_APP_SLUG`, `GITHUB_APP_PRIVATE_KEY` | tak | tak | Podłączanie repozytoriów (web) i synchronizacja (worker) |
 | `SYNC_INTERVAL_MINUTES` | — | opcjonalnie | Co ile minut synchronizacja (1–1440, domyślnie 15) |
 | `DASHBOARD_DIR` | opcjonalnie | — | Gdzie są pliki dashboardu (`docs/`); bez nich strona `/t/<id>/` odpowiada 503 |
+| `ATLASSIAN_CLIENT_ID`, `ATLASSIAN_CLIENT_SECRET` | tak | — | Aplikacja OAuth w Atlassian (sekcja 5); bez nich połączenie z Jirą jest wyłączone |
+| `TOKEN_ENCRYPTION_KEY` | tak | — | Klucz szyfrujący zapisane tokeny Jiry: `openssl rand -base64 32`. Zmiana klucza = każdy tenant łączy Jirę od nowa |
 
 ## 3. Pierwsze uruchomienie (po stronie użytkownika)
 
@@ -160,3 +162,25 @@ curl -sf -X POST "$SHIPSCOPE_URL/api/flags/ingest" \
 
 Odpowiedź: `{ source, flags, changed, removed, stale, created }`. Usunięcie źródła usuwa jego tokeny, wartości
 i historię; przestanie śledzenia repozytorium zostawia źródło, tylko bez komponentu.
+
+## 5. Jira (Atlassian OAuth)
+
+Gdzie: **https://developer.atlassian.com/console/myapps/ → Create → OAuth 2.0 integration**. Tak jak przy GitHubie:
+osobna aplikacja do pracy lokalnej (np. „ShipScope (dev)”) i do wdrożenia („ShipScope”). Nazwa aplikacji jest
+widoczna dla użytkownika na ekranie zgody Atlassian.
+
+| Ustawienie | Wartość |
+|---|---|
+| Permissions → Jira API | `read:jira-work`, `read:jira-user` |
+| Permissions → Jira Software (jeśli konsola pokazuje ją osobno) | `read:board-scope:jira-software`, `read:sprint:jira-software` |
+| Authorization → Callback URL | `<adres>/auth/atlassian/callback` (lokalnie `http://localhost:3000/auth/atlassian/callback`) |
+| Settings → Client ID / Secret | do `ATLASSIAN_CLIENT_ID` / `ATLASSIAN_CLIENT_SECRET` |
+| Dostęp / dystrybucja | do pracy lokalnej: prywatna (tylko Ty); do wdrożenia: udostępniona (inne firmy łączą swoje Jiry) — Atlassian wymaga wtedy danych dostawcy i polityki prywatności |
+
+`offline_access` (odświeżanie dostępu bez obecności użytkownika) ShipScope prosi sam przy łączeniu — w konsoli się
+go nie zaznacza. Wszystkie uprawnienia są tylko do odczytu.
+
+Połączenie (admin tenanta): otwórz `/tenants/<id>/jira/connect`, zaakceptuj dostęp w Atlassian. Jeśli konto ma
+kilka witryn Jira, wybierz jedną: `PUT /tenants/<id>/jira/site` z `{ "cloudId": "..." }` (lista w
+`GET /tenants/<id>/jira`). Działanie sprawdzisz przez `GET /tenants/<id>/jira/projects`. Gdy dostęp zostanie
+odwołany w Atlassian albo wygaśnie, `GET /tenants/<id>/jira` pokaże `lastError` — wystarczy połączyć ponownie.

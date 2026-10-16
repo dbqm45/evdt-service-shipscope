@@ -70,4 +70,28 @@ function loadGitHubAppConfig(env) {
     return { appId: env.GITHUB_APP_ID, slug: env.GITHUB_APP_SLUG, privateKey };
 }
 
-module.exports = { loadAuthConfig, loadGitHubAppConfig };
+/**
+ * Reads the Atlassian OAuth 2.0 (3LO) app's credentials and the key that encrypts stored Jira tokens (FR-007).
+ * Optional as a whole -- without them the Jira routes are off -- but a partial set fails fast.
+ * TOKEN_ENCRYPTION_KEY is 32 random bytes, base64-encoded (`openssl rand -base64 32`).
+ *
+ * @param {NodeJS.ProcessEnv} env
+ * @returns {{ clientId: string, clientSecret: string, encryptionKey: Buffer }|null}
+ * @throws {Error} naming every missing/invalid variable
+ */
+function loadAtlassianConfig(env) {
+    const keys = ['ATLASSIAN_CLIENT_ID', 'ATLASSIAN_CLIENT_SECRET', 'TOKEN_ENCRYPTION_KEY'];
+    if (!keys.some((key) => env[key])) return null;
+
+    const problems = keys.filter((key) => !env[key]).map((key) => `${key} is not set (the other Atlassian variables are)`);
+    let encryptionKey = null;
+    if (env.TOKEN_ENCRYPTION_KEY) {
+        encryptionKey = /^[A-Za-z0-9+/]{43}=$/.test(env.TOKEN_ENCRYPTION_KEY) ? Buffer.from(env.TOKEN_ENCRYPTION_KEY, 'base64') : null;
+        if (!encryptionKey || encryptionKey.length !== 32) problems.push('TOKEN_ENCRYPTION_KEY must be 32 bytes, base64-encoded (openssl rand -base64 32)');
+    }
+    if (problems.length > 0) throw new Error(`Invalid configuration: ${problems.join('; ')}`);
+
+    return { clientId: env.ATLASSIAN_CLIENT_ID, clientSecret: env.ATLASSIAN_CLIENT_SECRET, encryptionKey };
+}
+
+module.exports = { loadAuthConfig, loadGitHubAppConfig, loadAtlassianConfig };
