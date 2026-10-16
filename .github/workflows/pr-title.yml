@@ -1,0 +1,24 @@
+name: PR title
+
+# PRs are squash-merged, so the PR title becomes the commit on main and drives the next version
+# (RELEASING.md). Runs on title edits too, without re-running the whole CI.
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  conventional-commit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # The title goes through an environment variable, never into the script text.
+      - run: node scripts/check-commit-message.js "$TITLE"
+        env:
+          TITLE: ${{ github.event.pull_request.title }}

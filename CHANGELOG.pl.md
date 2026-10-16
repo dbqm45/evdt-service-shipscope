@@ -7,6 +7,28 @@ dashboard, nie publikowany pakiet), dlatego wpisy są pogrupowane według dat. I
 ShipScope, znajdują się w `README.pl.md`, pełne techniczne odniesienie w `CLAUDE.md` (po angielsku), a
 wyjaśnienie sposobu liczenia poszczególnych wartości/badge'y w `FAQ.pl.md`.
 
+## [0.1.0] - 2026-10-16
+
+Pierwsze wydanie z numerem wersji. Od teraz każdy merge do `main` z commitem `feat`, `fix`, `perf` albo zmianą
+niezgodną wstecz automatycznie dostaje kolejną wersję (zob. `RELEASING.md`); sekcje z datami poniżej są sprzed
+wersjonowania.
+
+### Nowe
+
+- **SHP:** logowanie przez GitHuba, sesje i trasy HTTP w zakresie tenanta w `server/` (FR-001)
+- **SHP:** automatyczne wersjonowanie: Conventional Commits, commit `chore(release)`, tag `vX.Y.Z` i GitHub Release na `main`
+
+## 2026-10-16
+
+- **Dodano: logowanie przez GitHuba w backendzie `server/` (FR-001).** Użytkownik loguje się przez GitHub App
+  ShipScope, dostaje sesję po stronie serwera ważną 14 dni (w bazie tylko hash tokenu; token GitHuba nie jest
+  zapisywany) i może przez HTTP założyć tenanta oraz zobaczyć jego członków (`/auth/github/login`, `/me`,
+  `POST /tenants`, `GET /tenants/:id/members`). Backend używa teraz Fastify (ścisła walidacja wejścia) i
+  `@fastify/cookie`. Row-Level Security na członkostwach jest zaostrzone: zapis tylko do tenanta, do którego
+  zawężone jest żądanie, a użytkownik może wylistować własne tenanty. `DATABASE_SSL=false` pozwala użyć
+  lokalnego Postgresa bez TLS. Wymaga `GITHUB_APP_CLIENT_ID`, `GITHUB_APP_CLIENT_SECRET` i `PUBLIC_BASE_URL`;
+  konfiguracja w `server/README.md`.
+
 ## 2026-10-15
 
 - **Wewnętrznie: enumy `ENVIRONMENT` / `SERVICE_TYPE` zastępują literały `'test'`/`'qa'`/`'prod'` oraz `'FE'`/`'BE'` w `docs/app-*.js`, bez zmiany zachowania.** Zamrożone obiekty w `app-core.js` o wartościach identycznych z danymi JSON (`ENVIRONMENT.PROD === 'prod'`); `ENVIRONMENTS` jest z nich zbudowane.
