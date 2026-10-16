@@ -88,8 +88,8 @@ function SecretBox({ label, value, note }){
         <span><button type="button" class="btn" data-action="dismiss-once">Done, I copied it</button></span></div>`;
 }
 
-/** @param {{ workspace: { settings: object, members: object[], invitations: object[]|null }, admin: boolean, meId: string, once: object }} props */
-function renderWorkspace({ workspace, admin, meId, once }){
+/** @param {{ workspace: { settings: object, members: object[], invitations: object[]|null }, admin: boolean, meId: string, once: object, tenantName?: string }} props */
+function renderWorkspace({ workspace, admin, meId, once, tenantName = '' }){
     if (!workspace) {
         return Section({ id: 'workspace', title: 'Workspace', body: html`<p class="settings-loading">Loading…</p>` });
     }
@@ -122,8 +122,21 @@ function renderWorkspace({ workspace, admin, meId, once }){
         hint: admin ? null : 'You are a member: only admins can change settings.',
         body: html`${retention}<h3>Members</h3>
             <table class="settings-table"><thead><tr><th>GitHub user</th><th>Role</th><th></th></tr></thead><tbody>${memberRows}</tbody></table>
-            ${inviteBlock}`,
+            ${inviteBlock}${admin ? DeleteWorkspace(tenantName) : ''}`,
     });
+}
+
+/** The danger zone: deleting the workspace needs its name typed back (the server checks it too). */
+function DeleteWorkspace(tenantName){
+    return html`<h3>Delete workspace</h3>
+        <p class="settings-hint">Deletes this workspace and everything ShipScope holds for it: members, invitations, tracked
+        repositories and their deployments, the Jira connection and its issues, flag sources and values. This cannot be undone.
+        ShipScope's Jira webhook is removed; the GitHub App stays installed on GitHub — uninstall it there
+        (organization or account Settings → GitHub Apps) if nothing else uses it.</p>
+        <form class="settings-form" data-action="delete-workspace">
+            <label>Type <strong>${tenantName}</strong> to confirm <input name="confirmName" required maxlength="200" autocomplete="off"></label>
+            <button type="submit" class="btn btn-danger">Delete workspace</button>
+        </form>`;
 }
 
 function syncTag(repo){
@@ -299,7 +312,7 @@ function renderFlags({ flags, repos, admin, once, origin }){
 function renderSettings(){
     const s = settingsState;
     const admin = isAdmin();
-    return html`${renderWorkspace({ workspace: s.workspace, admin, meId: s.me && s.me.user.id, once: s.once })}
+    return html`${renderWorkspace({ workspace: s.workspace, admin, meId: s.me && s.me.user.id, once: s.once, tenantName: s.tenant && s.tenant.name })}
         ${renderGitHub({ enabled: s.features.githubApp, webhooks: s.features.githubWebhooks, github: s.github, installationRepos: s.installationRepos, admin })}
         ${renderJira({ enabled: s.features.jira, webhooks: s.features.jiraWebhooks, jira: s.jira, boards: s.boards, admin })}
         ${renderFlags({ flags: s.flags, repos: (s.github && s.github.repos) || [], admin, once: s.once, origin: location.origin })}`;
@@ -387,6 +400,15 @@ const actions = {
     'save-retention': async (form) => {
         await api('PUT', tenantPath('/settings'), { deploymentRetentionDays: Number(formValues(form).deploymentRetentionDays) });
         return { section: 'workspace', ok: 'Saved.' };
+    },
+    'delete-workspace': async (form) => {
+        const confirmName = formValues(form).confirmName.trim();
+        if (!confirmed(`Delete the workspace "${confirmName}" and all its data? This cannot be undone.`)) {
+            return null;
+        }
+        await api('DELETE', tenantPath(''), { confirmName });
+        location.assign('/');
+        return null;
     },
     'remove-member': async (el, data) => {
         if (!confirmed(data.self ? 'Leave this workspace?' : 'Remove this member from the workspace?')) {

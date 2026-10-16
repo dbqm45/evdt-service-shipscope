@@ -6,13 +6,13 @@ const { createPool, checkConnection } = require('./lib/db');
 const { loadAuthConfig, loadGitHubAppConfig, loadAtlassianConfig } = require('./lib/config');
 const { AtlassianError, buildAuthorizeUrl: buildAtlassianAuthorizeUrl, exchangeCode: exchangeAtlassianCode, fetchJiraSites } = require('./lib/atlassian');
 const { JiraNotConnectedError, JiraSiteError, saveConnection, getConnection, selectSite, disconnect, listProjects } = require('./lib/jira-connections');
-const { JiraBoardError, listBoards, setBoards, configureBoard, syncTenant: syncJiraTenant, listPiIssues } = require('./lib/jira-sync');
+const { JiraBoardError, listBoards, setBoards, configureBoard, syncTenant: syncJiraTenant, listPiIssues, removeJiraWebhooks } = require('./lib/jira-sync');
 const { APP_VERSION } = require('./lib/version');
 const { buildAuthorizeUrl, exchangeCode, fetchGitHubUser, GitHubOAuthError } = require('./lib/github-oauth');
 const { createSession, getSessionUser, deleteSession } = require('./lib/sessions');
 const {
-    upsertUser, createTenantWithOwner, listTenantsForUser, listMembersIfMember, removeMember,
-    assertAdmin, roleOf, TenantNotFoundError, AlreadyMemberError, ForbiddenError, LastAdminError,
+    upsertUser, createTenantWithOwner, listTenantsForUser, listMembersIfMember, removeMember, assertDeletable, deleteTenant,
+    assertAdmin, roleOf, TenantNotFoundError, AlreadyMemberError, ForbiddenError, LastAdminError, ConfirmationMismatchError,
 } = require('./lib/tenants');
 const { withScope } = require('./lib/scope');
 const {
@@ -72,6 +72,7 @@ const ERROR_STATUS = [
     [ForbiddenError, 403],
     [AlreadyMemberError, 409],
     [LastAdminError, 409],
+    [ConfirmationMismatchError, 400],
     [InvitationUnusableError, 410],
     [InstallationNotFoundError, 404],
     [InstallationTakenError, 409],
@@ -296,6 +297,30 @@ function buildApp({ pool, auth, githubApp = null, atlassian = null, fetch: fetch
         return { members };
     });
 
+    // Deletes the whole tenant and its data (every table cascades from it). Admins only, with the tenant's name typed
+    // back. What ShipScope registered elsewhere goes first (the Jira webhook); the GitHub App stays installed on
+    // GitHub -- uninstalling it there is the owner's call, not this route's.
+    app.delete('/tenants/:tenantId', {
+        preHandler: requireUser,
+        schema: {
+            params: { type: 'object', required: ['tenantId'], properties: { tenantId: UUID_PARAM } },
+            body: {
+                type: 'object',
+                required: ['confirmName'],
+                additionalProperties: false,
+                properties: { confirmName: { type: 'string', minLength: 1, maxLength: 200 } },
+            },
+        },
+    }, async (request, reply) => {
+        const input = { tenantId: request.params.tenantId, actorUserId: request.user.id, confirmName: request.body.confirmName };
+        // Checked before anything outside ShipScope is touched; checked again in the deleting transaction.
+        await withScope(pool, { tenantId: input.tenantId }, (client) => assertDeletable(client, input));
+        if (atlassian) await removeJiraWebhooks(pool, { tenantId: input.tenantId, atlassian, fetch: fetchFn });
+        await deleteTenant(pool, input);
+        request.log.info({ tenantId: input.tenantId }, 'tenant deleted');
+        return reply.code(204).send();
+    });
+
     // Admin removes a member, or a member leaves (their own userId). Never the last admin.
     app.delete('/tenants/:tenantId/members/:userId', {
         preHandler: requireUser,
@@ -495,6 +520,8 @@ function buildApp({ pool, auth, githubApp = null, atlassian = null, fetch: fetch
             preHandler: requireUser,
             schema: { params: tenantParams },
         }, async (request, reply) => {
+            await assertAdminOf(request.params.tenantId, request.user.id);
+            await removeJiraWebhooks(pool, { tenantId: request.params.tenantId, atlassian, fetch: fetchFn });
             const removed = await disconnect(pool, { tenantId: request.params.tenantId, actorUserId: request.user.id });
             if (!removed) return reply.code(404).send({ error: 'Jira is not connected' });
             return reply.code(204).send();
