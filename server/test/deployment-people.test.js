@@ -95,7 +95,7 @@ test('sync: manual flag and display names are stored and shown; a failed lookup 
         await c.query("INSERT INTO tracked_repos (tenant_id, repo_id, installation_id, full_name) VALUES ($1, 1, $2, 'acme/web')", [tenantId, ACME]);
     });
 
-    assert.deepStrictEqual(await syncAll({ pool, app: githubApp, fetch, now: NOW }), { repos: 1, inserted: 3, failed: 0 });
+    assert.deepStrictEqual(await syncAll({ pool, app: githubApp, fetch, now: NOW }), { repos: 1, inserted: 3, failed: 0, deferred: 0 });
     const rows = await withScope(pool, { tenantId }, async (c) => (await c.query(
         'SELECT deployment_id, manual, deployed_by_login, deployed_by_name FROM deployments ORDER BY deployment_id'
     )).rows);

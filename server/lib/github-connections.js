@@ -51,7 +51,7 @@ async function linkInstallation(pool, { tenantId, actorUserId, installation }) {
  *
  * @param {import('pg').Pool} pool
  * @param {{ tenantId: string, actorUserId: string }} input
- * @returns {Promise<{ installations: Array<{ installationId: number, accountLogin: string, accountType: string }>, repos: Array<{ repoId: number, fullName: string, installationId: number, lastSyncedAt: Date|null, lastSyncError: string|null, versionFile: string|null, driftIgnorePaths: string[] }> }>}
+ * @returns {Promise<{ installations: Array<{ installationId: number, accountLogin: string, accountType: string }>, repos: Array<{ repoId: number, fullName: string, installationId: number, lastSyncedAt: Date|null, lastSyncError: string|null, rateLimitedUntil: Date|null, versionFile: string|null, driftIgnorePaths: string[] }> }>}
  */
 async function listConnections(pool, { tenantId, actorUserId }) {
     return withScope(pool, { tenantId }, async (client) => {
@@ -61,8 +61,11 @@ async function listConnections(pool, { tenantId, actorUserId }) {
             [tenantId]
         );
         const { rows: repos } = await client.query(
-            `SELECT repo_id, full_name, installation_id, last_synced_at, last_sync_error, version_file, drift_ignore_paths
-             FROM tracked_repos WHERE tenant_id = $1 ORDER BY full_name`,
+            `SELECT r.repo_id, r.full_name, r.installation_id, r.last_synced_at, r.last_sync_error, r.version_file, r.drift_ignore_paths,
+                    CASE WHEN i.rate_limited_until > now() THEN i.rate_limited_until END AS rate_limited_until
+             FROM tracked_repos r
+             LEFT JOIN github_installations i ON i.tenant_id = r.tenant_id AND i.installation_id = r.installation_id
+             WHERE r.tenant_id = $1 ORDER BY r.full_name`,
             [tenantId]
         );
         return {
@@ -73,6 +76,7 @@ async function listConnections(pool, { tenantId, actorUserId }) {
                 installationId: Number(r.installation_id),
                 lastSyncedAt: r.last_synced_at,
                 lastSyncError: r.last_sync_error,
+                rateLimitedUntil: r.rate_limited_until,
                 versionFile: r.version_file,
                 driftIgnorePaths: r.drift_ignore_paths,
             })),

@@ -47,7 +47,7 @@ async function saveConnection(pool, { tenantId, actorUserId, refreshToken, scope
  *
  * @param {import('pg').Pool} pool
  * @param {{ tenantId: string, actorUserId: string }} input
- * @returns {Promise<{ connected: false }|{ connected: true, site: { cloudId: string, url: string, name: string }|null, sites?: object[], connectedAt: Date, lastError: string|null, currentPi: string|null, lastSyncedAt: Date|null, webhook: { active: boolean, expiresAt: Date|null, error: string|null } }>}
+ * @returns {Promise<{ connected: false }|{ connected: true, site: { cloudId: string, url: string, name: string }|null, sites?: object[], connectedAt: Date, lastError: string|null, currentPi: string|null, lastSyncedAt: Date|null, rateLimitedUntil: Date|null, webhook: { active: boolean, expiresAt: Date|null, error: string|null } }>}
  *   webhook.active: Jira tells ShipScope about issue changes right away (else only the periodic sync); flagLink: how
  *   issues name their feature flags (lib/jira-sync.js setFlagLink()), or null
  * @throws {TenantNotFoundError}
@@ -57,7 +57,8 @@ async function getConnection(pool, { tenantId, actorUserId }) {
         if (!(await roleOf(client, { tenantId, userId: actorUserId }))) throw new TenantNotFoundError('Tenant not found');
         const { rows: [row] } = await client.query(
             `SELECT available_sites, cloud_id, site_url, site_name, connected_at, last_error, current_pi, last_synced_at,
-                    webhook_ids, webhook_expires_at, webhook_error, flag_link
+                    webhook_ids, webhook_expires_at, webhook_error, flag_link,
+                    CASE WHEN rate_limited_until > now() THEN rate_limited_until END AS rate_limited_until
              FROM jira_connections WHERE tenant_id = $1`,
             [tenantId]
         );
@@ -65,7 +66,7 @@ async function getConnection(pool, { tenantId, actorUserId }) {
         const site = row.cloud_id ? { cloudId: row.cloud_id, url: row.site_url, name: row.site_name } : null;
         return {
             connected: true, site, ...(site ? {} : { sites: row.available_sites }), connectedAt: row.connected_at, lastError: row.last_error,
-            currentPi: row.current_pi, lastSyncedAt: row.last_synced_at,
+            currentPi: row.current_pi, lastSyncedAt: row.last_synced_at, rateLimitedUntil: row.rate_limited_until,
             webhook: {
                 active: row.webhook_ids.length > 0 && row.webhook_expires_at !== null && row.webhook_expires_at > new Date(),
                 expiresAt: row.webhook_expires_at,

@@ -7,6 +7,8 @@
  * that must replace the stored one.
  */
 
+const { retryAtFrom } = require('./rate-limit');
+
 const AUTHORIZE_URL = 'https://auth.atlassian.com/authorize';
 const TOKEN_URL = 'https://auth.atlassian.com/oauth/token';
 const RESOURCES_URL = 'https://api.atlassian.com/oauth/token/accessible-resources';
@@ -25,14 +27,33 @@ const WEBHOOK_SCOPE = 'manage:jira-webhook';
 const WEBHOOK_EVENTS = ['jira:issue_created', 'jira:issue_updated', 'jira:issue_deleted'];
 const REQUIRED_SITE_SCOPE = 'read:jira-work';
 const MAX_PAGES = 20;
+/** Per request. Without it one stalled Jira site would hold up the whole sync pass, every other tenant included. */
+const REQUEST_TIMEOUT_MS = 30_000;
 
 class AtlassianError extends Error {
-    /** @param {string} message @param {{ reconnect?: boolean, status?: number|null }} [options] reconnect: the stored grant is no longer valid; status: Atlassian's HTTP status */
-    constructor(message, { reconnect = false, status = null } = {}) {
+    /**
+     * @param {string} message
+     * @param {{ reconnect?: boolean, status?: number|null, retryAt?: Date|null }} [options] reconnect: the stored grant is no
+     *   longer valid; status: Atlassian's HTTP status; retryAt: set on a rate limit (429), when to try again
+     */
+    constructor(message, { reconnect = false, status = null, retryAt = null } = {}) {
         super(message);
         this.reconnect = reconnect;
         this.status = status;
+        this.retryAt = retryAt;
     }
+}
+
+const failureText = (err) => (err.name === 'TimeoutError' ? 'timed out' : err.message);
+
+/** The error for a non-2xx answer; a 429 carries when to try again (Retry-After, which Jira Cloud doesn't always send). */
+function httpError(method, url, res) {
+    const path = new URL(url).pathname;
+    if (res.status === 429) {
+        const retryAt = retryAtFrom(res.headers);
+        return new AtlassianError(`${method} ${path} hit Atlassian's rate limit until ${retryAt.toISOString()}`, { status: 429, retryAt });
+    }
+    return new AtlassianError(`${method} ${path} failed with HTTP ${res.status}`, { reconnect: res.status === 401, status: res.status });
 }
 
 /**
@@ -56,12 +77,15 @@ async function tokenRequest(body, fetchFn) {
     try {
         res = await fetchFn(TOKEN_URL, {
             method: 'POST',
+            signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
             headers: { accept: 'application/json', 'content-type': 'application/json' },
             body: JSON.stringify(body),
         });
     } catch (err) {
-        throw new AtlassianError(`token request failed: ${err.message}`);
+        throw new AtlassianError(`token request failed: ${failureText(err)}`);
     }
+    // Too many requests is not a lost grant: wait, don't ask the admin to reconnect.
+    if (res.status === 429) throw httpError('POST', TOKEN_URL, res);
     const json = await res.json().catch(() => null);
     if (!res.ok) {
         const code = typeof json?.error === 'string' ? json.error : `HTTP ${res.status}`;
@@ -98,11 +122,11 @@ function refreshAccessToken({ clientId, clientSecret, refreshToken, fetch: fetch
 async function getJson(url, accessToken, fetchFn) {
     let res;
     try {
-        res = await fetchFn(url, { headers: { accept: 'application/json', authorization: `Bearer ${accessToken}` } });
+        res = await fetchFn(url, { signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS), headers: { accept: 'application/json', authorization: `Bearer ${accessToken}` } });
     } catch (err) {
-        throw new AtlassianError(`GET ${new URL(url).pathname} failed: ${err.message}`);
+        throw new AtlassianError(`GET ${new URL(url).pathname} failed: ${failureText(err)}`);
     }
-    if (!res.ok) throw new AtlassianError(`GET ${new URL(url).pathname} failed with HTTP ${res.status}`, { reconnect: res.status === 401, status: res.status });
+    if (!res.ok) throw httpError('GET', url, res);
     return res.json();
 }
 
@@ -313,13 +337,14 @@ async function sendJson(method, url, accessToken, body, fetchFn) {
     try {
         res = await fetchFn(url, {
             method,
+            signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
             headers: { accept: 'application/json', 'content-type': 'application/json', authorization: `Bearer ${accessToken}` },
             body: JSON.stringify(body),
         });
     } catch (err) {
-        throw new AtlassianError(`${method} ${new URL(url).pathname} failed: ${err.message}`);
+        throw new AtlassianError(`${method} ${new URL(url).pathname} failed: ${failureText(err)}`);
     }
-    if (!res.ok) throw new AtlassianError(`${method} ${new URL(url).pathname} failed with HTTP ${res.status}`, { reconnect: res.status === 401, status: res.status });
+    if (!res.ok) throw httpError(method, url, res);
     return res.status === 204 ? null : res.json().catch(() => null);
 }
 

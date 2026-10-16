@@ -120,14 +120,16 @@ test('worker: queued requests become a targeted sync under the regular locks; a 
     await requestSync(pool, { source: 'jira', keys: ['webhook:1001'] });
     const seen = [];
     const deps = {
-        syncAll: async ({ repoIds }) => {
+        syncAll: async ({ repoIds, options }) => {
             seen.push(['github', repoIds]);
+            assert.deepStrictEqual(options, { tenantBudgetMs: 120_000 }, 'webhook syncs share tenants\' time fairly too');
             // A delivery arriving while the sync runs must not be swallowed by it.
             await pool.query("UPDATE sync_requests SET requested_at = now() + interval '1 second' WHERE external_key = '70105'");
             return { repos: 2, inserted: 0, failed: 0 };
         },
-        syncAllJira: async ({ keys }) => {
+        syncAllJira: async ({ keys, tenantBudgetMs }) => {
             seen.push(['jira', keys]);
+            assert.strictEqual(tenantBudgetMs, 120_000);
             return { tenants: 1, issues: 0, failed: 0 };
         },
     };
