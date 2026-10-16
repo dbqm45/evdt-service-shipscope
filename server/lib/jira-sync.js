@@ -1,17 +1,19 @@
 const { withScope } = require('./scope');
 const { assertAdmin, roleOf, TenantNotFoundError } = require('./tenants');
 const { accessTokenFor, JiraNotConnectedError } = require('./jira-connections');
-const { AtlassianError, fetchBoards, fetchSprints, fetchFieldIds, searchIssues } = require('./atlassian');
+const { AtlassianError, fetchBoards, fetchSprints, fetchVersions, fetchFieldIds, searchIssues } = require('./atlassian');
 const {
-    RhythmTemplateError, compileTemplate, extractPiFromSprintName, rhythmOf, piOfSprint, comparePiDesc, currentPiOf, previousPiOf, issueFields, mapIssue,
+    RhythmTemplateError, compileTemplate, extractPiFromSprintName, rhythmOf, piOfSprint, comparePiDesc, currentPiOf, previousPiOf,
+    releaseName, currentReleaseOf, previousReleaseOf, flowMonth, releaseJql, flowJql, issueFields, mapIssue,
 } = require('./jira-model');
 
 /**
  * FR-008 (which boards a tenant syncs) and FR-009 (syncing their issues, migration 010).
  *
- * Per pass and board: the board's current PI is fully re-synced -- every issue in the board's sprints of that PI,
- * plus the Epics they belong to -- and replaces what was stored for that board and PI (an issue that left the PI
- * is simply gone from it). Earlier PIs are kept as they were last synced; a board's first sync also takes the PI
+ * Per pass and board: the board's current increment is fully re-synced -- every issue in it (in the board's sprints
+ * of that PI or sprint; with that fixVersion in the board's project for a release; resolved in that month or in
+ * progress for a flow month), plus the Epics they belong to -- and replaces what was stored for that board and
+ * increment (an issue that left it is simply gone from it). Earlier PIs are kept as they were last synced; a board's first sync also takes the PI
  * before the current one, so a new tenant sees more than one increment. All Jira calls happen before the write
  * transaction.
  */
@@ -45,17 +47,17 @@ async function listBoards(pool, { tenantId, actorUserId, atlassian, fetch: fetch
 }
 
 /**
- * Sets how a selected board's sprints group into increments (lib/jira-model.js rhythmOf()). A change drops the
+ * Sets how a selected board's work groups into increments (lib/jira-model.js rhythmOf()). A change drops the
  * board's synced issues, so its next sync starts over under the new rhythm. Admins only.
  *
  * @param {import('pg').Pool} pool
- * @param {{ tenantId: string, actorUserId: string, boardId: number, rhythm: 'auto'|'pi'|'sprint', piTemplate: string|null }} input
+ * @param {{ tenantId: string, actorUserId: string, boardId: number, rhythm: 'auto'|'pi'|'sprint'|'release'|'flow', piTemplate: string|null }} input
  * @returns {Promise<{ boardId: number, rhythm: string, piTemplate: string|null }>}
  * @throws {JiraBoardError} not a selected board, or an invalid template
  */
 async function configureBoard(pool, { tenantId, actorUserId, boardId, rhythm, piTemplate }) {
     if (piTemplate !== null) {
-        if (rhythm === 'sprint') throw new JiraBoardError('A PI template only applies to the "pi" or "auto" rhythm');
+        if (rhythm !== 'pi' && rhythm !== 'auto') throw new JiraBoardError('A PI template only applies to the "pi" or "auto" rhythm');
         try {
             compileTemplate(piTemplate);
         } catch (err) {
@@ -82,13 +84,13 @@ async function configureBoard(pool, { tenantId, actorUserId, boardId, rhythm, pi
 }
 
 /**
- * Sets the boards to sync (replacing the selection). Each must be a board of the connected site, and not a kanban
- * board (no sprints, so no PI). Issues of boards no longer selected are removed. Admins only.
+ * Sets the boards to sync (replacing the selection). Each must be a board of the connected site; any type (a kanban
+ * board syncs in the `flow` rhythm). Issues of boards no longer selected are removed. Admins only.
  *
  * @param {import('pg').Pool} pool
  * @param {{ tenantId: string, actorUserId: string, boardIds: number[], atlassian: object, fetch?: typeof fetch }} input
  * @returns {Promise<Array<{ boardId: number, name: string, projectKey: string|null, projectName: string|null }>>} the selection
- * @throws {JiraBoardError} a board that isn't on the site, or is a kanban board
+ * @throws {JiraBoardError} a board that isn't on the site
  */
 async function setBoards(pool, { tenantId, actorUserId, boardIds, atlassian, fetch: fetchFn = fetch }) {
     await withScope(pool, { tenantId }, (client) => assertAdmin(client, { tenantId, userId: actorUserId }));
@@ -96,8 +98,6 @@ async function setBoards(pool, { tenantId, actorUserId, boardIds, atlassian, fet
     const available = new Map((await fetchBoards({ accessToken, cloudId, fetch: fetchFn })).map((b) => [b.boardId, b]));
     const missing = boardIds.find((id) => !available.has(id));
     if (missing !== undefined) throw new JiraBoardError(`Board ${missing} is not on the connected Jira site`);
-    const kanban = boardIds.find((id) => available.get(id).type === 'kanban');
-    if (kanban !== undefined) throw new JiraBoardError(`Board ${kanban} is a kanban board: it has no sprints, so no PI to sync`);
     const chosen = boardIds.map((id) => available.get(id));
     return withScope(pool, { tenantId }, async (client) => {
         await assertAdmin(client, { tenantId, userId: actorUserId });
@@ -117,15 +117,18 @@ async function setBoards(pool, { tenantId, actorUserId, boardIds, atlassian, fet
     });
 }
 
-/** All issues in `sprintIds`, plus the Epics they belong to, mapped for `pi`. */
-async function fetchPiIssues({ accessToken, cloudId, fieldIds, pi, sprints, fetch: fetchFn }) {
+/**
+ * All issues `jql` finds, plus the Epics they belong to, mapped for `pi`. `sprints`: the board's sprints in it (an
+ * issue's sprint is the one among them); without sprints (a release, a flow month) the increment is its own sprint.
+ */
+async function fetchIncrementIssues({ accessToken, cloudId, fieldIds, pi, jql, sprints, fetch: fetchFn }) {
     const sprintsInScope = new Map(sprints.map((s) => [s.id, s]));
     const fields = issueFields(fieldIds);
     const scope = { pi, sprintsInScope };
-    const raw = await searchIssues({ accessToken, cloudId, jql: `sprint in (${sprints.map((s) => s.id).join(',')}) ORDER BY key`, fields, fetch: fetchFn });
+    const raw = await searchIssues({ accessToken, cloudId, jql, fields, fetch: fetchFn });
     const issues = new Map();
     for (const r of raw) {
-        const issue = mapIssue(r, fieldIds, scope);
+        const issue = mapIssue(r, fieldIds, { ...scope, sprint: sprints.length ? null : pi });
         if (issue) issues.set(issue.key, issue);
     }
     // Epics rarely sit in a sprint themselves; without them the dashboard's Epic headers would have no status.
@@ -139,6 +142,53 @@ async function fetchPiIssues({ accessToken, cloudId, fieldIds, pi, sprints, fetc
         }
     }
     return [...issues.values()];
+}
+
+/**
+ * The increments to sync for a board, current first (none when it has nothing current: no sprints in a sprint
+ * rhythm, no versions for a release, no project for a release or flow month): each with its JQL, the board's
+ * sprints in it, and its entries for the index's sprint list. A board's first sync also takes the increment before.
+ */
+async function boardIncrements({ accessToken, cloudId, board, firstSync, now, fetch: fetchFn }) {
+    const boardId = Number(board.board_id);
+    const projectKey = typeof board.project_key === 'string' && /^[A-Z][A-Z0-9_]*$/.test(board.project_key) ? board.project_key : null;
+    const sprints = ['release', 'flow'].includes(board.rhythm) ? [] : await fetchSprints({ accessToken, cloudId, boardId, fetch: fetchFn });
+    const wantsVersions = projectKey && (board.rhythm === 'release' || (board.rhythm === 'auto' && !sprints.length));
+    const versions = wantsVersions ? await fetchVersions({ accessToken, cloudId, projectKey, fetch: fetchFn }) : [];
+    const rhythm = rhythmOf({ rhythm: board.rhythm, piTemplate: board.pi_template }, sprints, versions);
+
+    if (rhythm.kind === 'release') {
+        const current = projectKey ? currentReleaseOf(versions) : null;
+        if (!current) return [];
+        const previous = firstSync ? previousReleaseOf(versions, current) : null;
+        return [current, previous].filter(Boolean).map((v) => {
+            const pi = releaseName(projectKey, v.name);
+            return { pi, kind: 'release', jql: releaseJql(projectKey, v.id), sprints: [], index: [{ name: pi, startDate: v.startDate, endDate: v.releaseDate }] };
+        });
+    }
+    if (rhythm.kind === 'flow') {
+        if (!projectKey) return [];
+        return (firstSync ? [0, -1] : [0]).map((offset) => {
+            const month = flowMonth(now, offset);
+            return {
+                pi: month.name, kind: 'flow', jql: flowJql(projectKey, month, offset === 0), sprints: [],
+                index: [{ name: month.name, startDate: `${month.start}T00:00:00.000Z`, endDate: `${month.end}T00:00:00.000Z` }],
+            };
+        });
+    }
+    const current = currentPiOf(sprints, rhythm);
+    if (!current) return [];
+    const previous = firstSync ? previousPiOf(sprints, current, rhythm) : null;
+    return [current, previous].filter(Boolean).map((pi) => {
+        const inPi = sprints.filter((s) => piOfSprint(s.name, rhythm) === pi);
+        return {
+            pi,
+            kind: rhythm.kind === 'pi' && inPi.some((s) => extractPiFromSprintName(s.name, rhythm.pattern)) ? 'pi' : 'sprint',
+            jql: `sprint in (${inPi.map((s) => s.id).join(',')}) ORDER BY key`,
+            sprints: inPi,
+            index: inPi.map((s) => ({ name: s.name, startDate: s.startDate, endDate: s.endDate })),
+        };
+    });
 }
 
 /**
@@ -166,7 +216,7 @@ async function syncTenant(pool, { tenantId, atlassian, fetch: fetchFn = fetch, n
 
 async function syncTenantUnrecorded(pool, { tenantId, atlassian, fetch: fetchFn, now }) {
     const { boards, boardsWithIssues } = await withScope(pool, { tenantId }, async (client) => ({
-        boards: (await client.query('SELECT board_id, name, rhythm, pi_template FROM jira_boards WHERE tenant_id = $1 ORDER BY board_id', [tenantId])).rows,
+        boards: (await client.query('SELECT board_id, name, project_key, rhythm, pi_template FROM jira_boards WHERE tenant_id = $1 ORDER BY board_id', [tenantId])).rows,
         boardsWithIssues: new Set((await client.query('SELECT DISTINCT board_id FROM jira_issues WHERE tenant_id = $1', [tenantId])).rows.map((r) => Number(r.board_id))),
     }));
     if (!boards.length) return { boards: 0, issues: 0, currentPi: null };
@@ -177,31 +227,21 @@ async function syncTenantUnrecorded(pool, { tenantId, atlassian, fetch: fetchFn,
     const currentByBoard = new Map();
     for (const board of boards) {
         const boardId = Number(board.board_id);
-        const sprints = await fetchSprints({ accessToken, cloudId, boardId, fetch: fetchFn });
-        const rhythm = rhythmOf({ rhythm: board.rhythm, piTemplate: board.pi_template }, sprints);
-        const current = currentPiOf(sprints, rhythm);
-        currentByBoard.set(boardId, current);
-        if (!current) continue;
-        const pis = [current];
-        const previous = boardsWithIssues.has(boardId) ? null : previousPiOf(sprints, current, rhythm);
-        if (previous) pis.push(previous);
-        for (const pi of pis) {
-            const inPi = sprints.filter((s) => piOfSprint(s.name, rhythm) === pi);
-            const kind = rhythm.kind === 'pi' && inPi.some((s) => extractPiFromSprintName(s.name, rhythm.pattern)) ? 'pi' : 'sprint';
-            const issues = await fetchPiIssues({ accessToken, cloudId, fieldIds, pi, sprints: inPi, fetch: fetchFn });
-            plan.push({ boardId, pi, kind, sprints: inPi, issues });
+        const firstSync = !boardsWithIssues.has(boardId);
+        const increments = await boardIncrements({ accessToken, cloudId, board, firstSync, now, fetch: fetchFn });
+        currentByBoard.set(boardId, increments.length ? increments[0].pi : null);
+        for (const inc of increments) {
+            const issues = await fetchIncrementIssues({ accessToken, cloudId, fieldIds, pi: inc.pi, jql: inc.jql, sprints: inc.sprints, fetch: fetchFn });
+            plan.push({ boardId, pi: inc.pi, kind: inc.kind, sprints: inc.index, issues });
         }
     }
-    const distinctCurrent = [...new Set([...currentByBoard.values()].filter(Boolean))].sort(comparePiDesc);
-    const currentPi = distinctCurrent.length > 1 ? NOW_KEY : distinctCurrent[0] || null;
-
-    await withScope(pool, { tenantId }, async (client) => {
+    const currentPi = await withScope(pool, { tenantId }, async (client) => {
         const { rows: still } = await client.query('SELECT 1 FROM jira_connections WHERE tenant_id = $1', [tenantId]);
-        if (!still.length) return;
+        if (!still.length) return null;
         for (const { boardId, pi, kind, sprints, issues } of plan) {
             const { rows: [existing] } = await client.query('SELECT sprints FROM jira_pis WHERE tenant_id = $1 AND pi = $2', [tenantId, pi]);
             const byName = new Map((existing?.sprints || []).map((s) => [s.name, s]));
-            for (const s of sprints) byName.set(s.name, { name: s.name, startDate: s.startDate, endDate: s.endDate });
+            for (const s of sprints) byName.set(s.name, s);
             const merged = [...byName.values()].sort((a, b) => String(a.startDate || '').localeCompare(String(b.startDate || '')));
             await client.query(
                 `INSERT INTO jira_pis (tenant_id, pi, kind, sprints, synced_at) VALUES ($1, $2, $3, $4, $5)
@@ -225,10 +265,14 @@ async function syncTenantUnrecorded(pool, { tenantId, atlassian, fetch: fetchFn,
         for (const [boardId, current] of currentByBoard) {
             await client.query('UPDATE jira_boards SET current_increment = $3 WHERE tenant_id = $1 AND board_id = $2', [tenantId, boardId, current]);
         }
+        // What the dashboard opens on: only current increments with issues count (an empty flow month is not "now").
+        const current = await currentIncrements(client, tenantId);
+        const opensOn = current.length > 1 ? NOW_KEY : current[0] || null;
         await client.query(
             'UPDATE jira_connections SET current_pi = $2, last_synced_at = $3, last_error = NULL WHERE tenant_id = $1',
-            [tenantId, currentPi, now]
+            [tenantId, opensOn, now]
         );
+        return opensOn;
     });
     return { boards: boards.length, issues: plan.reduce((n, p) => n + p.issues.length, 0), currentPi };
 }
@@ -273,7 +317,7 @@ async function currentIncrements(client, tenantId) {
 
 /**
  * The tenant's synced increments for the dashboard: `jiraIndex` (data/jira-issues/index.json, each entry with its
- * `kind`: pi or sprint) and `issueStatusIndex` (status-index.json: per key, its newest increment). When the
+ * `kind`: pi, sprint, release or flow) and `issueStatusIndex` (status-index.json: per key, its newest increment). When the
  * selected boards are in different increments right now (a SAFe team in PI-27.3, a Scrum team in its Sprint 7), a
  * first "Now" entry joins them and is the current one, so the dashboard opens on every team at once. Call inside
  * the tenant's scope.

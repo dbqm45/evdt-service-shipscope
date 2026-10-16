@@ -211,6 +211,29 @@ function sprintPages({ accessToken, cloudId, boardId, fetchFn }) {
 }
 
 /**
+ * A project's versions (its releases, the `fixVersion` of issues), archived ones left out. Read with the classic
+ * `read:jira-work` scope, so no new consent.
+ *
+ * @param {{ accessToken: string, cloudId: string, projectKey: string, fetch?: typeof fetch }} input
+ * @returns {Promise<Array<{ id: string, name: string, released: boolean, startDate: string|null, releaseDate: string|null }>>}
+ * @throws {AtlassianError}
+ */
+function fetchVersions({ accessToken, cloudId, projectKey, fetch: fetchFn = fetch }) {
+    const url = `${API_BASE}/${encodeURIComponent(cloudId)}/rest/api/3/project/${encodeURIComponent(projectKey)}/version`;
+    return agilePages(url, accessToken, fetchFn, (v) => (
+        typeof v?.id === 'string' && /^\d+$/.test(v.id) && typeof v.name === 'string' && v.archived !== true
+            ? {
+                id: v.id,
+                name: v.name.slice(0, 200),
+                released: v.released === true,
+                startDate: isDate(v.startDate) ? v.startDate : null,
+                releaseDate: isDate(v.releaseDate) ? v.releaseDate : null,
+            }
+            : null
+    ));
+}
+
+/**
  * The ids of the custom fields the issue mapping reads. Sprint and Epic Link by their fixed schema type; Flagged
  * by name (it has no dedicated type) -- the same lookup as the file-based scripts/lib/jira-issues.js.
  *
@@ -258,5 +281,5 @@ async function searchIssues({ accessToken, cloudId, jql, fields, fetch: fetchFn 
 
 module.exports = {
     SCOPES, AtlassianError, buildAuthorizeUrl, exchangeCode, refreshAccessToken, fetchJiraSites, fetchProjects,
-    fetchBoards, fetchSprints, fetchFieldIds, searchIssues,
+    fetchBoards, fetchSprints, fetchVersions, fetchFieldIds, searchIssues,
 };

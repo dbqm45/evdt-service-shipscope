@@ -8,7 +8,9 @@ const json = (body, status = 200) => new Response(JSON.stringify(body), { status
  * - Refresh tokens rotate: each refresh invalidates the token used and issues a new one.
  * - `jira`: cloudId -> { boards: [{ id, name, type, location }], sprints: { [boardId]: [...] } (a board missing here answers 400, as one without sprints does), fields: [...], issues: [raw] },
  *   served by the Agile board/sprint lists, /rest/api/3/field and /rest/api/3/search/jql (JQL: `sprint in (ids)` or
- *   `key in (keys)`, sprint ids matched against the `customfield_10020` entries). `pageSize` makes every list page short.
+ *   `key in (keys)`, sprint ids matched against the `customfield_10020` entries; a release `project = "K" AND
+ *   fixVersion = id` against `fields.fixVersions`; a flow month by `fields.resolutiondate` and the status category).
+ *   `versions`: projectKey -> raw versions, served by /rest/api/3/project/{key}/version. `pageSize` makes every list page short.
  * - `fail`: path substring -> HTTP status to answer with.
  */
 function fakeAtlassian({ codes = {}, offline = true, jira = {}, pageSize = 50, fail = {} } = {}) {
@@ -67,6 +69,7 @@ function fakeAtlassian({ codes = {}, offline = true, jira = {}, pageSize = 50, f
             const sprints = (site.sprints || {})[sub[1]];
             return sprints ? json(page(sprints, url)) : json({ errorMessages: ['The board does not support sprints'] }, 400);
         }
+        if ((sub = path.match(/^\/rest\/api\/3\/project\/([A-Z0-9_]+)\/version$/))) return json(page((site.versions || {})[sub[1]] || [], url));
         if (path === '/rest/api/3/field') return json(site.fields || []);
         if (path === '/rest/api/3/search/jql') {
             const params = new URL(url).searchParams;
@@ -78,6 +81,14 @@ function fakeAtlassian({ codes = {}, offline = true, jira = {}, pageSize = 50, f
             } else if ((sub = jql.match(/^key in \(([A-Z0-9_,-]+)\)$/))) {
                 const keys = sub[1].split(',');
                 found = (site.issues || []).filter((i) => keys.includes(i.key));
+            } else if ((sub = jql.match(/^project = "([A-Z0-9_]+)" AND fixVersion = (\d+) ORDER BY key$/))) {
+                const [, key, versionId] = sub;
+                found = (site.issues || []).filter((i) => i.fields.project?.key === key && (i.fields.fixVersions || []).some((v) => v.id === versionId));
+            } else if ((sub = jql.match(/^project = "([A-Z0-9_]+)" AND \((statusCategory = "In Progress" OR )?resolved >= "([\d-]+)" AND resolved < "([\d-]+)"\) ORDER BY key$/))) {
+                const [, key, inProgress, from, to] = sub;
+                found = (site.issues || []).filter((i) => i.fields.project?.key === key && (
+                    (inProgress && i.fields.status?.statusCategory?.key === 'indeterminate')
+                    || (i.fields.resolutiondate && i.fields.resolutiondate.slice(0, 10) >= from && i.fields.resolutiondate.slice(0, 10) < to)));
             } else {
                 throw new Error(`unexpected jql ${jql}`);
             }
