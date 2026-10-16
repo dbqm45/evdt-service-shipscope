@@ -7,6 +7,12 @@ dashboard, not a published package), so entries are grouped by date instead. See
 ShipScope is, `CLAUDE.md` for the technical reference, and `FAQ.md` for how specific numbers/badges are
 calculated.
 
+## [0.1.12] - 2026-10-16
+
+### Fixed
+
+- **SHP:** list team-managed Jira boards for selection, not only Scrum ones (#21)
+
 ## [0.1.11] - 2026-10-16
 
 ### Fixed
