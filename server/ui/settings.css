@@ -23,6 +23,8 @@
 .settings-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 .btn { display: inline-flex; align-items: center; gap: 6px; background: var(--panel-2); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 5px 10px; font-size: 12px; cursor: pointer; text-decoration: none; font-family: inherit; }
 .btn:hover { border-color: var(--muted); }
+/* .btn sets display, which would otherwise win over the hidden attribute. */
+.settings [hidden] { display: none !important; }
 .btn:disabled { opacity: .5; cursor: default; }
 .btn-primary { background: var(--brand-accent); color: #111; border-color: var(--brand-accent); font-weight: 600; }
 .btn-primary:hover { background: var(--brand-accent-hi); border-color: var(--brand-accent-hi); }
@@ -34,7 +36,19 @@
 .state-tag.ok { color: var(--ok); border-color: var(--ok); }
 .state-tag.warn { color: var(--run); border-color: var(--run); }
 .state-tag.fail { color: var(--fail); border-color: var(--fail); }
+.checklist { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.checklist-step { display: grid; grid-template-columns: 22px 1fr auto; gap: 10px; align-items: start; padding: 8px 0; border-bottom: 1px solid var(--border-soft); }
+.checklist-step:last-child { border-bottom: none; }
+.checklist-step .btn { white-space: nowrap; }
+.checklist-mark { width: 20px; height: 20px; border-radius: 50%; border: 1.5px solid var(--border); display: inline-flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; color: var(--muted); }
+.checklist-step.done .checklist-mark { border-color: var(--ok); color: var(--ok); }
+.checklist-step.done strong { color: var(--muted); }
+.checklist-step.waiting .checklist-mark { border-color: var(--run); color: var(--run); }
+.checklist-step.problem .checklist-mark { border-color: var(--fail); color: var(--fail); }
+.checklist-step.unavailable { opacity: .55; }
 @media (max-width: 640px) {
+    .checklist-step { grid-template-columns: 22px 1fr; }
+    .checklist-step .btn { grid-column: 2; justify-self: start; }
     .settings-table thead { display: none; }
     .settings-table tr, .settings-table td { display: block; }
     .settings-table .actions { text-align: left; }

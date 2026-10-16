@@ -71,6 +71,7 @@ This is a change in who the system serves: today's only users are internal EVDT 
 - The full flow completes without any step requiring a ShipScope-team action
 - Data shown belongs exclusively to the signed-in user's own tenant
 - After the initial connection, newly-arriving GitHub/Jira activity reflects on the dashboard within seconds, not minutes — a near-live feel, not a batch-sync delay
+  > **2026-10-16:** the flow is guided in the product itself: a Getting started checklist on the settings page shows each step (GitHub App, repos, first deployments; Jira, boards, flags, team optional) as done / waiting / to do with a button to the place it's done, an empty dashboard links to it, and invitees join from a page instead of an API call.
 
 ## Scope of Change
 

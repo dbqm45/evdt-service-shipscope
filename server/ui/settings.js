@@ -88,6 +88,167 @@ function SecretBox({ label, value, note }){
         <span><button type="button" class="btn" data-action="dismiss-once">Done, I copied it</button></span></div>`;
 }
 
+// ---- Getting started ---------------------------------------------------------------------------------------
+
+const CHECKLIST_HIDDEN_KEY = 'shipscope.checklistHidden.';
+const STEP_MARK = { done: '✓', waiting: '…', problem: '!', todo: '', unavailable: '–', loading: '' };
+
+/**
+ * The getting-started checklist, read off the sections already loaded (no request of its own). Each step is
+ * `done`, `waiting` (set up, ShipScope waits for data), `problem`, `todo`, `unavailable` (off on this server) or
+ * `loading`; GitHub's three steps are required, the rest optional.
+ *
+ * @param {{ features: object, github: object|null, jira: object|null, boards: object[]|{ error: string }|null, sources: object[]|{ error: string }|null, flagList: object[]|{ error: string }|null, workspace: object|null }} input
+ * @returns {Array<{ id: string, title: string, state: string, optional: boolean, hint: string, href: string|null, cta: string|null }>}
+ */
+function onboardingSteps({ features, github, jira, boards, sources, flagList, workspace }){
+    const step = (id, title, optional, state, hint, href = null, cta = null) => ({ id, title, optional, state, hint, href, cta });
+    const steps = [];
+    const repos = (github && github.repos) || [];
+
+    if (!features.githubApp) {
+        steps.push(step('github-app', 'Install the GitHub App', false, 'unavailable', 'The GitHub App is not configured on this server (GITHUB_APP_* variables).'));
+    } else if (!github) {
+        steps.push(step('github-app', 'Install the GitHub App', false, 'loading', ''));
+    } else if (github.installations.length) {
+        steps.push(step('github-app', 'Install the GitHub App', false, 'done', `Installed on ${github.installations.map((i) => i.accountLogin).join(', ')}.`, '#github'));
+    } else {
+        steps.push(step('github-app', 'Install the GitHub App', false, 'todo',
+            'Install it on the GitHub organization or account you deploy from; GitHub brings you back here.', tenantPath('/github/install'), 'Install'));
+    }
+
+    if (!features.githubApp || !github) {
+        steps.push(step('repos', 'Choose repositories to track', false, features.githubApp ? 'loading' : 'unavailable', ''));
+    } else if (repos.length) {
+        steps.push(step('repos', 'Choose repositories to track', false, 'done', `${repos.length} tracked.`, '#github'));
+    } else {
+        steps.push(step('repos', 'Choose repositories to track', false, 'todo',
+            github.installations.length ? 'Under GitHub, click Track next to each repository whose deployments you want to see.' : 'After installing the App.', '#github', 'Choose'));
+    }
+
+    const deployed = repos.filter((r) => r.deployments > 0);
+    const failing = repos.filter((r) => r.lastSyncError && !r.deployments);
+    if (!features.githubApp || !github) {
+        steps.push(step('deployments', 'First deployments arrive', false, features.githubApp ? 'loading' : 'unavailable', ''));
+    } else if (deployed.length) {
+        steps.push(step('deployments', 'First deployments arrive', false, 'done', `Deployments from ${deployed.length} of ${repos.length} repositories so far.`, './', 'Open the dashboard'));
+    } else if (!repos.length) {
+        steps.push(step('deployments', 'First deployments arrive', false, 'todo', 'After choosing repositories.'));
+    } else if (failing.length) {
+        steps.push(step('deployments', 'First deployments arrive', false, 'problem', `The sync failed for ${failing.map((r) => r.fullName).join(', ')}: see the error under GitHub.`, '#github', 'See why'));
+    } else if (repos.some((r) => r.rateLimitedUntil)) {
+        steps.push(step('deployments', 'First deployments arrive', false, 'waiting', 'Paused by GitHub\'s rate limit; the sync resumes on its own.', '#github'));
+    } else if (repos.some((r) => r.lastSyncedAt)) {
+        steps.push(step('deployments', 'First deployments arrive', false, 'waiting',
+            'Synced, but GitHub has no deployments for these repositories yet. ShipScope reads GitHub Deployments: a workflow job with "environment: test", "qa" or "prod" creates one each time it runs.'));
+    } else {
+        steps.push(step('deployments', 'First deployments arrive', false, 'waiting', 'The first sync runs within 15 minutes (or as soon as GitHub reports a deployment, with webhooks on).'));
+    }
+
+    const jiraReady = Boolean(jira && jira.connected && jira.site);
+    if (!features.jira) {
+        steps.push(step('jira', 'Connect Jira', true, 'unavailable', 'Jira is not configured on this server.'));
+    } else if (!jira) {
+        steps.push(step('jira', 'Connect Jira', true, 'loading', ''));
+    } else if (jiraReady) {
+        steps.push(step('jira', 'Connect Jira', true, 'done', `Connected to ${jira.site.name}.`, '#jira'));
+    } else if (jira.connected) {
+        steps.push(step('jira', 'Connect Jira', true, 'todo', 'Choose which Jira site to use.', '#jira', 'Choose'));
+    } else {
+        steps.push(step('jira', 'Connect Jira', true, 'todo', 'Shows each work item\'s release status next to your deployments. Read-only.', tenantPath('/jira/connect'), 'Connect'));
+    }
+
+    const selected = Array.isArray(boards) ? boards.filter((b) => b.selected) : [];
+    if (!features.jira) {
+        steps.push(step('boards', 'Choose Jira boards', true, 'unavailable', ''));
+    } else if (!jiraReady) {
+        steps.push(step('boards', 'Choose Jira boards', true, jira ? 'todo' : 'loading', jira ? 'After connecting Jira.' : ''));
+    } else if (boards && boards.error) {
+        steps.push(step('boards', 'Choose Jira boards', true, 'problem', boards.error, '#jira'));
+    } else if (!boards) {
+        steps.push(step('boards', 'Choose Jira boards', true, 'loading', ''));
+    } else if (!selected.length) {
+        steps.push(step('boards', 'Choose Jira boards', true, 'todo', 'Tick each team\'s board and save; its rhythm (PI, sprints, releases or flow) is detected.', '#jira', 'Choose'));
+    } else if (jira.lastSyncedAt) {
+        steps.push(step('boards', 'Choose Jira boards', true, 'done', `${selected.length} board(s), synced ${fmtDateTime(jira.lastSyncedAt)}.`, '#jira'));
+    } else {
+        steps.push(step('boards', 'Choose Jira boards', true, 'waiting', 'Selected; click Sync now or wait for the next sync.', '#jira', 'Sync now'));
+    }
+
+    if (sources === null || flagList === null) {
+        steps.push(step('flags', 'Send feature flags', true, 'loading', ''));
+    } else if (sources.error || flagList.error) {
+        steps.push(step('flags', 'Send feature flags', true, 'problem', sources.error || flagList.error, '#flags'));
+    } else if (flagList.length) {
+        steps.push(step('flags', 'Send feature flags', true, 'done', `${flagList.length} flag(s) received.`, '#flags'));
+    } else if (sources.some((src) => src.tokens.length)) {
+        steps.push(step('flags', 'Send feature flags', true, 'waiting',
+            `Waiting for the first message from ${sources.filter((src) => src.tokens.length).map((src) => src.name).join(', ')} (POST /api/flags/ingest with its token).`, '#flags'));
+    } else {
+        steps.push(step('flags', 'Send feature flags', true, 'todo', 'Name where your flags live (a build step, a flag service) and give it a token; it then pushes their state.', '#flags', 'Add a source'));
+    }
+
+    if (!workspace) {
+        steps.push(step('team', 'Invite your team', true, 'loading', ''));
+    } else if (workspace.members.length > 1) {
+        steps.push(step('team', 'Invite your team', true, 'done', `${workspace.members.length} members.`, '#workspace'));
+    } else if (workspace.invitations && workspace.invitations.length) {
+        steps.push(step('team', 'Invite your team', true, 'waiting', 'Invitation link created; waiting for it to be accepted.', '#workspace'));
+    } else {
+        steps.push(step('team', 'Invite your team', true, 'todo', 'Create an invitation link per person; members see everything, admins can change settings.', '#workspace', 'Invite'));
+    }
+    return steps;
+}
+
+/** Hidden by the admin for this workspace in this browser (the checklist can come back from the nav). */
+function checklistHidden(){
+    try {
+        return localStorage.getItem(CHECKLIST_HIDDEN_KEY + settingsState.tenantId) === '1';
+    } catch {
+        return false;
+    }
+}
+
+function setChecklistHidden(hidden){
+    try {
+        if (hidden) {
+            localStorage.setItem(CHECKLIST_HIDDEN_KEY + settingsState.tenantId, '1');
+        } else {
+            localStorage.removeItem(CHECKLIST_HIDDEN_KEY + settingsState.tenantId);
+        }
+    } catch {
+        // Storage blocked (private mode): the checklist simply stays visible.
+    }
+}
+
+/** @param {{ steps: object[], hidden?: boolean }} props */
+function renderGettingStarted({ steps, hidden = false }){
+    const counted = steps.filter((st) => st.state !== 'unavailable');
+    const done = counted.filter((st) => st.state === 'done').length;
+    const requiredDone = steps.filter((st) => !st.optional && st.state !== 'unavailable').every((st) => st.state === 'done');
+    const finished = counted.every((st) => st.state === 'done');
+    if (hidden && requiredDone) {
+        return html``;
+    }
+    const items = steps.map((st) => html`<li class="checklist-step ${st.state}">
+        <span class="checklist-mark" aria-hidden="true">${STEP_MARK[st.state]}</span>
+        <div><strong>${st.title}</strong>${st.optional ? html` <span class="state-tag">optional</span>` : ''}
+            ${st.state === 'loading' ? html`<span class="settings-hint">checking…</span>` : st.hint ? html`<div class="settings-hint">${st.hint}</div>` : ''}</div>
+        ${st.href && st.cta && st.state !== 'done' ? html`<a class="btn ${st.state === 'todo' ? 'btn-primary' : ''}" href="${st.href}">${st.cta}</a>` : ''}
+    </li>`);
+    const summary = finished
+        ? 'All set: everything is connected.'
+        : requiredDone ? `${done} of ${counted.length} done — the dashboard is ready; the optional steps add Jira, flags and your team.`
+            : `${done} of ${counted.length} done.`;
+    return Section({
+        id: 'getting-started',
+        title: 'Getting started',
+        hint: summary,
+        body: html`<ol class="checklist">${items}</ol>${requiredDone ? html`<div class="settings-actions"><a class="btn" href="./">Open the dashboard</a>
+            <button type="button" class="btn" data-action="hide-checklist">Hide this checklist</button></div>` : ''}`,
+    });
+}
+
 /** @param {{ workspace: { settings: object, members: object[], invitations: object[]|null }, admin: boolean, meId: string, once: object, tenantName?: string }} props */
 function renderWorkspace({ workspace, admin, meId, once, tenantName = '' }){
     if (!workspace) {
@@ -380,7 +541,11 @@ function renderFlags({ flagList, sources, repos, admin, once, origin, jiraUrl = 
 function renderSettings(){
     const s = settingsState;
     const admin = isAdmin();
-    return html`${renderWorkspace({ workspace: s.workspace, admin, meId: s.me && s.me.user.id, once: s.once, tenantName: s.tenant && s.tenant.name })}
+    const checklist = admin ? renderGettingStarted({
+        steps: onboardingSteps({ features: s.features, github: s.github, jira: s.jira, boards: s.boards, sources: s.flags, flagList: s.flagList, workspace: s.workspace }),
+        hidden: checklistHidden(),
+    }) : '';
+    return html`${checklist}${renderWorkspace({ workspace: s.workspace, admin, meId: s.me && s.me.user.id, once: s.once, tenantName: s.tenant && s.tenant.name })}
         ${renderGitHub({ enabled: s.features.githubApp, webhooks: s.features.githubWebhooks, github: s.github, installationRepos: s.installationRepos, admin })}
         ${renderJira({ enabled: s.features.jira, webhooks: s.features.jiraWebhooks, jira: s.jira, boards: s.boards, admin, flagFields: s.flagFields })}
         ${renderFlags({
@@ -472,6 +637,14 @@ const confirmed = (text) => typeof confirm !== 'function' || confirm(text);
 const actions = {
     'dismiss-once': async () => {
         settingsState.once = {};
+        return { section: null };
+    },
+    'hide-checklist': async () => {
+        setChecklistHidden(true);
+        // Arriving via #getting-started (the dashboard's banner) would otherwise bring it straight back on reload.
+        if (typeof location !== 'undefined' && location.hash === '#getting-started' && typeof history !== 'undefined') {
+            history.replaceState(null, '', location.pathname + location.search);
+        }
         return { section: null };
     },
     'save-retention': async (form) => {
@@ -714,6 +887,19 @@ async function initSettings(){
     document.getElementById('tenantName').textContent = `${settingsState.tenant.name} · Settings`;
     document.title = `ShipScope — ${settingsState.tenant.name} settings`;
     wireEvents(root);
+    // Asking for the checklist (the nav link, the dashboard's "finish setting up") brings it back if it was hidden.
+    const showChecklistOnRequest = () => {
+        if (location.hash === '#getting-started' && checklistHidden()) {
+            setChecklistHidden(false);
+            rerender();
+            const target = document.getElementById('getting-started');
+            if (target) {
+                target.scrollIntoView();
+            }
+        }
+    };
+    showChecklistOnRequest();
+    window.addEventListener('hashchange', showChecklistOnRequest);
     rerender();
     await load();
     if (location.hash) {
@@ -725,7 +911,7 @@ async function initSettings(){
 }
 
 if (typeof module !== 'undefined') {
-    module.exports = { renderWorkspace, renderGitHub, renderJira, renderFlags, FlagRow, formValues, actions, settingsState, runAction, load, api, ApiError };
+    module.exports = { onboardingSteps, renderGettingStarted, renderWorkspace, renderGitHub, renderJira, renderFlags, FlagRow, formValues, actions, settingsState, runAction, load, api, ApiError };
 } else if (SETTINGS_TENANT_ID) {
     initSettings();
 }
