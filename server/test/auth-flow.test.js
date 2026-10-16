@@ -2,51 +2,11 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const { createTestDb } = require('./helpers/test-db');
 const { buildApp } = require('../web');
+const { AUTH, fakeGitHub, signIn } = require('./helpers/auth');
 
 if (!process.env.TEST_DATABASE_URL) {
     test('real-Postgres tests skipped (TEST_DATABASE_URL not set)', { skip: true }, () => {});
     return;
-}
-
-const AUTH = {
-    githubClientId: 'Iv1.test',
-    githubClientSecret: 'test-secret',
-    publicBaseUrl: 'http://localhost:3000',
-    secureCookies: false,
-};
-
-/** Fake GitHub: every code maps to the user registered for it. Asserts the app sends the real client secret. */
-function fakeGitHub(usersByCode) {
-    return async (url, init = {}) => {
-        if (url === 'https://github.com/login/oauth/access_token') {
-            const { code, client_secret: secret } = JSON.parse(init.body);
-            assert.strictEqual(secret, 'test-secret');
-            if (!usersByCode[code]) return new Response(JSON.stringify({ error: 'bad_verification_code' }), { status: 200 });
-            return new Response(JSON.stringify({ access_token: `token-for-${code}` }), { status: 200 });
-        }
-        if (url === 'https://api.github.com/user') {
-            const code = init.headers.authorization.replace('Bearer token-for-', '');
-            return new Response(JSON.stringify(usersByCode[code]), { status: 200 });
-        }
-        throw new Error(`unexpected fetch ${url}`);
-    };
-}
-
-/** Runs login → callback for one fake GitHub user and returns their session cookie value. */
-async function signIn(app, code) {
-    const login = await app.inject({ method: 'GET', url: '/auth/github/login' });
-    const state = login.cookies.find((c) => c.name === 'oauth_state').value;
-    const callback = await app.inject({
-        method: 'GET',
-        url: `/auth/github/callback?code=${code}&state=${state}`,
-        cookies: { oauth_state: state },
-    });
-    assert.strictEqual(callback.statusCode, 302, callback.body);
-    assert.strictEqual(callback.headers.location, '/me');
-    const sid = callback.cookies.find((c) => c.name === 'sid');
-    assert.ok(sid && sid.value, 'session cookie set');
-    assert.strictEqual(sid.httpOnly, true);
-    return sid.value;
 }
 
 test('sign in, create a tenant, list it and its members, then sign out', async (t) => {

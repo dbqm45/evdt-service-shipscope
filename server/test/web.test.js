@@ -141,3 +141,47 @@ test('request logs never contain the OAuth callback query string', async (t) => 
     assert.ok(log.includes('/auth/github/callback'), 'request was logged');
     assert.ok(!log.includes('SECRET_CODE') && !log.includes('SECRET_STATE'), 'query string was not logged');
 });
+
+test('GET /auth/github/login keeps an invitation return path, and rejects anything else', async (t) => {
+    const app = buildApp({ pool: { query: async () => ({ rows: [] }) }, auth: AUTH });
+    t.after(() => app.close());
+
+    const path = `/invitations/${'a'.repeat(32)}`;
+    const ok = await app.inject({ method: 'GET', url: `/auth/github/login?returnTo=${encodeURIComponent(path)}` });
+    assert.strictEqual(ok.statusCode, 302);
+    const cookie = ok.cookies.find((c) => c.name === 'oauth_return_to');
+    assert.strictEqual(cookie.value, path);
+    assert.strictEqual(cookie.httpOnly, true);
+
+    // Open-redirect attempts and other paths: protocol-relative, absolute, traversal, a different route.
+    for (const bad of ['//evil.example', 'https://evil.example', `/invitations/${'a'.repeat(32)}/../../me`, '/me', `${path}x`]) {
+        const res = await app.inject({ method: 'GET', url: `/auth/github/login?returnTo=${encodeURIComponent(bad)}` });
+        assert.strictEqual(res.statusCode, 400, bad);
+    }
+});
+
+test('an invitation link opened without a session redirects to sign-in and back', async (t) => {
+    const app = buildApp({ pool: { query: async () => ({ rows: [] }) }, auth: AUTH });
+    t.after(() => app.close());
+
+    const path = `/invitations/${'b'.repeat(32)}`;
+    const res = await app.inject({ method: 'GET', url: path });
+    assert.strictEqual(res.statusCode, 302);
+    assert.strictEqual(res.headers.location, `/auth/github/login?returnTo=${encodeURIComponent(path)}`);
+
+    const accept = await app.inject({ method: 'POST', url: `${path}/accept` });
+    assert.strictEqual(accept.statusCode, 401, 'POST stays a plain 401');
+});
+
+test('request logs mask invitation tokens', async (t) => {
+    const lines = [];
+    const app = buildApp({ pool: { query: async () => ({ rows: [] }) }, auth: AUTH, logger: { stream: { write: (l) => lines.push(l) } } });
+    t.after(() => app.close());
+
+    const token = 'SECRETtokenSECRETtokenSECRETtokn';
+    await app.inject({ method: 'GET', url: `/invitations/${token}` });
+    await app.inject({ method: 'POST', url: `/invitations/${token}/accept` });
+    const log = lines.join('');
+    assert.ok(log.includes('/invitations/:token'), 'request was logged with a placeholder');
+    assert.ok(!log.includes(token), 'token not logged');
+});

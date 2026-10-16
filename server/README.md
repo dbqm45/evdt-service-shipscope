@@ -9,8 +9,10 @@ The SaaS-pivot backend scoped by `@context/foundation/prd.md`, deployed to Rende
   Row-Level Security on `memberships`.
 - **GitHub sign-in** (FR-001, `web.js` + `lib/github-oauth.js` + `lib/sessions.js`): sign in through the
   ShipScope GitHub App, server-side sessions, create a tenant and list its members over HTTP.
+- **Invitations and member management** (FR-003, `lib/invitations.js`): admins create one-time invitation
+  links; the invitee signs in and accepts. Admins remove members, members can leave, a tenant always keeps an admin.
 
-Not yet: inviting members over HTTP, installing the GitHub App on repos, Jira OAuth, any dashboard data.
+Not yet: installing the GitHub App on repos, Jira OAuth, any dashboard data.
 
 This directory is a separate dependency boundary from the repo root: its own `package.json` and the **only
 place in this repo with third-party dependencies** (`pg`, `fastify`, `@fastify/cookie` — see `@CLAUDE.md`'s
@@ -28,6 +30,15 @@ place in this repo with third-party dependencies** (`pg`, `fastify`, `@fastify/c
 | `GET /me` | session | `{ user, tenants: [{ id, name, role }] }`. |
 | `POST /tenants` | session | Body `{ "name": "..." }`. Creates a tenant with the caller as admin. 201. |
 | `GET /tenants/:tenantId/members` | session + member | Members with roles. 404 for a tenant you're not in, same as one that doesn't exist. |
+| `DELETE /tenants/:tenantId/members/:userId` | session + admin, or yourself | Removes a member or leaves. 409 for the last admin. 204. |
+| `POST /tenants/:tenantId/invitations` | session + admin | Body `{ "role": "member" \| "admin" }`. Returns `{ invitation: { id, role, expiresAt }, url }`; the URL is shown only here. 201. |
+| `GET /tenants/:tenantId/invitations` | session + admin | Pending invitations (id, role, creator, expiry), never their tokens. |
+| `DELETE /tenants/:tenantId/invitations/:invitationId` | session + admin | Revokes a pending invitation. 204, or 404 if not pending. |
+| `GET /invitations/:token` | session (else sign-in and back) | `{ tenant, role, status, alreadyMember }`; `status` is `pending`, `accepted`, `revoked` or `expired`. |
+| `POST /invitations/:token/accept` | session | Joins the tenant with the invitation's role. 201; 404 unknown, 410 no longer pending (with `status`), 409 already a member. |
+
+A member who isn't an admin gets 403 on admin routes; someone outside the tenant gets 404, same as for a
+tenant that doesn't exist.
 
 Request bodies, query strings and params are validated strictly (unknown fields and wrong types are a 400,
 not stripped or coerced).
@@ -39,12 +50,19 @@ not stripped or coerced).
   replayed as a session. Expired rows are ignored on lookup (not yet deleted by any job).
 - **GitHub token**: the user access token from sign-in is used once to read `GET /user` and then discarded,
   never stored.
-- **Logs**: request logs strip the query string, so the OAuth `code`/`state` never reach them. Unexpected
-  errors return a generic 500; details stay in the log.
+- **Logs**: request logs strip the query string, so the OAuth `code`/`state` never reach them, and mask
+  invitation tokens in paths (`/invitations/:token`). Unexpected errors return a generic 500; details stay in the log.
+- **Invitations**: a 192-bit random token in the link, valid 7 days, single use; only its SHA-256 is stored.
+  Accepting claims the invitation with one conditional `UPDATE`, so two people opening the same link at once
+  can't both join. Opening a link signed out goes through sign-in and back; the return path is checked
+  against an allowlist (`/invitations/<token>` only) both when it's set and before redirecting, so it can't be
+  turned into an open redirect.
 - **Tenant isolation (RLS)**: every `memberships` query runs through `lib/scope.js`'s `withScope()`, which
   sets `app.current_tenant_id` / `app.current_user_id` with `set_config(..., true)` inside one transaction.
   Those settings end with the transaction, so a pooled connection can't carry a tenant into the next request.
   Policies (migration `002`): read your tenant's rows or your own rows; write only into the scoped tenant.
+  `invitations` (migration `003`) is tenant-scoped the same way, plus a read-only policy for exactly one
+  invitation whose token hash is set as `app.invite_token_hash` (how a not-yet-member reads the link).
   An unscoped query fails closed: zero rows, or an RLS error for a write.
 
 ## Running locally
@@ -80,7 +98,7 @@ Other commands: `npm start` (Web Service, env from the process), `npm run worker
 
 `npm test` runs this directory's `node:test` suite. Unit tests (mocked pool, mocked GitHub via an injected
 `fetch`, Fastify's `app.inject()` — no network, no credentials) always run. The real-Postgres tests
-(`migrate`, `tenants`, `rls`, `auth-flow`) are skipped unless `TEST_DATABASE_URL` is set:
+(`migrate`, `tenants`, `rls`, `auth-flow`, `invitations`) are skipped unless `TEST_DATABASE_URL` is set:
 
 ```bash
 docker run -d --name shipscope-pg -e POSTGRES_PASSWORD=postgres -p 5432:5432 postgres:16-alpine

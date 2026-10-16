@@ -4,6 +4,10 @@ const VALID_ROLES = new Set(['admin', 'member']);
 
 class TenantNotFoundError extends Error {}
 class AlreadyMemberError extends Error {}
+/** The caller is a member of the tenant but lacks the admin role the action needs. */
+class ForbiddenError extends Error {}
+/** The action would leave a tenant without any admin. */
+class LastAdminError extends Error {}
 
 function toUser(row) {
     return { id: row.id, githubUserId: Number(row.github_user_id), githubLogin: row.github_login };
@@ -163,12 +167,77 @@ async function listMembersIfMember(pool, { tenantId, userId }) {
     });
 }
 
+/**
+ * The user's role in a tenant, or null if they're not a member. Must run inside a transaction scoped to
+ * that tenant (withScope/setScope), since memberships is RLS-protected.
+ *
+ * @param {import('pg').PoolClient} client
+ * @param {{ tenantId: string, userId: string }} input
+ * @returns {Promise<'admin'|'member'|null>}
+ */
+async function roleOf(client, { tenantId, userId }) {
+    const { rows } = await client.query(
+        'SELECT role FROM memberships WHERE tenant_id = $1 AND user_id = $2',
+        [tenantId, userId]
+    );
+    return rows.length ? rows[0].role : null;
+}
+
+/**
+ * Throws unless userId is an admin of tenantId: TenantNotFoundError for a non-member (indistinguishable
+ * from a missing tenant), ForbiddenError for a plain member. Call inside the tenant's scope.
+ *
+ * @param {import('pg').PoolClient} client
+ * @param {{ tenantId: string, userId: string }} input
+ * @returns {Promise<void>}
+ */
+async function assertAdmin(client, { tenantId, userId }) {
+    const role = await roleOf(client, { tenantId, userId });
+    if (!role) throw new TenantNotFoundError('Tenant not found');
+    if (role !== 'admin') throw new ForbiddenError('Only an admin can do this');
+}
+
+/**
+ * Removes a member. An admin may remove anyone; any member may remove themselves (leave). The tenant's
+ * last admin can't be removed -- that would leave nobody able to manage it.
+ *
+ * @param {import('pg').Pool} pool
+ * @param {{ tenantId: string, actorUserId: string, targetUserId: string }} input
+ * @returns {Promise<void>}
+ * @throws {TenantNotFoundError} actor isn't a member, or target isn't a member of this tenant
+ * @throws {ForbiddenError} actor is a plain member removing someone else
+ * @throws {LastAdminError} target is the only admin
+ */
+async function removeMember(pool, { tenantId, actorUserId, targetUserId }) {
+    return withScope(pool, { tenantId }, async (client) => {
+        const actorRole = await roleOf(client, { tenantId, userId: actorUserId });
+        if (!actorRole) throw new TenantNotFoundError('Tenant not found');
+        if (actorUserId !== targetUserId && actorRole !== 'admin') throw new ForbiddenError('Only an admin can remove other members');
+
+        // Lock the tenant's admin rows so two admins removing each other at once can't both pass the check.
+        const { rows: admins } = await client.query(
+            "SELECT user_id FROM memberships WHERE tenant_id = $1 AND role = 'admin' FOR UPDATE",
+            [tenantId]
+        );
+        const targetRole = await roleOf(client, { tenantId, userId: targetUserId });
+        if (!targetRole) throw new TenantNotFoundError('Member not found');
+        if (targetRole === 'admin' && admins.length === 1) throw new LastAdminError('A tenant needs at least one admin');
+
+        await client.query('DELETE FROM memberships WHERE tenant_id = $1 AND user_id = $2', [tenantId, targetUserId]);
+    });
+}
+
 module.exports = {
     createTenantWithOwner,
+    roleOf,
+    assertAdmin,
+    removeMember,
     addMember,
     upsertUser,
     listTenantsForUser,
     listMembersIfMember,
     TenantNotFoundError,
     AlreadyMemberError,
+    ForbiddenError,
+    LastAdminError,
 };
