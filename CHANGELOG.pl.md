@@ -7,6 +7,12 @@ dashboard, nie publikowany pakiet), dlatego wpisy są pogrupowane według dat. I
 ShipScope, znajdują się w `README.pl.md`, pełne techniczne odniesienie w `CLAUDE.md` (po angielsku), a
 wyjaśnienie sposobu liczenia poszczególnych wartości/badge'y w `FAQ.pl.md`.
 
+## [0.1.1] - 2026-10-16
+
+### Nowe
+
+- **SHP:** invite members by link and remove members (FR-003) (#8)
+
 ## [0.1.0] - 2026-10-16
 
 Pierwsze wydanie z numerem wersji. Od teraz każdy merge do `main` z commitem `feat`, `fix`, `perf` albo zmianą

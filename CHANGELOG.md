@@ -7,6 +7,12 @@ dashboard, not a published package), so entries are grouped by date instead. See
 ShipScope is, `CLAUDE.md` for the technical reference, and `FAQ.md` for how specific numbers/badges are
 calculated.
 
+## [0.1.1] - 2026-10-16
+
+### Added
+
+- **SHP:** invite members by link and remove members (FR-003) (#8)
+
 ## [0.1.0] - 2026-10-16
 
 First versioned release. From here on every merge to `main` that contains a `feat`, `fix`, `perf` or breaking
