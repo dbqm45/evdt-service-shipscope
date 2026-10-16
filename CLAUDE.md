@@ -113,7 +113,9 @@ compares use only a verified release/tag or the sha, stored as `deployments.reso
 last attempt failed, a failed comparison keeps the previous value) are ported too, same both-places rule; the
 per-repo `version_file`/`drift_ignore_paths` (what `docs/components.json` holds for the file-based sync) are set
 by an admin via `PUT /tenants/:tenantId/github/repos/:repoId/settings`. The dashboard data puts `driftBehind`
-on each environment's latest successful record. The dashboard is served by the Web Service at `/t/<tenantId>/` (an allowlist of
+on each environment's latest successful record. `manual` (from the deploy's Actions run, needs the App's Actions
+read permission) and the creator's display name are resolved too (`lib/deployment-people.js`, display-only, cached
+per tenant per pass, never failing the sync). The dashboard is served by the Web Service at `/t/<tenantId>/` (an allowlist of
 `docs/` files only, `lib/dashboard-assets.js`); there `docs/app-data.js`'s `API_TENANT_ID` switches `loadData()` to
 `/api/tenants/<tenantId>/dashboard-data` (`lib/dashboard-data.js`, the same `data/*.json` shapes), and never to the
 built-in `FALLBACK` sample data. Off that path (GitHub Pages, `file://`) nothing changed. Dependencies, all scoped to

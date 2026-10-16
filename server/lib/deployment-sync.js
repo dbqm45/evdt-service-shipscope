@@ -3,13 +3,14 @@ const { createInstallationToken, githubGet, GitHubApiError } = require('./github
 const { buildDeploymentPlan, computeNextCursor, issuesFromMessages } = require('./deployment-logic');
 const { fetchRefIndex, resolveVersionFile, resolveVersion } = require('./version-resolution');
 const { ENV_ORDER, computeEnvDrift } = require('./env-drift');
+const { MAX_RUN_LOOKUPS, createCaches, resolveManual, resolveDisplayName } = require('./deployment-people');
 
 /**
  * FR-005: pulls new GitHub deployments of every tracked repo into the tenant's `deployments` table.
  * Same rules as the file-based scripts/sync-github-deployments.js (cursor, blocked/stuck deployments,
  * version from release/tag/version file/commit message, issue keys from the commit range between resolved
  * refs, rollback detection, per-run cap, environment drift); see lib/deployment-logic.js,
- * lib/version-resolution.js and lib/env-drift.js. Not ported yet: the `manual` flag and display names.
+ * lib/version-resolution.js, lib/env-drift.js and lib/deployment-people.js (the `manual` flag, display names).
  *
  * GitHub calls all happen before the database transaction, so a slow GitHub never holds a lock, and a
  * repo's records, issue facts and cursor are written together or not at all.
@@ -127,11 +128,11 @@ async function refreshDrift({ pool, token, tenantId, repo, fetch: fetchFn }) {
 /**
  * Syncs one tracked repo.
  *
- * @param {{ pool: import('pg').Pool, token: string, tenantId: string, repo: { repoId: number, fullName: string, cursor: number, versionFile?: string|null, driftIgnorePaths?: string[], drift?: object }, fetch?: typeof fetch, now?: number, options?: Partial<typeof DEFAULTS> }} input
+ * @param {{ pool: import('pg').Pool, token: string, tenantId: string, repo: { repoId: number, fullName: string, cursor: number, versionFile?: string|null, driftIgnorePaths?: string[], drift?: object }, fetch?: typeof fetch, now?: number, options?: Partial<typeof DEFAULTS>, caches?: ReturnType<typeof createCaches> }} input
  * @returns {Promise<{ inserted: number, blocked: number, skipped: number, cursor: number, driftRecomputed: boolean, untracked?: true }>}
  * @throws {GitHubApiError}
  */
-async function syncRepo({ pool, token, tenantId, repo, fetch: fetchFn = fetch, now = Date.now(), options = {} }) {
+async function syncRepo({ pool, token, tenantId, repo, fetch: fetchFn = fetch, now = Date.now(), options = {}, caches = createCaches() }) {
     const { maxPerRun, stuckMaxAgeHours, maxPages } = { ...DEFAULTS, ...options };
     const { repoId, fullName, cursor } = repo;
 
@@ -152,6 +153,7 @@ async function syncRepo({ pool, token, tenantId, repo, fetch: fetchFn = fetch, n
     const refIndex = plan.length ? await fetchRefIndex({ token, fullName, fetch: fetchFn }) : null;
 
     const records = [];
+    const budget = { runs: MAX_RUN_LOOKUPS };
     for (const entry of plan) {
         const sha = entry.dep.sha;
         const commit = await githubGet({ token, path: `/repos/${fullName}/commits/${sha}`, fetch: fetchFn });
@@ -173,11 +175,13 @@ async function syncRepo({ pool, token, tenantId, repo, fetch: fetchFn = fetch, n
             deployedAt: entry.statusCreatedAt,
             deployedByLogin: typeof entry.dep.creator?.login === 'string' ? entry.dep.creator.login : null,
             workflowRunUrl: entry.workflowRunUrl,
+            manual: await resolveManual({ token, fullName, workflowRunUrl: entry.workflowRunUrl, caches, budget, fetch: fetchFn }),
             durationMs: entry.durationMs,
             version,
             resolvedRef,
             ...range,
         };
+        record.deployedByName = await resolveDisplayName({ token, login: record.deployedByLogin, caches, fetch: fetchFn });
         records.push(record);
         if (record.status === 'success') {
             previousByEnv[entry.environment] = {
@@ -202,12 +206,12 @@ async function syncRepo({ pool, token, tenantId, repo, fetch: fetchFn = fetch, n
             const { rowCount } = await client.query(
                 `INSERT INTO deployments (tenant_id, repo_id, deployment_id, environment, status, sha, ref, deployed_at,
                      deployed_by_login, workflow_run_url, duration_ms, commit_url, rollback_to_sha, related_issues, issue_commit_types,
-                     version, resolved_ref)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+                     version, resolved_ref, manual, deployed_by_name)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
                  ON CONFLICT (tenant_id, deployment_id) DO NOTHING`,
                 [tenantId, repoId, r.deploymentId, r.environment, r.status, r.sha, r.ref, r.deployedAt, r.deployedByLogin,
                     r.workflowRunUrl, r.durationMs, r.commitUrl, r.rollbackTo, r.keys, JSON.stringify(r.typesByKey),
-                    r.version, r.resolvedRef]
+                    r.version, r.resolvedRef, r.manual, r.deployedByName]
             );
             inserted += rowCount;
             if (r.status !== 'success') continue;
@@ -250,6 +254,7 @@ async function syncAll({ pool, app, fetch: fetchFn = fetch, now = Date.now(), lo
     const totals = { repos: 0, inserted: 0, failed: 0 };
     const { rows: tenants } = await pool.query('SELECT id FROM tenants ORDER BY created_at');
     for (const { id: tenantId } of tenants) {
+        const caches = createCaches(); // per tenant: one tenant's lookups never answer another's
         const repos = await withScope(pool, { tenantId }, async (client) => (await client.query(
             `SELECT repo_id, full_name, installation_id, deployments_cursor, version_file, drift_ignore_paths, drift
              FROM tracked_repos WHERE tenant_id = $1 ORDER BY full_name`,
@@ -267,7 +272,7 @@ async function syncAll({ pool, app, fetch: fetchFn = fetch, now = Date.now(), lo
             };
             try {
                 const token = await tokenFor(Number(row.installation_id));
-                const result = await syncRepo({ pool, token, tenantId, repo, fetch: fetchFn, now, options });
+                const result = await syncRepo({ pool, token, tenantId, repo, fetch: fetchFn, now, options, caches });
                 totals.inserted += result.inserted;
                 if (result.inserted || result.blocked) log(`${repo.fullName}: +${result.inserted} deployments, ${result.blocked} pending`);
             } catch (err) {

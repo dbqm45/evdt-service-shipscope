@@ -70,7 +70,14 @@ function fakeGitHub(usersByCode, github = {}) {
         // statuses: { [id]: [...] (newest first) }, commits: { [sha]: message }, compare(base, head) -> body,
         // tags: [{ name, commit: { sha } }], releases: [{ tag_name }], files: { [sha]: { [path]: text } },
         // treeOf: { [commitSha]: treeSha } (default `tree-<sha>`), trees: { [treeSha]: listing },
-        // fail: HTTP status to answer everything with }. Refs in commits/compare may be tag names.
+        // runs: { [runId]: { event } }, fail: HTTP status to answer everything with }. Refs in commits/compare
+        // may be tag names. github.users[login] = { name } answers GET /users/<login> (the sync's display names).
+        m = url.match(/^https:\/\/api\.github\.com\/users\/([^/?]+)$/);
+        if (m && github.users) {
+            assert.match(auth, /^Bearer inst-token-\d+$/, 'installation token');
+            const user = github.users[m[1]];
+            return user ? json({ login: m[1], ...user }) : json({ message: 'Not Found' }, 404);
+        }
         m = url.match(/^https:\/\/api\.github\.com\/repos\/([^/]+\/[^/]+)\/(.+)$/);
         if (m && github.repos?.[m[1]]) {
             assert.match(auth, /^Bearer inst-token-\d+$/, 'installation token');
@@ -101,6 +108,11 @@ function fakeGitHub(usersByCode, github = {}) {
                 const text = repo.files?.[sub[2]]?.[decodeURIComponent(sub[1])];
                 if (text === undefined) return json({ message: 'Not Found' }, 404);
                 return json({ type: 'file', encoding: 'base64', content: Buffer.from(text).toString('base64') });
+            }
+            sub = rest.match(/^actions\/runs\/(\d+)$/);
+            if (sub) {
+                const run = repo.runs?.[sub[1]];
+                return run ? json({ id: Number(sub[1]), ...run }) : json({ message: 'Resource not accessible by integration' }, 403);
             }
             sub = rest.match(/^git\/trees\/([^/?]+)\?recursive=1$/);
             if (sub) {

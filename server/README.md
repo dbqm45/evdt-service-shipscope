@@ -35,8 +35,11 @@ The SaaS-pivot backend scoped by `@context/foundation/prd.md`, deployed to Rende
   `app-data.js` recognizes that path and loads the tenant's data from `/api/tenants/<tenantId>/dashboard-data`
   (same shapes as the file-based `data/*.json`) instead of static files.
 
-Not yet: the `manual` flag and display names (the file-based sync has them; every record keeps its
-sha so they can be added later), flags and Jira data in the database (those dashboard panels are empty), GitHub
+Each deploy also records whether its GitHub Actions run was started by hand (`manual`, needs the App's
+**Actions** read permission; without it the flag stays unknown) and the creator's public display name
+(`lib/deployment-people.js`; both display-only, a failed lookup never fails the sync).
+
+Not yet: flags and Jira data in the database (those dashboard panels are empty), GitHub
 webhooks, Jira OAuth.
 
 This directory is a separate dependency boundary from the repo root: its own `package.json` and the **only
@@ -176,8 +179,10 @@ not stripped or coerced).
    - **Setup URL**: `http://localhost:3000/github/setup`, with **Redirect on update** ticked
    - **Request user authorization (OAuth) during installation**: leave unticked (ShipScope signs the user in
      itself after the setup redirect, to verify the installation)
-   - **Repository permissions**: Metadata, **Deployments** and **Contents**, all read-only (Contents for the
-     commit range of each deploy, tags, releases, the version file and the git trees compared for drift)
+   - **Repository permissions**: Metadata, **Deployments**, **Contents** and **Actions**, all read-only
+     (Contents for the commit range of each deploy, tags, releases, the version file and the git trees compared
+     for drift; Actions only to tell a manually started deploy run apart -- optional, without it that badge is
+     never shown)
    - **Where can this GitHub App be installed?**: Any account, so other organizations can install it
    - Put the **App ID**, the App's URL name (**slug**, the last part of its public page URL) and a generated
      **private key** (the `.pem` file's contents) into `.env` as `GITHUB_APP_ID`, `GITHUB_APP_SLUG` and
