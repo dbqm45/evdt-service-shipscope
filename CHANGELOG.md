@@ -7,6 +7,12 @@ dashboard, not a published package), so entries are grouped by date instead. See
 ShipScope is, `CLAUDE.md` for the technical reference, and `FAQ.md` for how specific numbers/badges are
 calculated.
 
+## [0.1.9] - 2026-10-16
+
+### Added
+
+- **SHP:** connect a tenant's Jira Cloud through Atlassian OAuth (FR-007) (#18)
+
 ## [0.1.8] - 2026-10-16
 
 ### Added
