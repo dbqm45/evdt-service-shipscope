@@ -1,305 +1,196 @@
-# Testy ręczne: co sprawdzić i jak, krok po kroku
+# Aktualizacja, wdrożenie na Render i testy ręczne
 
-Lista rzeczy, których testy automatyczne nie sprawdzą, bo wymagają prawdziwych kont i usług: GitHuba, Atlassiana,
-Rendera i przeglądarki. Testy w repozytorium (`npm test` w `server/` i w katalogu głównym) używają atrap tych usług.
-Ta lista potwierdza, że prawdziwe usługi zachowują się tak samo jak atrapy.
+Poniżej wszystko, co jest do zrobienia po zmergowaniu PR #22–#27. Najpierw zaktualizuj środowisko lokalne, potem
+wdróż na Render, a na końcu przejdź testy (część C), kiedy będziesz mieć czas. Testy automatyczne używają atrap
+GitHuba, Atlassiana i Rendera. Te kroki sprawdzają prawdziwe usługi.
 
-Jak z niej korzystać:
-- Bloki są w kolejności zależności. Każdy zaczyna się od tego, czego wymaga.
-- Zaznaczaj `[x]` w kopii pliku albo w issue.
-- Przy każdym kroku jest **Oczekiwane**. Jeśli wynik jest inny, zapisz krok, adres, odpowiedź (status i treść) oraz
-  fragment logu i przekaż dalej. Sekretów (tokenów, client secretów, kluczy `.pem`) nie wklejaj nigdzie.
+Sekretów (tokenów, client secretów, kluczy `.pem`) nie wklejaj do repo, czatu ani issue. Szczegóły konfiguracji są w
+[SETUP.pl.md](SETUP.pl.md).
 
-Konfiguracja, do której odsyłają kroki, jest w [SETUP.pl.md](SETUP.pl.md) (sekcje 1–6).
+## A. Lokalnie
 
-| Blok | Gdzie | Wymaga | Czas |
-|---|---|---|---|
-| [A. Lokalnie: start](#a-lokalnie-start-serwera) | komputer | Docker, Node 22 | 15 min |
-| [B. Logowanie GitHub i workspace](#b-logowanie-przez-github-i-workspace) | lokalnie lub Render | A albo H, GitHub App | 10 min |
-| [C. GitHub App: repozytoria i deploye](#c-github-app-repozytoria-i-deploye) | lokalnie lub Render | B, repo z deploymentami | 20 min |
-| [D. Strona ustawień](#d-strona-ustawień) | przeglądarka | B | 15 min |
-| [E. Jira: OAuth Atlassian](#e-jira-oauth-atlassian) | lokalnie lub Render | B, aplikacja Atlassian | 15 min |
-| [F. Jira: tablice i rytmy](#f-jira-tablice-i-rytmy) | lokalnie lub Render | E | 30 min |
-| [G. Feature flagi (ingest)](#g-feature-flagi-ingest) | terminal | B | 10 min |
-| [H. Render: wdrożenie](#h-render-wdrożenie) | Render | konto Render | 30–45 min |
-| [I. Webhooki GitHub](#i-webhooki-github) | Render | H, C | 10 min |
-| [J. Webhooki Jira](#j-webhooki-jira) | Render | H, F | 15 min |
-| [K. Wdrożenia, migracje, wycofanie](#k-kolejne-wdrożenia-migracje-wycofanie) | Render | H | 15 min |
-| [L. Bezpieczeństwo (szybkie sprawdzenia)](#l-bezpieczeństwo-szybkie-sprawdzenia) | przeglądarka, terminal | B | 10 min |
+1. Pobierz nowy kod (w katalogu repo):
 
-Webhooki (I, J) da się sprawdzić tylko pod publicznym adresem `https`, czyli w praktyce na Renderze. Pozostałe bloki
-można zrobić lokalnie albo od razu na Renderze.
+   ```
+   git checkout main
+   git pull
+   ```
 
----
+2. Uruchom migracje w katalogu `server/`. Dojdą `011`, `012` i `013`:
 
-## A. Lokalnie: start serwera
+   ```
+   node --env-file=.env scripts/migrate.js
+   ```
 
-Wymaga: Dockera, Node 22 oraz GitHub App „dev” z callbackiem `http://localhost:3000/auth/github/callback`
-(SETUP.pl.md §1).
+3. Dodaj zakres w konsoli Atlassiana. Wejdź na https://developer.atlassian.com/console/myapps/ → ShipScope (dev) →
+   Permissions → Jira API → Configure → Classic scopes i zaznacz `manage:jira-webhook`. Bez tego każde nowe łączenie
+   Jiry skończy się błędem, bo ShipScope prosi teraz o ten zakres.
+4. Zrestartuj `npm run dev` i worker (`node --env-file=.env worker.js`).
+5. Otwórz ustawienia: `http://localhost:3000/t/<tenant-id>/settings`. Tam jest już wszystko w UI: tablice, rytmy,
+   repozytoria, flagi, zaproszenia.
+6. Opcjonalnie kliknij „Reconnect Jira” w ustawieniach. Lokalnie webhooki i tak nie zadziałają, bo jesteś na `http`,
+   ale sprawdzisz, że łączenie z nowym zakresem przechodzi.
 
-- [ ] **A1. Baza i migracje**
-  ```bash
-  cd server
-  docker run -d --name shipscope-pg -e POSTGRES_PASSWORD=postgres -p 5432:5432 postgres:16-alpine
-  npm install
-  cp .env.example .env     # uzupełnij zmienne (SETUP.pl.md §2)
-  node --env-file=.env scripts/migrate.js
-  ```
-  Oczekiwane: `Applied: 001_… 013_webhooks.sql`. Drugie uruchomienie wypisuje `No pending migrations.`
-- [ ] **A2. Testy automatyczne na prawdziwym Postgresie** (opcjonalnie; potwierdza środowisko)
-  ```bash
-  ADMIN_DATABASE_URL=postgres://postgres:postgres@localhost:5432/postgres node scripts/setup-test-db.js   # jednorazowo
-  TEST_DATABASE_URL=postgres://shipscope_app:shipscope_app@localhost:5432/postgres npm test
-  ```
-  Oczekiwane: `# fail 0`.
-- [ ] **A3. Start serwisu web**: `npm run dev`.
-  Oczekiwane:
-  - `http://localhost:3000/health` zwraca `{"status":"ok","version":"<wersja z package.json>"}`;
-  - `http://localhost:3000/health/db` zwraca `{"ok":true,…}`.
-- [ ] **A4. Start workera** (drugi terminal): `node --env-file=.env worker.js`.
-  Oczekiwane: co 30 s linia `heartbeat ok`. Bez zmiennych GitHub App lub Atlassian pojawiają się linie
-  `… sync is off` (to poprawne).
+## B. Wdrożenie na Render
 
-## B. Logowanie przez GitHub i workspace
+### Przygotowanie
 
-Wymaga: A3 (lokalnie) albo H (Render).
+7. GitHub App do produkcji. Utwórz nową albo użyj obecnej i ustaw:
+   - Callback URL: `https://<adres>/auth/github/callback`
+   - Setup URL: `https://<adres>/github/setup`
+   - Webhook: Active, URL `https://<adres>/webhooks/github`, Secret wygenerowany przez `openssl rand -hex 32`
+   - w zakładce Permissions & events zaznacz zdarzenie Deployment status
+   - jeśli ma działać w organizacji EVDT: Advanced → Make public
 
-- [ ] **B1. Logowanie**: otwórz `/`. Oczekiwane: przekierowanie do GitHuba, zgoda, powrót do ShipScope.
-- [ ] **B2. Pierwszy workspace**: bez workspace'u trafiasz na `/start`. Wpisz nazwę i kliknij **Create**.
-  Oczekiwane: przejście do `/t/<id>/settings`, a w nagłówku `<nazwa> · Settings`.
-- [ ] **B3. Dashboard**: link **Dashboard** w ustawieniach. Oczekiwane: pusty dashboard bez błędów w konsoli
-  przeglądarki (F12) i z linkiem **Settings** w nagłówku.
-- [ ] **B4. Wylogowanie i powrót**: wyczyść ciasteczka strony i otwórz `/t/<id>/settings`. Oczekiwane: logowanie
-  przez GitHuba i powrót na tę samą stronę.
-- [ ] **B5. Zaproszenie**: Settings → Workspace → **Create invitation link** (rola `member`).
-  Oczekiwane: link pokazany raz, w ramce. Po **Done, I copied it** znika.
-- [ ] **B6. Przyjęcie zaproszenia drugim kontem GitHub** (np. w oknie prywatnym): otwórz link, zaloguj się, wywołaj
-  `POST` na `/invitations/<token>/accept`, np. z konsoli przeglądarki:
-  ```js
-  fetch(location.pathname + '/accept', { method: 'POST' }).then(r => r.json()).then(console.log)
-  ```
-  Oczekiwane:
-  - status 201;
-  - drugie konto widzi dashboard i ustawienia tylko do odczytu, bez przycisków zmian;
-  - w sekcji Workspace u admina pojawia się drugi członek.
-- [ ] **B7. Ostatni admin nie może odejść**: jako jedyny admin kliknij **Leave**.
-  Oczekiwane: komunikat błędu, a członkostwo zostaje.
+   `<adres>` to zwykle `https://shipscope-web.onrender.com`. Dokładny poznasz po utworzeniu serwisu i wtedy go
+   poprawisz.
+8. Aplikacja Atlassian do produkcji. Zakresy jak w dev, łącznie z `manage:jira-webhook`. Callback URL:
+   `https://<adres>/auth/atlassian/callback`.
+9. Wygeneruj i zapisz w menedżerze haseł:
+   - `TOKEN_ENCRYPTION_KEY`: `openssl rand -base64 32` (nowy, nie lokalny). Zachowaj kopię: jego zmiana albo utrata
+     oznacza, że każdy workspace łączy Jirę od nowa.
+   - `GITHUB_APP_WEBHOOK_SECRET`: ten sam, który wpisałeś w GitHub App.
 
-## C. GitHub App: repozytoria i deploye
+### Utworzenie
 
-Wymaga: B oraz GitHub App z uprawnieniami z SETUP.pl.md §1: Metadata, Deployments, Contents i opcjonalnie Actions,
-wszystkie read-only. Do tego repozytorium, które tworzy deploymenty (GitHub Deployments API, np. przez
-`environment:` w workflow).
+10. Render → New → Blueprint → repo `dbqm45/evdt-service-shipscope`, gałąź `main`.
+11. Wpisz wartości, o które poprosi Render:
+    - web: `GITHUB_APP_CLIENT_ID`, `GITHUB_APP_CLIENT_SECRET`, `PUBLIC_BASE_URL`, `GITHUB_APP_ID`, `GITHUB_APP_SLUG`,
+      `GITHUB_APP_PRIVATE_KEY`, `GITHUB_APP_WEBHOOK_SECRET`, `ATLASSIAN_CLIENT_ID`, `ATLASSIAN_CLIENT_SECRET`,
+      `TOKEN_ENCRYPTION_KEY`
+    - worker: `GITHUB_APP_ID`, `GITHUB_APP_SLUG`, `GITHUB_APP_PRIVATE_KEY`, `ATLASSIAN_CLIENT_ID`,
+      `ATLASSIAN_CLIENT_SECRET`, `TOKEN_ENCRYPTION_KEY`, `PUBLIC_BASE_URL`
+    - `DATABASE_URL` Render ustawi sam. `DATABASE_SSL` zostaw puste.
+12. Kliknij Apply i poczekaj. Render utworzy bazę, zbuduje serwisy, uruchomi migracje i wystartuje. W logu
+    pre-deploy jednego serwisu zobaczysz `Applied: 001_… 013_…`, a drugiego `No pending migrations.`
 
-- [ ] **C1. Instalacja**: Settings → GitHub → **Install the GitHub App…**, wybierz konto lub organizację i
-  repozytoria. Oczekiwane: po instalacji GitHub prosi o ponowne zalogowanie (to celowe, ShipScope sprawdza w ten
-  sposób dostęp), a potem wracasz na `…/settings#github` z instalacją na liście.
-- [ ] **C2. Śledzenie**: przy instalacji kliknij **Repositories**, potem **Track** przy repozytorium.
-  Oczekiwane: repo pojawia się w „Tracked repositories” z etykietą „not synced yet”.
-- [ ] **C3. Pierwsza synchronizacja**: poczekaj na przebieg workera (do 15 min; po restarcie workera od razu).
-  Oczekiwane:
-  - etykieta „synced …”;
-  - na dashboardzie, w widoku technicznym, wersje w macierzy środowisk i historia deployów;
-  - w logu workera `sync done: N repos, +M deployments`.
-- [ ] **C4. Środowiska**: deploye do środowisk `test`/`dev`, `qa`, `prod`/`production` trafiają do właściwych kolumn.
-  Środowisko o innej nazwie (np. `staging`) jest pomijane, a log pokazuje ostrzeżenie.
-- [ ] **C5. Wersja**: deploy commita z tagiem albo release'em pokazuje nazwę tagu, a nie skrót SHA.
-- [ ] **C6. Plik wersji i rozjazd** (jeśli repo ma gałęzie `deployment/*` z plikiem wersji): w ustawieniach repo wpisz
-  plik wersji (np. `trigger.properties`) i ścieżki ignorowane (np. `.github/`), potem kliknij **Save**.
-  Oczekiwane: po następnej synchronizacji wersja i „Diff to ENV” odpowiadają prawdziwemu kodowi.
-- [ ] **C7. Ręczny deploy** (z uprawnieniem Actions): deploy uruchomiony przez `workflow_dispatch` ma znaczek „manual”.
-- [ ] **C8. Błąd repozytorium**: odbierz aplikacji dostęp do jednego repo (GitHub → instalacja → Configure).
-  Oczekiwane: przy tym repo etykieta „sync failed” z opisem w dymku, a pozostałe repo synchronizują się dalej.
-- [ ] **C9. Odłączenie**: **Stop tracking**, a potem **Unlink**. Oczekiwane: deploye repo znikają z dashboardu,
-  a aplikacja zostaje zainstalowana na GitHubie.
+### Po utworzeniu
 
-## D. Strona ustawień
+13. Jeśli faktyczny adres serwisu jest inny niż wpisany, popraw `PUBLIC_BASE_URL` w obu serwisach oraz adresy w
+    GitHub App i w aplikacji Atlassian.
+14. Sprawdź:
+    - `https://<adres>/health` zwraca `{"status":"ok",…}`;
+    - `https://<adres>/health/db` zwraca `ok: true`.
+15. Pierwsze użycie:
+    1. Zaloguj się. Trafisz na `/start`, gdzie utworzysz workspace, a potem przejdziesz do ustawień.
+    2. W sekcji GitHub kliknij Install i wybierz repozytoria → Repositories → Track.
+    3. W sekcji Jira kliknij Connect, zaznacz tablice → Save selection → Sync now.
+    4. Otwórz Dashboard.
+16. Sprawdź webhooki:
+    - GitHub App → Advanced → Recent Deliveries: odpowiedzi powinny mieć kod 202;
+    - w ustawieniach Jiry powinno być „instant updates on”.
 
-Wymaga: B. Sprawdzaj w Chrome lub Firefox, z otwartą konsolą (F12).
+Po wdrożeniu przyślij mi adres serwisu i wynik `/health`. Jeśli coś nie działa, dołącz logi, zwłaszcza gdy dostawy z
+Jiry dostają 401.
 
-- [ ] **D1. Brak błędów w konsoli** po załadowaniu i po każdej akcji.
-- [ ] **D2. Retencja**: wpisz `3` i kliknij **Save**. Oczekiwane: przeglądarka nie wysyła formularza (minimum 7).
-  Wpisz `120`, kliknij **Save** i odśwież stronę. Oczekiwane: komunikat „Saved.”, po odświeżeniu nadal 120.
-- [ ] **D3. Potwierdzenia**: **Stop tracking**, **Unlink**, **Disconnect**, **Delete**, **revoke** pytają o
-  potwierdzenie. **Anuluj** niczego nie zmienia.
-- [ ] **D4. Komunikaty**: po akcji w jednej sekcji znika komunikat z poprzedniej akcji w innej sekcji.
-- [ ] **D5. Telefon**: narzędzia deweloperskie → widok urządzenia ok. 390 px szerokości. Oczekiwane: strona bez
-  poziomego przewijania, a formularze da się wypełnić.
-- [ ] **D6. Motyw jasny**: na dashboardzie przełącz motyw na jasny i otwórz ustawienia. Oczekiwane: też jasne.
-- [ ] **D7. Bez konfiguracji**: na serwerze bez zmiennych GitHub App lub Atlassian sekcje pokazują „not configured
-  on this server”, a nie błąd.
+## C. Testy (można odłożyć)
 
-## E. Jira: OAuth Atlassian
+Każdy krok ma oczekiwany wynik. Jeśli jest inny, zapisz numer kroku, adres, odpowiedź (status i treść) i fragment logu.
+Kroki od 17 do 33 i od 44 do 52 możesz zrobić lokalnie albo na Renderze, a kroki od 34 do 43 tylko na Renderze, bo
+GitHub i Atlassian muszą móc wywołać publiczny adres `https`.
 
-Wymaga: B oraz aplikacji OAuth 2.0 w https://developer.atlassian.com/console/myapps/ (SETUP.pl.md §5) z zakresami:
-- `read:jira-work`, `read:jira-user`, `read:project:jira`;
-- `read:board-scope:jira-software`, `read:sprint:jira-software`;
-- **`manage:jira-webhook`**.
+### Logowanie, workspace, zaproszenia
 
-Callback URL to `<adres>/auth/atlassian/callback`. Na serwerze muszą być ustawione `ATLASSIAN_CLIENT_ID`,
-`ATLASSIAN_CLIENT_SECRET` i `TOKEN_ENCRYPTION_KEY`.
+17. Wyczyść ciasteczka strony i otwórz `/t/<id>/settings`. Powinno przekierować do logowania GitHub i wrócić na tę
+    samą stronę.
+18. Settings → Workspace → Create invitation link (rola `member`). Link pokazuje się raz, w ramce. Po
+    „Done, I copied it” znika.
+19. Otwórz link drugim kontem GitHub (okno prywatne), zaloguj się i w konsoli przeglądarki (F12) wpisz:
 
-- [ ] **E1. Połączenie**: Settings → Jira → **Connect Jira**, zgoda w Atlassian.
-  Oczekiwane: powrót na `…/settings#jira` z napisem „Connected to <witryna>”.
-  - Jeśli Atlassian pokazuje błąd zakresu, w konsoli brakuje któregoś zakresu z listy wyżej (najczęściej
-    `manage:jira-webhook`).
-- [ ] **E2. Kilka witryn** (jeśli konto ma kilka): formularz „Jira site” i **Use this site**.
-  Oczekiwane: lista tablic.
-- [ ] **E3. Projekty**: `GET /tenants/<id>/jira/projects` (otwórz w przeglądarce). Oczekiwane: lista projektów JSON.
-- [ ] **E4. Odświeżanie tokenu**: odczekaj ponad godzinę (token dostępu wygasa) i kliknij **Sync now**.
-  Oczekiwane: działa bez ponownego łączenia (ShipScope sam odświeża token).
-- [ ] **E5. Odebranie dostępu**: na https://id.atlassian.com/manage-profile/apps usuń dostęp aplikacji, potem
-  kliknij **Sync now**.
-  Oczekiwane: czerwona etykieta „Jira access was revoked or has expired; connect Jira again”, a **Reconnect Jira**
-  naprawia połączenie.
-- [ ] **E6. Rozłączenie**: **Disconnect**. Oczekiwane: sekcja wraca do „Connect Jira”, a zadania znikają
-  z dashboardu.
+    ```
+    fetch(location.pathname + '/accept', { method: 'POST' }).then(r => r.json()).then(console.log)
+    ```
 
-## F. Jira: tablice i rytmy
+    Drugie konto widzi dashboard i ustawienia bez przycisków zmian, a u admina pojawia się nowy członek.
+20. Jako jedyny admin kliknij Leave. Powinien pojawić się komunikat błędu, a członkostwo zostaje.
 
-Wymaga: E. Najlepiej z tablicami różnych rodzajów:
-- Scrum ze sprintami nazwanymi w konwencji PI (`Zespół 27.3.1`);
-- Scrum ze zwykłymi sprintami (`Sprint 7`);
-- projekt z wersjami (Fix Version);
-- tablica kanban.
+### GitHub: repozytoria i deploye
 
-- [ ] **F1. Lista tablic**: wszystkie tablice witryny z typem (`scrum`, `simple`, `kanban`) i projektem.
-- [ ] **F2. Wybór**: zaznacz tablice, kliknij **Save selection**, potem **Sync now**.
-  Oczekiwane: komunikat „Synced N board(s), M issue(s); now: …”, a przy każdej tablicy „Now: <przyrost>”.
-- [ ] **F3. Rytm `auto`**:
-  - tablica ze sprintami PI → przyrost `PI-27.3`;
-  - zwykłe sprinty → `Sprint 7`;
-  - kanban albo tablica bez sprintów → `PAY 1.2` (gdy projekt ma niewydaną wersję) albo `Flow 2026-10`.
-- [ ] **F4. „Now”**: przy tablicach w różnych przyrostach dashboard otwiera się na „Now: …”, pokazując zadania
-  wszystkich zespołów naraz. Pozostałe przyrosty są dalej w selektorze.
-- [ ] **F5. Szablon PI**: dla tablicy z nazwami typu `PI 7 / Iteration 2` ustaw rytm **Program increments** z
-  szablonem `PI {pi} / Iteration {n}`, potem **Save** i **Sync now**. Oczekiwane: przyrost `PI-7`.
-  - Szablon bez `{pi}` jest odrzucany z komunikatem.
-  - Przy rytmie `sprint` pole szablonu jest wyłączone.
-- [ ] **F6. Wydania**: rytm **Releases** dla projektu z wersjami. Oczekiwane:
-  - bieżąca jest najbliższa niewydana wersja (według daty wydania);
-  - zadania to te z tą Fix Version;
-  - wersje zarchiwizowane są pomijane.
-- [ ] **F7. Flow**: rytm **Monthly flow** na tablicy kanban. Oczekiwane: `Flow <rok-miesiąc>` zawiera zadania
-  rozwiązane w tym miesiącu i wszystkie w toku. Zadania „To Do” nie wchodzą.
-- [ ] **F8. Zmiana rytmu**: po zmianie rytmu i **Sync now** stare przyrosty tej tablicy znikają, a nowe się
-  pojawiają.
-- [ ] **F9. Widoki**: Product view (epiki, statusy), Release Notes, Insights (`?insights=1`). Wszystkie działają dla
-  każdego rodzaju przyrostu.
+21. Po Install aplikacja prosi o ponowne zalogowanie. To celowe, bo ShipScope sprawdza w ten sposób dostęp. Potem
+    wracasz na `…/settings#github` z instalacją na liście.
+22. Po Track repozytorium ma etykietę „not synced yet”. Do 15 minut później (od razu po restarcie workera) zmienia się
+    na „synced …”, a dashboard pokazuje wersje i historię deployów.
+23. Deploye do `test`/`dev`, `qa`, `prod`/`production` trafiają do właściwych kolumn. Inne nazwy (np. `staging`) są
+    pomijane, z ostrzeżeniem w logu workera.
+24. Deploy commita z tagiem albo release'em pokazuje nazwę tagu, a nie skrót SHA.
+25. Jeśli repo deployuje z gałęzi `deployment/*`, wpisz w ustawieniach repo plik wersji (np. `trigger.properties`) i
+    ścieżki ignorowane (np. `.github/`) → Save. Po synchronizacji wersja i „Diff to ENV” pokazują prawdziwy kod.
+26. Odbierz aplikacji dostęp do jednego repo (GitHub → instalacja → Configure). Przy tym repo pojawia się „sync failed”,
+    a pozostałe synchronizują się dalej.
+27. Stop tracking, potem Unlink. Deploye znikają z dashboardu, a aplikacja zostaje zainstalowana na GitHubie.
 
-## G. Feature flagi (ingest)
+### Jira: OAuth, tablice, rytmy
 
-Wymaga: B.
+28. Po Connect i zgodzie wracasz na `…/settings#jira` z napisem „Connected to <witryna>”. Jeśli Atlassian pokazuje
+    błąd zakresu, w konsoli brakuje któregoś zakresu, najczęściej `manage:jira-webhook`.
+29. Lista tablic pokazuje wszystkie tablice witryny z typem (`scrum`, `simple`, `kanban`). Po Save selection i
+    Sync now pojawia się komunikat „Synced N board(s)…”, a przy każdej tablicy „Now: <przyrost>”.
+30. Rytm `auto` daje:
+    - `PI-27.3` dla sprintów w konwencji PI;
+    - `Sprint 7` dla zwykłych sprintów;
+    - `PAY 1.2` albo `Flow 2026-10` dla kanbana i tablic bez sprintów.
 
-- [ ] **G1. Źródło**: Settings → Feature flags → **Add source** (np. `LaunchDarkly`, kind `runtime`).
-  Oczekiwane: token pokazany raz. Skopiuj go do zmiennej powłoki, nie do pliku w repo.
-- [ ] **G2. Wysłanie stanu**:
-  ```bash
-  export SS=<adres>                 # np. http://localhost:3000
-  export TOKEN=<token z G1>
-  curl -s -X POST "$SS/api/flags/ingest" -H "authorization: Bearer $TOKEN" -H 'content-type: application/json' \
-    -d '{"schemaVersion":2,"observations":[{"key":"newCheckout","env":"prod","state":"partial","rollout":25},{"key":"newCheckout","env":"test","state":"on"}],"flags":[{"key":"newCheckout","description":"Nowy checkout","jiraKeys":["ABC-1"]}]}'
-  ```
-  Oczekiwane: JSON z `created`/`changed`, a flaga widoczna w widoku technicznym dashboardu.
-- [ ] **G3. Pełny stan usuwa brakujące**: wyślij to samo bez `newCheckout` dla `prod` (np. inną flagę). Oczekiwane:
-  `newCheckout` na `prod` oznaczona jako usunięta.
-- [ ] **G4. Zły token**: ten sam `curl` z `Bearer xyz`. Oczekiwane: status 401.
-- [ ] **G5. Rotacja**: **New token**, wysyłka nowym tokenem, potem **revoke** starego. Oczekiwane: stary dostaje 401,
-  nowy działa.
+    Przy tablicach w różnych przyrostach dashboard otwiera się na „Now: …”.
+31. Ustaw rytm Program increments z szablonem `PI {pi} / Iteration {n}` → Save → Sync now. Sprint
+    `PI 7 / Iteration 2` trafia do `PI-7`. Szablon bez `{pi}` jest odrzucany, a przy rytmie Sprints pole jest
+    wyłączone.
+32. Rytm Releases: bieżąca jest najbliższa niewydana wersja według daty, a wersje zarchiwizowane są pomijane. Rytm
+    Monthly flow: zadania rozwiązane w tym miesiącu i wszystkie w toku, bez „To Do”.
+33. Usuń dostęp aplikacji na https://id.atlassian.com/manage-profile/apps → Sync now. Pojawia się czerwona etykieta
+    „Jira access was revoked…”, a Reconnect Jira naprawia połączenie.
 
-## H. Render: wdrożenie
+### Webhooki (tylko Render)
 
-Wymaga: konta Render oraz „produkcyjnych” aplikacji GitHub i Atlassian. Pełna instrukcja jest w SETUP.pl.md §6.
-Tu tylko punkty kontrolne.
+34. W ustawieniach GitHub i Jira jest „instant updates on”. Jeśli przy Jirze jest „off”, przeczytaj powód (np.
+    „Reconnect Jira…”) i zrób, co mówi.
+35. Zrób deploy w śledzonym repo. W Recent Deliveries dostawa `deployment_status` ma kod 202 i `{"queued":1}`.
+36. Deploy pojawia się na dashboardzie w ciągu około minuty. W logu workera jest `github webhook sync done`.
+37. Zmień tymczasowo sekret w GitHub App → Redeliver. Odpowiedź ma kod 401. Przywróć sekret.
+38. Zmień status zadania w zsynchronizowanej tablicy. W logu serwisu web jest `POST /webhooks/jira` z kodem 202.
+39. Zmiana widoczna na dashboardzie w ciągu około minuty. W logu workera jest `jira webhook sync done`.
+40. Dodaj tablicę z innego projektu → Save selection → Sync now. Nadal „instant updates on”, a zmiany zadań z nowego
+    projektu też przychodzą od razu.
+41. Jeśli w kroku 38 jest kod 401 albo zmiany nie przychodzą, przyślij mi (bez sekretów):
+    - kod odpowiedzi z logu serwisu web;
+    - czy dostawa ma nagłówek `Authorization: Bearer …` i jaki `alg` jest w pierwszej części tokenu przed kropką
+      (dekoduje się ją z base64url bez sekretu);
+    - czy treść dostawy ma pole `matchedWebhookIds`.
 
-- [ ] **H1. Blueprint**: New → Blueprint → repo `dbqm45/evdt-service-shipscope`, gałąź `main`.
-  Oczekiwane: trzy zasoby (`shipscope-web`, `shipscope-worker`, `shipscope-db`), a Render prosi o każdy sekret.
-- [ ] **H2. Pierwsze wdrożenie**: w logu buildu `npm ci --prefix server`, w pre-deploy `Applied: 001_…013_…` (u
-  jednego serwisu; drugi pokazuje `No pending migrations.`), potem start.
-- [ ] **H3. Zdrowie**: `https://<adres>/health` → `status: ok` z wersją, `https://<adres>/health/db` → `ok: true`.
-- [ ] **H4. Dashboard się serwuje**: po zalogowaniu `/t/<id>/` i `/t/<id>/settings` ładują się, a nie odpowiadają
-  503. W logu serwisu web nie ma `dashboard files not found`.
-- [ ] **H5. Adresy**: jeśli Render nadał inny adres niż wpisany, popraw:
-  - `PUBLIC_BASE_URL` w obu serwisach;
-  - w GitHub App: Callback URL, Setup URL i Webhook URL;
-  - w aplikacji Atlassian: Callback URL.
-  Logowanie musi działać po tej poprawce.
-- [ ] **H6. Bloki B–G na Renderze**: przejdź je ponownie, przynajmniej B1–B3, C1–C3, E1, F2 i G2.
-- [ ] **H7. Ciasteczka**: w narzędziach przeglądarki ciasteczko `sid` ma `Secure`, `HttpOnly` i `SameSite=Lax`.
+    To jedyna rzecz w kodzie, której nie dało się potwierdzić bez prawdziwej dostawy. Do czasu poprawki Jira
+    synchronizuje się co 15 minut.
+42. Po merge'u zmieniającym `server/**` oba serwisy wdrażają się same, a `/health` pokazuje nową wersję. Commit z
+    danymi (`docs/data/**`) nie wdraża niczego.
+43. Render → serwis → Rollback do poprzedniego wdrożenia. `/health` pokazuje starą wersję. Migracje bazy się nie
+    cofają.
 
-## I. Webhooki GitHub
+### Feature flagi
 
-Wymaga: H oraz C.
-- W GitHub App → General → Webhook: **Active**, URL `<adres>/webhooks/github`, Secret równy
-  `GITHUB_APP_WEBHOOK_SECRET` w serwisie web.
-- W Permissions & events → Subscribe to events: zaznaczone **Deployment status**.
+44. Settings → Feature flags → Add source (np. `LaunchDarkly`, kind `runtime`). Token pokazuje się raz. Skopiuj go do
+    zmiennej w terminalu, nie do pliku.
+45. Wyślij stan:
 
-- [ ] **I1. Status**: w Settings → GitHub widać „instant updates on”.
-- [ ] **I2. Dostawa**: zrób deploy w śledzonym repo. W GitHub App → Advanced → Recent Deliveries dostawa
-  `deployment_status` ma odpowiedź **202** i treść `{"queued":1}`.
-- [ ] **I3. Szybkość**: deploy pojawia się na dashboardzie w ciągu około minuty. W logu workera
-  `github webhook sync done`.
-- [ ] **I4. Zły sekret**: zmień tymczasowo sekret w GitHub App i kliknij **Redeliver**. Oczekiwane: **401**.
-  Przywróć sekret.
-- [ ] **I5. Inne zdarzenia** (np. `ping` przy zapisie ustawień): odpowiedź 202 z `{"queued":0}`.
+    ```
+    export SS=https://<adres>          # albo http://localhost:3000
+    export TOKEN=<token>
+    curl -s -X POST "$SS/api/flags/ingest" -H "authorization: Bearer $TOKEN" -H 'content-type: application/json' \
+      -d '{"schemaVersion":2,"observations":[{"key":"newCheckout","env":"prod","state":"partial","rollout":25},{"key":"newCheckout","env":"test","state":"on"}],"flags":[{"key":"newCheckout","description":"Nowy checkout","jiraKeys":["ABC-1"]}]}'
+    ```
 
-## J. Webhooki Jira
+    Odpowiedź zawiera `created`/`changed`, a flaga widać w widoku technicznym dashboardu.
+46. Ten sam `curl` z `Bearer xyz` zwraca kod 401.
+47. New token → wysyłka nowym tokenem → revoke starego. Stary dostaje 401, nowy działa.
 
-Wymaga:
-- H oraz F;
-- `PUBLIC_BASE_URL` (`https`) ustawione również w workerze;
-- zakres `manage:jira-webhook` w aplikacji Atlassian;
-- połączenia Jiry nawiązanego po dodaniu tego zakresu (w razie potrzeby **Reconnect Jira**).
+### Ustawienia i bezpieczeństwo
 
-**Tu jest jedyna niepotwierdzona rzecz w kodzie.** Format podpisu dostaw z Jiry (JWT HS256 podpisany client
-secretem) i pole `matchedWebhookIds` przyjęto z opisów Atlassian, bez sprawdzenia na prawdziwej dostawie. Jeśli J3
-nie przejdzie, synchronizacja co 15 minut działa dalej, a do poprawki potrzebne są logi z J5.
+48. Retencja: przy `3` przeglądarka blokuje wysłanie (minimum 7). Po `120` → Save i odświeżeniu nadal jest 120.
+49. Stop tracking, Unlink, Disconnect, Delete i revoke pytają o potwierdzenie. Anuluj niczego nie zmienia.
+50. W widoku telefonu (narzędzia deweloperskie, ok. 390 px) strona nie przewija się w poziomie, a w konsoli nie ma
+    błędów.
+51. Drugie konto spoza workspace'u: `/t/<cudze id>/settings` i `/api/tenants/<cudze id>/dashboard-data` zwracają 404.
+    Konto z rolą `member`: `PUT /tenants/<id>/settings` zwraca 403.
+52. Ochrona przed atakami:
+    - `/t/<id>/data/deployments.json`, `/ui/web.js` i `/auth/github/login?returnTo=https://example.com` zwracają
+      400 albo 404, nigdy treść pliku ani przekierowanie;
+    - workspace o nazwie `<img src=x onerror=alert(1)>` wyświetla się jako tekst, bez okienka alert.
 
-- [ ] **J1. Rejestracja**: po **Sync now** w Settings → Jira widać „instant updates on”.
-  - Jeśli „off”: odczytaj powód (np. „Reconnect Jira…”) i postępuj według niego.
-- [ ] **J2. Zmiana zadania**: zmień status lub tytuł zadania w zsynchronizowanej tablicy. W logu serwisu web pojawia
-  się `POST /webhooks/jira` ze statusem **202**.
-- [ ] **J3. Szybkość**: zmiana widoczna na dashboardzie w ciągu około minuty. W logu workera
-  `jira webhook sync done`.
-- [ ] **J4. Zmiana tablic**: dodaj tablicę z innego projektu, kliknij **Save selection** i **Sync now**. Oczekiwane:
-  dalej „instant updates on”, a zmiany zadań z nowego projektu też przychodzą od razu.
-- [ ] **J5. Gdy J2 lub J3 nie działa — co zebrać**:
-  - status odpowiedzi na `/webhooks/jira` z logu serwisu web (401 oznacza, że podpis jest w innym formacie);
-  - nagłówki dostawy bez wartości tokenu (sam fakt, czy jest `Authorization: Bearer …` i jaki ma `alg`; nagłówek
-    tokenu JWT to pierwsza część przed kropką, zakodowana base64url, którą można zdekodować bez sekretu);
-  - czy treść dostawy zawiera `matchedWebhookIds` (sama nazwa pola, bez danych zadań).
-- [ ] **J6. Odnowienie po 30 dniach** (do sprawdzenia po miesiącu): w ustawieniach dalej „instant updates on”.
-  Webhook odnawia się sam na 7 dni przed wygaśnięciem.
-
-## K. Kolejne wdrożenia, migracje, wycofanie
-
-Wymaga: H.
-
-- [ ] **K1. Automatyczne wdrożenie**: merge do `main`, który zmienia `server/**`, wdraża oba serwisy. Zmiana tylko
-  w `docs/*.js` wdraża tylko serwis web. Commit z danymi (`docs/data/**`) nie wdraża niczego.
-- [ ] **K2. Wersja**: po merge'u i commicie `chore(release): X.Y.Z` endpoint `/health` pokazuje nową wersję.
-- [ ] **K3. Nieudana migracja** (opcjonalnie, na osobnym środowisku): migracja z błędem zatrzymuje wdrożenie, a
-  poprzednia wersja nadal odpowiada na `/health`.
-- [ ] **K4. Wycofanie**: Render → serwis → **Rollback** do poprzedniego wdrożenia. Oczekiwane: `/health` pokazuje
-  starą wersję. Pamiętaj, że migracje bazy się nie cofają.
-- [ ] **K5. Restart workera**: Render → worker → **Restart**. Oczekiwane: w logu od razu synchronizacja i
-  `heartbeat ok`.
-
-## L. Bezpieczeństwo (szybkie sprawdzenia)
-
-Wymaga: B i drugiego konta GitHub spoza workspace'u.
-
-- [ ] **L1. Cudzy workspace**: zalogowany drugim kontem otwórz `/t/<id cudzego workspace'u>/settings` i
-  `/api/tenants/<id>/dashboard-data`. Oczekiwane: 404 (nie 403, by nie zdradzać, że workspace istnieje).
-- [ ] **L2. Członek bez uprawnień**: konto z rolą `member` wywołuje `PUT /tenants/<id>/settings` (np. z konsoli).
-  Oczekiwane: 403.
-- [ ] **L3. Pliki spoza listy**: `/t/<id>/data/deployments.json`, `/t/<id>/components.json`, `/ui/web.js`,
-  `/ui/..%2Fweb.js`. Oczekiwane: 400 lub 404 i nigdy treść pliku.
-- [ ] **L4. Otwarte przekierowanie**: `/auth/github/login?returnTo=https://example.com`. Oczekiwane: 400.
-- [ ] **L5. XSS**: nazwij workspace `<img src=x onerror=alert(1)>`. Oczekiwane: nazwa wyświetla się jako tekst,
-  bez okienka alert.
-
----
-
-Po przejściu całości dopisz w `docs/project/journal.md` datę, środowisko i bloki, które przeszły, oraz numery tych,
-które nie przeszły.
+Po testach dopisz w `docs/project/journal.md` datę, środowisko i numery kroków, które nie przeszły.
