@@ -35,7 +35,7 @@ will produce data; this is the checklist for setting up a brand-new ShipScope in
   credentials also have to exist as a secret *on every monitored repo* (passed through when that repo
   calls the reusable `notify-deployment.yml`/`check-flags.yml`) — each monitored repo's own workflow is
   what mints the token scoped back to `evdt-service-shipscope`, so this is the one piece of friction that
-  can't be centralized away (see `design-docs/INTEGRATION-VISION.md`).
+  can't be centralized away in the file-based model (the server's GitHub App connection removes it).
 - `evdt-service-shipscope`'s own workflows (`sync-with-retry`, `sync-main-to-live.yml`,
   `update-flag-state.yml`, `sync-runtime-be-flags.yml`) all declare `permissions: contents: write` and use
   the default, automatic `GITHUB_TOKEN` — no GitHub App is needed for anything that stays entirely inside
@@ -184,8 +184,7 @@ In the new component's repo, add workflow steps for:
   `docs/components.json` and the calling repo; the secrets must be repository- or organization-level, not
   environment secrets (the job declares no `environment:`). Verify with one real deploy: "Notify
   ShipScope" should run in the Actions tab and `orchestrate-full-sync.yml` should receive a dispatch. A
-  renamed deployment workflow silently stops matching — update `workflows:` when that happens. See
-  `design-docs/DEPLOYMENT-WEBHOOK-PROPOSAL.md` → "Alternative without a server".
+  renamed deployment workflow silently stops matching — update `workflows:` when that happens.
 - **Build-time flags, if applicable** — add a workflow calling the reusable `check-flags.yml`
   (`workflow_call`) from this repo, the same way `evapl-service-frontend` does. Skip this if the component
   has no build-time flags (e.g. it's a backend service or infra repo).

@@ -126,7 +126,7 @@ file-diff section and shows only the Git history until the service's next sync r
 
 **Components that deploy from `deployment/*` trigger branches:** if QA/PROD deploy a commit that only edits
 `trigger.properties` (`version=v1.6.0`), set `versionFile` in `docs/components.json` so the compared refs come from
-the tag the file names (see `design-docs/DRIFT-SAME-VERSION-DIFFERENT-SHA.md`), and list `trigger.properties` in
+the tag the file names (see `versionFile` in `ONBOARDING.md`), and list `trigger.properties` in
 `driftIgnorePaths`.
 
 **Worked example** (real data, `evapl-service-frontend`, 2026-10-06): TEST deployed `v1.0.0` at 14:44 (commit
@@ -178,8 +178,7 @@ The typical cause: a deployment started from a long-lived branch such as `deploy
 branch's copy of the workflow lacks a `notify_shipscope` step added only on `main`. The fix that needs no
 server and no per-branch maintenance is a small workflow on the service repo's **default branch**, triggered
 by `workflow_run` (which only fires from the default branch's YAML, whatever branch the deploy ran on) and
-calling `notify-deployment.yml` — see "Alternative without a server" in
-`design-docs/DEPLOYMENT-WEBHOOK-PROPOSAL.md`.
+calling `notify-deployment.yml` — see the "Notify ShipScope" workflow in `ONBOARDING.md`.
 
 (Script: `sync-github-deployments.js`, functions `trimOldRecords`, `main`. Workflow:
 `orchestrate-full-sync.yml`, job `sync_deployments`. Trigger: `notify-deployment.yml`'s `notify_shipscope`
