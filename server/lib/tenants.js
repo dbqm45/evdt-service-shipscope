@@ -8,6 +8,8 @@ class AlreadyMemberError extends Error {}
 class ForbiddenError extends Error {}
 /** The action would leave a tenant without any admin. */
 class LastAdminError extends Error {}
+/** Deleting a tenant needs its name typed back exactly; this one didn't match. */
+class ConfirmationMismatchError extends Error {}
 
 function toUser(row) {
     return { id: row.id, githubUserId: Number(row.github_user_id), githubLogin: row.github_login };
@@ -227,8 +229,48 @@ async function removeMember(pool, { tenantId, actorUserId, targetUserId }) {
     });
 }
 
+/**
+ * Checks that the actor may delete the tenant and typed its name back (trimmed, exact). Admins only.
+ *
+ * @param {import('pg').PoolClient} client inside the tenant's scope
+ * @param {{ tenantId: string, actorUserId: string, confirmName: string }} input
+ * @returns {Promise<{ name: string }>}
+ * @throws {TenantNotFoundError|ForbiddenError|ConfirmationMismatchError}
+ */
+async function assertDeletable(client, { tenantId, actorUserId, confirmName }) {
+    await assertAdmin(client, { tenantId, userId: actorUserId });
+    const { rows: [tenant] } = await client.query('SELECT name FROM tenants WHERE id = $1 FOR UPDATE', [tenantId]);
+    if (!tenant) throw new TenantNotFoundError('Tenant not found');
+    if (typeof confirmName !== 'string' || confirmName.trim() !== tenant.name) {
+        throw new ConfirmationMismatchError('Type the workspace name exactly to confirm deleting it');
+    }
+    return { name: tenant.name };
+}
+
+/**
+ * Deletes a tenant and everything it holds: memberships, invitations, GitHub installations' links and tracked repos,
+ * deployments, flag sources, tokens and values, the Jira connection with its boards and issues (every table cascades
+ * from `tenants`). Users stay (they may belong to other tenants). Nothing outside ShipScope is touched here: the
+ * caller removes what it registered elsewhere (Jira webhooks) before. Admins only, with the name typed back.
+ *
+ * @param {import('pg').Pool} pool
+ * @param {{ tenantId: string, actorUserId: string, confirmName: string }} input
+ * @returns {Promise<{ name: string }>} the deleted tenant's name
+ * @throws {TenantNotFoundError|ForbiddenError|ConfirmationMismatchError}
+ */
+async function deleteTenant(pool, { tenantId, actorUserId, confirmName }) {
+    return withScope(pool, { tenantId }, async (client) => {
+        const tenant = await assertDeletable(client, { tenantId, actorUserId, confirmName });
+        await client.query('DELETE FROM tenants WHERE id = $1', [tenantId]);
+        return tenant;
+    });
+}
+
 module.exports = {
     createTenantWithOwner,
+    assertDeletable,
+    deleteTenant,
+    ConfirmationMismatchError,
     roleOf,
     assertAdmin,
     removeMember,

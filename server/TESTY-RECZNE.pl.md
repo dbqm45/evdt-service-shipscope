@@ -373,5 +373,11 @@ zainstalowane na Macu i w Git Bash.
 59. Utwórz drugi workspace (strona `<adres>/start`) o nazwie `<img src=x onerror=alert(1)>`. Nazwa wyświetla się jako
     zwykły tekst i nie wyskakuje żadne okienko.
 
+60. Usuwanie workspace'u (na końcu, na workspace założonym do testów — np. tym z kroku 59): w ustawieniach, sekcja
+    **Workspace**, na dole **Delete workspace**. Wpisz nazwę z błędem → **Delete workspace** → czerwony komunikat, nic
+    nie znika. Wpisz nazwę dokładnie → potwierdź w okienku. Powinno być: przejście na `/start` (albo do innego Twojego
+    workspace'u); stary adres `<adres>/t/<id>/settings` pokazuje „not found”. Członek bez roli admin nie widzi tej
+    sekcji.
+
 Po testach zapisz w `docs/project/journal.md` (albo prześlij mi) datę, gdzie testowałeś (komputer czy Render) i
 numery kroków, które nie przeszły.

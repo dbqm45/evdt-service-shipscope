@@ -49,7 +49,11 @@ test('settings page: the workspace section -- admins invite and remove, members 
     assert.ok(!admin.includes('<img'), 'a GitHub login is escaped');
     assert.match(admin, /&lt;img src=x/);
 
-    const member = str(ui.renderWorkspace({ workspace: { ...workspace, invitations: null }, admin: false, meId: 'u2', once: {} }));
+    const danger = str(ui.renderWorkspace({ workspace, admin: true, meId: 'u1', once: {}, tenantName: 'Acme <Corp>' }));
+    assert.match(danger, /data-action="delete-workspace"/);
+    assert.match(danger, /Type <strong>Acme &lt;Corp&gt;<\/strong> to confirm <input name="confirmName" required/, 'the name to type, escaped');
+    const member = str(ui.renderWorkspace({ workspace: { ...workspace, invitations: null }, admin: false, meId: 'u2', once: {}, tenantName: 'Acme' }));
+    assert.ok(!/delete-workspace/.test(member), 'only admins can delete the workspace');
     assert.match(member, /only admins can change settings/);
     assert.match(member, /kept for 90 days/);
     assert.ok(!/create-invitation|data-user-id="u1"|deploymentRetentionDays/.test(member), 'a member sees no admin controls');
@@ -158,6 +162,7 @@ test('settings page: actions send what the API expects, then reload their sectio
         [`POST ${base}/invitations`]: { url: 'https://s/invitations/tok' },
         [`POST ${base}/flag-sources`]: { source: { id: 's9' }, token: { id: 't9', token: 'sst_new' } },
         [`POST ${base}/jira/sync`]: { boards: 2, issues: 9, currentPi: '@now' },
+        [`DELETE ${base}`]: null,
         [`GET ${base}/jira`]: { connected: false },
         [`GET ${base}/github`]: { installations: [], repos: [] },
         [`PUT ${base}/jira/boards/13`]: new Error('A PI template only applies to the "pi" or "auto" rhythm'),
@@ -199,6 +204,19 @@ test('settings page: actions send what the API expects, then reload their sectio
     calls.length = 0;
     await ui.runAction('save-source', form([['name', 'LD'], ['kind', 'build'], ['priority', '5'], ['repoId', '101']], { sourceId: 's9' }, 'flags'));
     assert.deepStrictEqual(calls[0], { method: 'PUT', url: `${base}/flag-sources/s9`, body: { name: 'LD', kind: 'build', priority: 5, repoId: 101 } });
+
+    // Deleting the workspace: asks first, sends the typed name, then leaves for / (another workspace, or /start).
+    global.location = { pathname: `/t/${TENANT}/settings`, assign: (url) => { global.location.assigned = url; } };
+    global.confirm = () => false;
+    calls.length = 0;
+    await ui.runAction('delete-workspace', form([['confirmName', ' Acme ']], {}, 'workspace'));
+    assert.deepStrictEqual(calls, [], 'cancelled: nothing sent');
+    global.confirm = () => true;
+    await ui.runAction('delete-workspace', form([['confirmName', ' Acme ']], {}, 'workspace'));
+    assert.deepStrictEqual(calls[0], { method: 'DELETE', url: base, body: { confirmName: 'Acme' } });
+    assert.strictEqual(global.location.assigned, '/');
+    delete global.location;
+    delete global.confirm;
 
     await ui.runAction('create-invitation', form([['role', 'admin']], {}, 'workspace'));
     assert.deepStrictEqual(ui.settingsState.once, { inviteUrl: 'https://s/invitations/tok' });

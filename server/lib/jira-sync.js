@@ -339,6 +339,31 @@ async function ensureWebhook(pool, { tenantId, atlassian, accessToken, cloudId, 
 }
 
 /**
+ * Removes the tenant's Jira webhook on Atlassian's side, before its connection (or the whole tenant) is deleted.
+ * Best effort: a revoked grant or an Atlassian error only means the webhook lingers until its 30 days run out, and
+ * its deliveries then match no tenant.
+ *
+ * @param {import('pg').Pool} pool
+ * @param {{ tenantId: string, atlassian: object, fetch?: typeof fetch }} input
+ * @returns {Promise<boolean>} whether a webhook was removed
+ */
+async function removeJiraWebhooks(pool, { tenantId, atlassian, fetch: fetchFn = fetch }) {
+    const conn = await withScope(pool, { tenantId }, async (client) => (
+        await client.query('SELECT webhook_ids FROM jira_connections WHERE tenant_id = $1 AND cloud_id IS NOT NULL', [tenantId])
+    ).rows[0]);
+    const ids = conn ? conn.webhook_ids.map(Number) : [];
+    if (!ids.length) return false;
+    try {
+        const { accessToken, cloudId } = await accessTokenFor(pool, { tenantId, atlassian, fetch: fetchFn });
+        await deleteWebhooks({ accessToken, cloudId, ids, fetch: fetchFn });
+        return true;
+    } catch (err) {
+        if (err instanceof AtlassianError || err instanceof JiraNotConnectedError) return false;
+        throw err;
+    }
+}
+
+/**
  * One pass over every tenant with a Jira connection. One failing tenant is logged and the pass moves on. `keys`
  * limits it to the tenants a webhook delivery names (lib/webhooks.js jiraSyncKeys(): `webhook:<id>` of the
  * connection's webhook, `cloud:<cloudId>` or `site:<url>`).
@@ -440,4 +465,4 @@ async function listPiIssues(pool, { tenantId, actorUserId, pi }) {
     });
 }
 
-module.exports = { WEBHOOK_RECONNECT, NOW_KEY, JiraBoardError, listBoards, setBoards, configureBoard, syncTenant, syncAllJira, readDashboardJira, listPiIssues };
+module.exports = { WEBHOOK_RECONNECT, removeJiraWebhooks, NOW_KEY, JiraBoardError, listBoards, setBoards, configureBoard, syncTenant, syncAllJira, readDashboardJira, listPiIssues };

@@ -97,6 +97,7 @@ place in this repo with third-party dependencies** (`pg`, `fastify`, `@fastify/c
 | `POST /auth/logout` | session | Deletes the session, clears the cookie. 204. |
 | `GET /me` | session | `{ user, tenants: [{ id, name, role }] }`. |
 | `POST /tenants` | session | Body `{ "name": "..." }`. Creates a tenant with the caller as admin. 201. |
+| `DELETE /tenants/:tenantId` | session + admin | Body `{ "confirmName": "<the tenant's name>" }` (trimmed, exact; else 400). Deletes the tenant and all its data -- every tenant table cascades from `tenants`; users stay. ShipScope's Jira webhook is removed on Atlassian's side first (best effort); the GitHub App stays installed on GitHub. 204; 403 for a member, 404 for an outsider. |
 | `GET /tenants/:tenantId/members` | session + member | Members with roles. 404 for a tenant you're not in, same as one that doesn't exist. |
 | `DELETE /tenants/:tenantId/members/:userId` | session + admin, or yourself | Removes a member or leaves. 409 for the last admin. 204. |
 | `POST /tenants/:tenantId/invitations` | session + admin | Body `{ "role": "member" \| "admin" }`. Returns `{ invitation: { id, role, expiresAt }, url }`; the URL is shown only here. 201. |
@@ -160,7 +161,7 @@ Jira (only when the `ATLASSIAN_*` variables and `TOKEN_ENCRYPTION_KEY` are set):
 | `PUT /tenants/:tenantId/jira/boards/:boardId` | session + admin | Body `{ "rhythm": "auto" \| "pi" \| "sprint" \| "release" \| "flow", "piTemplate": null \| "PI {pi} / Iteration {n}" }` (both required): how a selected board's work groups into increments. A template only goes with `pi`/`auto` and must contain `{pi}` once (else 400). A change drops the board's stored issues; the next sync takes them again in the new rhythm. `GET .../jira/boards` returns `rhythm`, `piTemplate` and `currentIncrement` for selected boards. |
 | `POST /tenants/:tenantId/jira/sync` | session + admin | Syncs now (the worker also does every pass). Returns `{ boards, issues, currentPi }`. |
 | `GET /tenants/:tenantId/jira/projects` | session + admin | The chosen site's projects `{ projects: [{ id, key, name }] }`; proves the connection works. 409 when not connected, no site is chosen, or the grant was revoked. |
-| `DELETE /tenants/:tenantId/jira` | session + admin | Forgets the connection and its token. 204, or 404. |
+| `DELETE /tenants/:tenantId/jira` | session + admin | Removes ShipScope's Jira webhook on Atlassian's side (best effort), then forgets the connection and its token. 204, or 404. |
 
 Feature flags:
 
@@ -222,6 +223,10 @@ not stripped or coerced).
   own scope, under the same advisory locks as the periodic syncs. Jira webhooks are registered by the worker per
   tenant with the `manage:jira-webhook` scope (filtered to the selected boards' projects, refreshed before
   Atlassian's 30-day expiry); a failure is shown in settings and never fails the sync.
+- **Deleting a workspace**: admins only, with the name typed back (checked before anything outside ShipScope is
+  touched, and again in the deleting transaction, which locks the tenant row). One `DELETE FROM tenants` removes every
+  row of it (all tenant tables cascade; `server/test/tenant-delete.test.js` checks each one is empty afterwards and
+  another tenant is untouched). Render's database backups still hold the data until they expire.
 - **Retention**: records older than the tenant's `deployment_retention_days` are deleted daily, except each
   repo/environment's latest deployment and latest successful one. `issue_deployments` ("issue X first reached
   ENV") is never trimmed. Untracking a repo deletes its deployments.
