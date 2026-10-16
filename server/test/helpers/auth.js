@@ -68,20 +68,45 @@ function fakeGitHub(usersByCode, github = {}) {
         }
         // Repo endpoints for the deployment sync: github.repos[fullName] = { deployments (newest first),
         // statuses: { [id]: [...] (newest first) }, commits: { [sha]: message }, compare(base, head) -> body,
-        // fail: HTTP status to answer everything with }.
+        // tags: [{ name, commit: { sha } }], releases: [{ tag_name }], files: { [sha]: { [path]: text } },
+        // treeOf: { [commitSha]: treeSha } (default `tree-<sha>`), trees: { [treeSha]: listing },
+        // fail: HTTP status to answer everything with }. Refs in commits/compare may be tag names.
         m = url.match(/^https:\/\/api\.github\.com\/repos\/([^/]+\/[^/]+)\/(.+)$/);
         if (m && github.repos?.[m[1]]) {
             assert.match(auth, /^Bearer inst-token-\d+$/, 'installation token');
             const repo = github.repos[m[1]];
             if (repo.fail) return json({ message: 'boom' }, repo.fail);
             const rest = m[2];
+            const shaOf = (ref) => (/^[0-9a-f]{40}$/.test(ref) ? ref : (repo.tags || []).find((t) => t.name === ref)?.commit.sha);
             if (rest.startsWith('deployments?')) return json(pageOf(repo.deployments, url));
+            if (rest.startsWith('tags?')) return json(pageOf(repo.tags || [], url));
+            if (rest.startsWith('releases?')) return json(pageOf(repo.releases || [], url));
             let sub = rest.match(/^deployments\/(\d+)\/statuses/);
             if (sub) return json((repo.statuses[sub[1]] || []).slice(0, 10));
-            sub = rest.match(/^commits\/([0-9a-f]+)$/);
-            if (sub) return json({ sha: sub[1], commit: { message: repo.commits?.[sub[1]] || '' } });
-            sub = rest.match(/^compare\/([0-9a-f]+)\.\.\.([0-9a-f]+)$/);
-            if (sub) return json(repo.compare(sub[1], sub[2]));
+            sub = rest.match(/^commits\/([^/?]+)$/);
+            if (sub) {
+                const commitSha = shaOf(decodeURIComponent(sub[1]));
+                if (!commitSha) return json({ message: 'No commit found' }, 422);
+                const tree = repo.treeOf?.[commitSha] || `tree-${commitSha}`;
+                return json({ sha: commitSha, commit: { message: repo.commits?.[commitSha] || '', tree: { sha: tree } } });
+            }
+            sub = rest.match(/^compare\/([^/?]+)$/);
+            if (sub) {
+                const [base, head] = sub[1].split('...').map(decodeURIComponent);
+                if (!shaOf(base) || !shaOf(head)) return json({ message: 'Not Found' }, 404);
+                return json(repo.compare(base, head));
+            }
+            sub = rest.match(/^contents\/([^?]+)\?ref=([0-9a-f]{40})$/);
+            if (sub) {
+                const text = repo.files?.[sub[2]]?.[decodeURIComponent(sub[1])];
+                if (text === undefined) return json({ message: 'Not Found' }, 404);
+                return json({ type: 'file', encoding: 'base64', content: Buffer.from(text).toString('base64') });
+            }
+            sub = rest.match(/^git\/trees\/([^/?]+)\?recursive=1$/);
+            if (sub) {
+                const listing = repo.trees?.[sub[1]];
+                return listing ? json(listing) : json({ message: 'Not Found' }, 404);
+            }
         }
         if (url.startsWith('https://api.github.com/installation/repositories')) {
             m = auth.match(/^Bearer inst-token-(\d+)$/);
