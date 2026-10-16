@@ -21,9 +21,14 @@ The SaaS-pivot backend scoped by `@context/foundation/prd.md`, deployed to Rende
   Jira issue keys from each deploy's commit range and rollback detection. A daily cleanup applies the tenant's
   retention (`lib/retention.js`).
 
-Not yet: version from releases/tags/`versionFile`, environment drift, the `manual` flag and display names
-(the file-based sync has them; every record keeps its sha so they can be added later), GitHub webhooks, Jira
-OAuth, the dashboard reading from this API.
+- **Dashboard** (`docs/`, served by the Web Service at `/t/<tenantId>/`): the existing page, whose
+  `app-data.js` recognizes that path and loads the tenant's data from `/api/tenants/<tenantId>/dashboard-data`
+  (same shapes as the file-based `data/*.json`) instead of static files.
+
+Not yet: version from releases/tags/`versionFile`, environment drift (so the dashboard's "in sync" tiles have
+nothing to flag yet), the `manual` flag and display names (the file-based sync has them; every record keeps its
+sha so they can be added later), flags and Jira data in the database (those dashboard panels are empty), GitHub
+webhooks, Jira OAuth.
 
 This directory is a separate dependency boundary from the repo root: its own `package.json` and the **only
 place in this repo with third-party dependencies** (`pg`, `fastify`, `@fastify/cookie` — see `@CLAUDE.md`'s
@@ -59,6 +64,15 @@ GitHub App routes (only when the `GITHUB_APP_*` variables are set):
 | `PUT /tenants/:tenantId/github/repos/:repoId` | session + admin | Body `{ "installationId": 123 }`. Tracks the repo if GitHub lists it for that installation. Idempotent. |
 | `DELETE /tenants/:tenantId/github/repos/:repoId` | session + admin | Stops tracking. 204, or 404. |
 | `DELETE /tenants/:tenantId/github/installations/:installationId` | session + admin | Unlinks the installation and its tracked repos (it stays installed on GitHub). 204, or 404. |
+
+Dashboard:
+
+| Route | Auth | What it does |
+|---|---|---|
+| `GET /` | — | Signed out: to sign-in. Signed in: to the first tenant's dashboard, or `/me` without a tenant. |
+| `GET /t/:tenantId/` | session + member (else sign-in and back) | The dashboard page (`docs/index.html`, minus its `data/*.json` preload hints). |
+| `GET /t/:tenantId/:asset` | — | `style.css`, `favicon.svg`, `app-*.js` only (the same public code GitHub Pages serves). |
+| `GET /api/tenants/:tenantId/dashboard-data` | session + member | Everything the page loads, in the `data/*.json` shapes: `deployments` (repo short name as `component`, short sha as `version`), `issueDeployments`, `componentsOrder` (tracked repos), `lastSyncedAt`; flags and Jira parts empty for now. |
 
 Deployments and settings:
 
@@ -110,6 +124,12 @@ not stripped or coerced).
 - **Retention**: records older than the tenant's `deployment_retention_days` are deleted daily, except each
   repo/environment's latest deployment and latest successful one. `issue_deployments` ("issue X first reached
   ENV") is never trimmed. Untracking a repo deletes its deployments.
+- **Dashboard files**: only an allowlist from `docs/` (`index.html`, `style.css`, `favicon.svg`, `app-*.js`) is
+  read at startup and served from memory -- `docs/data/`, `components.json` and `jira-spaces.json` are never
+  reachable, and no request path touches the filesystem. Responses carry `X-Frame-Options: DENY`,
+  `X-Content-Type-Options: nosniff` and `Referrer-Policy: same-origin`. In SaaS mode the page never falls back to
+  its built-in sample data (it would read as the tenant's own): a 401 goes through sign-in and back, any other
+  error shows an empty dashboard with an "Error" badge.
 - **Tenant isolation (RLS)**: every `memberships` query runs through `lib/scope.js`'s `withScope()`, which
   sets `app.current_tenant_id` / `app.current_user_id` with `set_config(..., true)` inside one transaction.
   Those settings end with the transaction, so a pooled connection can't carry a tenant into the next request.
@@ -153,7 +173,8 @@ not stripped or coerced).
      **private key** (the `.pem` file's contents) into `.env` as `GITHUB_APP_ID`, `GITHUB_APP_SLUG` and
      `GITHUB_APP_PRIVATE_KEY`. Without these three, sign-in still works and the GitHub routes are off.
 
-3. `npm run dev`, then open `http://localhost:3000/auth/github/login`. After GitHub you land on `/me`.
+3. `npm run dev`, then open `http://localhost:3000/`. After GitHub you land on `/me` until you have a tenant,
+   and on its dashboard (`/t/<tenantId>/`) afterwards.
    Create a tenant with e.g. `fetch('/tenants', { method: 'POST', headers: { 'content-type':
    'application/json' }, body: JSON.stringify({ name: 'Acme' }) })` from the browser console on that page.
 
@@ -164,7 +185,7 @@ Other commands: `npm start` (Web Service, env from the process), `npm run worker
 
 `npm test` runs this directory's `node:test` suite. Unit tests (mocked pool, mocked GitHub via an injected
 `fetch`, Fastify's `app.inject()` — no network, no credentials) always run. The real-Postgres tests
-(`migrate`, `tenants`, `rls`, `auth-flow`, `invitations`, `github`, `deployments`) are skipped unless `TEST_DATABASE_URL` is set:
+(`migrate`, `tenants`, `rls`, `auth-flow`, `invitations`, `github`, `deployments`, `dashboard`) are skipped unless `TEST_DATABASE_URL` is set:
 
 ```bash
 docker run -d --name shipscope-pg -e POSTGRES_PASSWORD=postgres -p 5432:5432 postgres:16-alpine
@@ -186,7 +207,9 @@ Declared as Render Blueprint services in `@render.yaml` at the repo root (`rootD
 Service and the Background Worker). The Web Service refuses to start without `GITHUB_APP_CLIENT_ID`,
 `GITHUB_APP_CLIENT_SECRET` and `PUBLIC_BASE_URL` (or with only some of `GITHUB_APP_ID`, `GITHUB_APP_SLUG`,
 `GITHUB_APP_PRIVATE_KEY`); set them in Render's environment settings (they're declared
-with `sync: false`, so Render asks for them and never reads them from the repo). Migrations are not run
+with `sync: false`, so Render asks for them and never reads them from the repo). The dashboard files are read from `../docs` (override with `DASHBOARD_DIR`); with `rootDir: server`, check
+after the first deploy that `/t/<tenantId>/` doesn't answer 503 (the log says "dashboard files not found" if
+Render's build doesn't include the repo's `docs/`). Migrations are not run
 automatically on deploy yet: run `npm run migrate` against the Render database after a deploy that adds one.
 See `@context/foundation/infrastructure.md`'s "Getting Started" and "Operational Story" sections for the full
 deploy/rollback/secrets workflow.

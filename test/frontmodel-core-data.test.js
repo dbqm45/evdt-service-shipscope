@@ -19,7 +19,7 @@ function stubElement() {
     return el;
 }
 
-function loadApp({ fetchImpl, storageThrows } = {}) {
+function loadApp({ fetchImpl, storageThrows, loc } = {}) {
     const boxes = {};
     const stored = {};
     class FakeDate extends Date {
@@ -27,7 +27,7 @@ function loadApp({ fetchImpl, storageThrows } = {}) {
         static now() { return NOW; }
     }
     const ctx = {
-        console, URLSearchParams, Math, Map, Set, Promise, Date: FakeDate, location: { search: '' },
+        console, URLSearchParams, Math, Map, Set, Promise, Date: FakeDate, location: loc || { search: '' },
         localStorage: { getItem: () => null, setItem(k, v) { if (storageThrows) throw new Error('quota'); stored[k] = v; } },
         fetch: fetchImpl || (() => Promise.reject(new Error('no network'))),
         document: { documentElement: stubElement(), getElementById: id => boxes[id] || (boxes[id] = stubElement()) },
@@ -264,4 +264,65 @@ test('loadJiraIssuesForPi: empty pi, fallback, unknown entry, ok, non-ok and net
     assert.equal((await run('loadJiraIssuesForPi("P3")')).length, 0);
     assert.equal((await run('loadJiraIssuesForPi("missing")')).length, 0);
     assert.ok(calls.includes('data/jira-issues/p1.json'));
+});
+
+// SaaS mode: the page served by the ShipScope server at /t/<tenantId>/ loads its data from the API.
+const TENANT = '0b0e4c3e-1d2f-4a5b-8c9d-0e1f2a3b4c5d';
+const apiLocation = (extra = {}) => ({ search: '', pathname: `/t/${TENANT}/`, assigned: [], assign(url) { this.assigned.push(url); }, ...extra });
+const jsonResponse = (body, status = 200) => Promise.resolve({ ok: status >= 200 && status < 300, status, json: () => Promise.resolve(body) });
+
+test('API mode: one request to the tenant API, live badge with the last sync time, missing keys defaulted', async () => {
+    const urls = [];
+    const fetchImpl = (url) => {
+        urls.push(url);
+        return jsonResponse({
+            deployments: [{ id: 'gh-1', component: 'web', environment: 'prod', status: 'success' }],
+            componentsOrder: [{ name: 'web' }],
+            lastSyncedAt: '2026-10-09T05:30:00Z',
+        });
+    };
+    const { boxes, run } = loadApp({ fetchImpl, loc: apiLocation() });
+    const out = JSON.parse(JSON.stringify(await run('loadData()')));
+
+    assert.deepEqual(urls, [`/api/tenants/${TENANT}/dashboard-data`], 'no data/*.json requests');
+    assert.equal(out.isFallback, false);
+    assert.equal(out.deployments.length, 1);
+    assert.deepEqual(out.flagsMeta, {});
+    assert.deepEqual(out.jiraIndex, { currentPi: null, pis: [] });
+    assert.deepEqual(out.summary, { components: {} });
+    assert.equal(boxes.statusBadgeLabel.textContent, 'Live');
+    assert.match(boxes.statusBadgeTime.textContent, /^synced \d\d:\d\d · source: ShipScope API$/);
+});
+
+test('API mode: never falls back to the sample data -- an error shows an empty dashboard with an error badge', async () => {
+    for (const fetchImpl of [() => jsonResponse({}, 500), () => Promise.reject(new Error('offline'))]) {
+        const { boxes, run } = loadApp({ fetchImpl, loc: apiLocation() });
+        const out = await run('loadData()');
+        assert.equal(out.isFallback, false);
+        assert.equal(out.deployments.length, 0, 'no sample deployments');
+        assert.equal(boxes.statusBadgeLabel.textContent, 'Error');
+        assert.ok(boxes.statusBadge.classList.contains('fallback'));
+        assert.match(boxes.statusBadge.title, /Could not load/);
+    }
+});
+
+test('API mode: signed out (401) goes through sign-in and back to this dashboard', async () => {
+    const loc = apiLocation();
+    const { run } = loadApp({ fetchImpl: () => jsonResponse({ error: 'Not signed in' }, 401), loc });
+    const pending = run('loadData()');
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    assert.deepEqual(loc.assigned, [`/auth/github/login?returnTo=${encodeURIComponent(`/t/${TENANT}/`)}`]);
+    let settled = false;
+    pending.then(() => { settled = true; });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    assert.equal(settled, false, 'nothing renders while the page navigates away');
+});
+
+test('outside /t/<uuid>/ (GitHub Pages, file server) the file-based loader is used, even for a /t/ path without a uuid', async () => {
+    const urls = [];
+    const fetchImpl = (url) => { urls.push(url); return Promise.reject(new Error('no network')); };
+    const { run } = loadApp({ fetchImpl, loc: { search: '', pathname: '/t/not-a-tenant/' } });
+    const out = await run('loadData()');
+    assert.equal(out.isFallback, true);
+    assert.ok(urls.includes('data/deployments.json'));
 });
