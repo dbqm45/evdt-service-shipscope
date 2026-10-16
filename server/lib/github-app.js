@@ -11,6 +11,8 @@ const API = 'https://api.github.com';
 const PER_PAGE = 100;
 /** Safety cap on pagination: 20 pages x 100 = 2000 repos/installations, far beyond a real tenant. */
 const MAX_PAGES = 20;
+/** Per request. Without it one stalled connection would block the worker indefinitely. */
+const REQUEST_TIMEOUT_MS = 30_000;
 
 class GitHubApiError extends Error {
     constructor(message, status) {
@@ -35,15 +37,21 @@ function createAppJwt({ appId, privateKey, now = Date.now() }) {
 }
 
 async function githubFetch(fetchFn, path, { token, method = 'GET' }) {
-    const res = await fetchFn(`${API}${path}`, {
-        method,
-        headers: {
-            accept: 'application/vnd.github+json',
-            authorization: `Bearer ${token}`,
-            'user-agent': 'shipscope',
-            'x-github-api-version': '2022-11-28',
-        },
-    });
+    let res;
+    try {
+        res = await fetchFn(`${API}${path}`, {
+            method,
+            signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+            headers: {
+                accept: 'application/vnd.github+json',
+                authorization: `Bearer ${token}`,
+                'user-agent': 'shipscope',
+                'x-github-api-version': '2022-11-28',
+            },
+        });
+    } catch (err) {
+        throw new GitHubApiError(`${method} ${path.split('?')[0]} failed: ${err.name === 'TimeoutError' ? 'timed out' : err.message}`, 0);
+    }
     if (!res.ok) throw new GitHubApiError(`${method} ${path.split('?')[0]} failed with HTTP ${res.status}`, res.status);
     return res.json();
 }
@@ -94,6 +102,31 @@ async function userCanAccessInstallation({ accessToken, installationId, fetch: f
 }
 
 /**
+ * A short-lived installation access token (about an hour on GitHub's side). Callers keep it in memory for
+ * the duration of one operation; it is never stored.
+ *
+ * @param {{ app: { appId: string, privateKey: import('crypto').KeyObject }, installationId: number, fetch?: typeof fetch }} input
+ * @returns {Promise<string>}
+ * @throws {GitHubApiError}
+ */
+async function createInstallationToken({ app, installationId, fetch: fetchFn = fetch }) {
+    const body = await githubFetch(fetchFn, `/app/installations/${installationId}/access_tokens`, { token: createAppJwt(app), method: 'POST' });
+    if (typeof body?.token !== 'string' || !body.token) throw new GitHubApiError('access token response has no token', 502);
+    return body.token;
+}
+
+/**
+ * GET an API path with an installation token, e.g. a repo's deployments.
+ *
+ * @param {{ token: string, path: string, fetch?: typeof fetch }} input
+ * @returns {Promise<any>} the parsed JSON body
+ * @throws {GitHubApiError}
+ */
+function githubGet({ token, path, fetch: fetchFn = fetch }) {
+    return githubFetch(fetchFn, path, { token });
+}
+
+/**
  * Repositories the installation was granted, read with a freshly minted installation token.
  *
  * @param {{ app: { appId: string, privateKey: import('crypto').KeyObject }, installationId: number, fetch?: typeof fetch }} input
@@ -101,17 +134,20 @@ async function userCanAccessInstallation({ accessToken, installationId, fetch: f
  * @throws {GitHubApiError}
  */
 async function listInstallationRepos({ app, installationId, fetch: fetchFn = fetch }) {
-    const tokenBody = await githubFetch(fetchFn, `/app/installations/${installationId}/access_tokens`, {
-        token: createAppJwt(app),
-        method: 'POST',
-    });
-    if (typeof tokenBody?.token !== 'string' || !tokenBody.token) throw new GitHubApiError('access token response has no token', 502);
-
-    const repos = await allPages(fetchFn, '/installation/repositories', tokenBody.token, (body) => body?.repositories);
+    const token = await createInstallationToken({ app, installationId, fetch: fetchFn });
+    const repos = await allPages(fetchFn, '/installation/repositories', token, (body) => body?.repositories);
     return repos.map((repo) => {
         if (!isId(repo?.id) || typeof repo.full_name !== 'string') throw new GitHubApiError('repository entry is missing id/full_name', 502);
         return { id: repo.id, fullName: repo.full_name, private: repo.private === true };
     });
 }
 
-module.exports = { createAppJwt, getInstallation, userCanAccessInstallation, listInstallationRepos, GitHubApiError };
+module.exports = {
+    createAppJwt,
+    createInstallationToken,
+    githubGet,
+    getInstallation,
+    userCanAccessInstallation,
+    listInstallationRepos,
+    GitHubApiError,
+};

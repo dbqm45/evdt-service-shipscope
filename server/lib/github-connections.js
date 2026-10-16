@@ -51,7 +51,7 @@ async function linkInstallation(pool, { tenantId, actorUserId, installation }) {
  *
  * @param {import('pg').Pool} pool
  * @param {{ tenantId: string, actorUserId: string }} input
- * @returns {Promise<{ installations: Array<{ installationId: number, accountLogin: string, accountType: string }>, repos: Array<{ repoId: number, fullName: string, installationId: number }> }>}
+ * @returns {Promise<{ installations: Array<{ installationId: number, accountLogin: string, accountType: string }>, repos: Array<{ repoId: number, fullName: string, installationId: number, lastSyncedAt: Date|null, lastSyncError: string|null }> }>}
  */
 async function listConnections(pool, { tenantId, actorUserId }) {
     return withScope(pool, { tenantId }, async (client) => {
@@ -61,12 +61,18 @@ async function listConnections(pool, { tenantId, actorUserId }) {
             [tenantId]
         );
         const { rows: repos } = await client.query(
-            'SELECT repo_id, full_name, installation_id FROM tracked_repos WHERE tenant_id = $1 ORDER BY full_name',
+            'SELECT repo_id, full_name, installation_id, last_synced_at, last_sync_error FROM tracked_repos WHERE tenant_id = $1 ORDER BY full_name',
             [tenantId]
         );
         return {
             installations: installations.map(toInstallation),
-            repos: repos.map((r) => ({ repoId: Number(r.repo_id), fullName: r.full_name, installationId: Number(r.installation_id) })),
+            repos: repos.map((r) => ({
+                repoId: Number(r.repo_id),
+                fullName: r.full_name,
+                installationId: Number(r.installation_id),
+                lastSyncedAt: r.last_synced_at,
+                lastSyncError: r.last_sync_error,
+            })),
         };
     });
 }

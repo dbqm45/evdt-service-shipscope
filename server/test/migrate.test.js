@@ -24,6 +24,8 @@ test('runMigrations: applies cleanly from empty and creates the expected tables'
     assert.ok(tableNames.includes('invitations'));
     assert.ok(tableNames.includes('github_installations'));
     assert.ok(tableNames.includes('tracked_repos'));
+    assert.ok(tableNames.includes('deployments'));
+    assert.ok(tableNames.includes('issue_deployments'));
     assert.ok(tableNames.includes('schema_migrations'));
 
     const { rows: migrationRows } = await pool.query('SELECT filename FROM schema_migrations ORDER BY filename');
@@ -32,6 +34,7 @@ test('runMigrations: applies cleanly from empty and creates the expected tables'
         '002_sessions_and_scoped_rls.sql',
         '003_invitations.sql',
         '004_github_connections.sql',
+        '005_deployments.sql',
     ]);
 });
 

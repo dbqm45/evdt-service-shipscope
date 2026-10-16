@@ -45,6 +45,13 @@ services:
           property: connectionString
       - key: NODE_ENV
         value: production
+      # Deployment sync (FR-005) runs as the GitHub App: same three values as the Web Service.
+      - key: GITHUB_APP_ID
+        sync: false
+      - key: GITHUB_APP_SLUG
+        sync: false
+      - key: GITHUB_APP_PRIVATE_KEY
+        sync: false
 
 databases:
   - name: shipscope-db
