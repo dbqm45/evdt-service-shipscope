@@ -124,7 +124,11 @@ undo newer ones); `lib/flags.js` folds sources of a kind into the dashboard's `b
 It deliberately does not port `scripts/lib/flag-ingest.js` (schemaVersion 1, the single-tenant contract). Jira is
 connected per tenant through Atlassian OAuth 2.0 (3LO) (FR-007, `lib/atlassian.js`, `lib/jira-connections.js`): only the
 refresh token is stored, AES-256-GCM-sealed with the tenant id as associated data (`lib/secret-box.js`, key
-`TOKEN_ENCRYPTION_KEY`); access tokens are minted per use under a row lock because Atlassian rotates refresh tokens. The dashboard is served by the Web Service at `/t/<tenantId>/` (an allowlist of
+`TOKEN_ENCRYPTION_KEY`); access tokens are minted per use under a row lock because Atlassian rotates refresh tokens. Issues (FR-008/FR-009,
+`lib/jira-sync.js`, pure rules in `lib/jira-model.js`) are scoped by the admin's chosen Scrum boards instead of the
+file-based sync's name heuristics (Team field, labels, board-name prefixes): an issue's sprint is the one whose id is on
+the board being synced. The worker fully re-syncs each board's current PI every pass (plus its issues' Epics), a board's
+first sync also takes the previous PI, older PIs stay as snapshots; a sprint not named after a PI is its own increment. The dashboard is served by the Web Service at `/t/<tenantId>/` (an allowlist of
 `docs/` files only, `lib/dashboard-assets.js`); there `docs/app-data.js`'s `API_TENANT_ID` switches `loadData()` to
 `/api/tenants/<tenantId>/dashboard-data` (`lib/dashboard-data.js`, the same `data/*.json` shapes), and never to the
 built-in `FALLBACK` sample data. Off that path (GitHub Pages, `file://`) nothing changed. Dependencies, all scoped to
@@ -132,7 +136,7 @@ built-in `FALLBACK` sample data. Off that path (GitHub Pages, `file://`) nothing
 Fastify was chosen for its built-in JSON-schema validation of request input; it runs with
 `removeAdditional: false, coerceTypes: false`, so unknown fields and wrong types are a 400, never silently
 fixed. **Every query on an RLS table (`memberships`, `invitations`, `github_installations`, `tracked_repos`,
-`deployments`, `issue_deployments`, `flag_sources`, `ingest_tokens`, `flags`, `flag_values`, `flag_value_history`, `jira_connections`) must go through `lib/scope.js`'s `withScope()`**, which
+`deployments`, `issue_deployments`, `flag_sources`, `ingest_tokens`, `flags`, `flag_values`, `flag_value_history`, `jira_connections`, `jira_boards`, `jira_pis`, `jira_issues`) must go through `lib/scope.js`'s `withScope()`**, which
 sets `app.current_tenant_id`/`app.current_user_id` with transaction-local `set_config(..., true)`; an unscoped
 read returns zero rows and an unscoped write is an RLS error (migration `002`). Run `npm install && npm test`
 inside `server/`; see `@server/README.md` for routes, the security model, local sign-in with a dev GitHub App,

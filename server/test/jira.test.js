@@ -70,63 +70,12 @@ const { buildApp } = require('../web');
 const { AUTH, fakeGitHub, signIn } = require('./helpers/auth');
 const { withScope } = require('../lib/scope');
 const { accessTokenFor, JiraNotConnectedError } = require('../lib/jira-connections');
+const { fakeAtlassian } = require('./helpers/atlassian');
 
 const USERS = { alice: { id: 880_000_001, login: 'alice' }, bob: { id: 880_000_002, login: 'bob' }, mallory: { id: 880_000_003, login: 'mallory' } };
 const ATLASSIAN = { clientId: 'atl-client', clientSecret: 'atl-secret', encryptionKey: KEY };
 const SITE_A = { id: 'cloud-a', url: 'https://acme.atlassian.net', name: 'acme', scopes: ['read:jira-work', 'read:jira-user'] };
 const SITE_B = { id: 'cloud-b', url: 'https://acme-labs.atlassian.net', name: 'acme-labs', scopes: ['read:jira-work'] };
-
-/**
- * Fake Atlassian: `codes` maps an authorization code to the sites its grant covers. Refresh tokens rotate:
- * each refresh invalidates the token used and issues a new one, like Atlassian's rotating refresh tokens.
- */
-function fakeAtlassian({ codes, offline = true }) {
-    const live = new Map(); // refresh token -> sites
-    const access = new Map(); // access token -> sites
-    let n = 0;
-    const issue = (sites) => {
-        n += 1;
-        const accessToken = `access-${n}`;
-        access.set(accessToken, sites);
-        const refreshToken = `refresh-${n}`;
-        live.set(refreshToken, sites);
-        return { access_token: accessToken, expires_in: 3600, token_type: 'Bearer', scope: 'read:jira-work offline_access', ...(offline ? { refresh_token: refreshToken } : {}) };
-    };
-    const calls = [];
-    const handler = async (url, init = {}) => {
-        calls.push(url);
-        if (url === 'https://auth.atlassian.com/oauth/token') {
-            const body = JSON.parse(init.body);
-            assert.deepStrictEqual([body.client_id, body.client_secret], ['atl-client', 'atl-secret']);
-            if (body.grant_type === 'authorization_code') {
-                assert.strictEqual(body.redirect_uri, 'http://localhost:3000/auth/atlassian/callback');
-                if (!codes[body.code]) return json({ error: 'invalid_grant' }, 403);
-                const sites = codes[body.code];
-                delete codes[body.code]; // single use
-                return json(issue(sites));
-            }
-            if (body.grant_type === 'refresh_token') {
-                const sites = live.get(body.refresh_token);
-                if (!sites) return json({ error: 'invalid_grant' }, 403);
-                live.delete(body.refresh_token);
-                return json(issue(sites));
-            }
-        }
-        const token = (init.headers?.authorization || '').replace('Bearer ', '');
-        if (url === 'https://api.atlassian.com/oauth/token/accessible-resources') {
-            return access.has(token) ? json(access.get(token)) : json({}, 401);
-        }
-        const m = url.match(/^https:\/\/api\.atlassian\.com\/ex\/jira\/([^/]+)\/rest\/api\/3\/project\/search\?startAt=(\d+)/);
-        if (m) {
-            if (!access.has(token) || !access.get(token).some((s) => s.id === m[1])) return json({}, 401);
-            const all = [{ id: '1', key: 'ABC', name: 'Alpha' }, { id: '2', key: 'DEF', name: 'Delta' }, { id: '3', key: 'GHI', name: 'Gamma' }];
-            const start = Number(m[2]);
-            return json({ startAt: start, values: all.slice(start, start + 2), isLast: start + 2 >= all.length });
-        }
-        throw new Error(`unexpected fetch ${url}`);
-    };
-    return { handler, calls, revokeAll: () => live.clear() };
-}
 
 async function setup(t, { codes = {}, offline } = {}) {
     const { pool, teardown } = await createTestDb();

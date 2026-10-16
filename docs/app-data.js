@@ -547,6 +547,11 @@ async function loadJiraIssuesForPi(pi){
 
     if (!entry) return [];
 
+    if (API_TENANT_ID) {
+        return fetch(`/api/tenants/${API_TENANT_ID}/jira-issues?pi=${encodeURIComponent(pi)}`, { credentials: 'same-origin' })
+            .then(r => r.ok ? r.json() : []).catch(() => []);
+    }
+
     return fetch(`data/jira-issues/${entry.file}`).then(r => r.ok ? r.json() : []).catch(() => []);
 }
 

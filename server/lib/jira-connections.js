@@ -37,6 +37,7 @@ async function saveConnection(pool, { tenantId, actorUserId, refreshToken, scope
                  site_name = EXCLUDED.site_name, connected_by = EXCLUDED.connected_by, connected_at = now(), last_error = NULL`,
             [tenantId, seal(encryptionKey, refreshToken, tenantId), scopes, JSON.stringify(sites), site?.cloudId ?? null, site?.url ?? null, site?.name ?? null, actorUserId]
         );
+        if (previous && previous.cloud_id !== (site?.cloudId ?? null)) await forgetSiteData(client, tenantId);
         return { siteChosen: Boolean(site) };
     });
 }
@@ -46,19 +47,22 @@ async function saveConnection(pool, { tenantId, actorUserId, refreshToken, scope
  *
  * @param {import('pg').Pool} pool
  * @param {{ tenantId: string, actorUserId: string }} input
- * @returns {Promise<{ connected: false }|{ connected: true, site: { cloudId: string, url: string, name: string }|null, sites?: object[], connectedAt: Date, lastError: string|null }>}
+ * @returns {Promise<{ connected: false }|{ connected: true, site: { cloudId: string, url: string, name: string }|null, sites?: object[], connectedAt: Date, lastError: string|null, currentPi: string|null, lastSyncedAt: Date|null }>}
  * @throws {TenantNotFoundError}
  */
 async function getConnection(pool, { tenantId, actorUserId }) {
     return withScope(pool, { tenantId }, async (client) => {
         if (!(await roleOf(client, { tenantId, userId: actorUserId }))) throw new TenantNotFoundError('Tenant not found');
         const { rows: [row] } = await client.query(
-            'SELECT available_sites, cloud_id, site_url, site_name, connected_at, last_error FROM jira_connections WHERE tenant_id = $1',
+            'SELECT available_sites, cloud_id, site_url, site_name, connected_at, last_error, current_pi, last_synced_at FROM jira_connections WHERE tenant_id = $1',
             [tenantId]
         );
         if (!row) return { connected: false };
         const site = row.cloud_id ? { cloudId: row.cloud_id, url: row.site_url, name: row.site_name } : null;
-        return { connected: true, site, ...(site ? {} : { sites: row.available_sites }), connectedAt: row.connected_at, lastError: row.last_error };
+        return {
+            connected: true, site, ...(site ? {} : { sites: row.available_sites }), connectedAt: row.connected_at, lastError: row.last_error,
+            currentPi: row.current_pi, lastSyncedAt: row.last_synced_at,
+        };
     });
 }
 
@@ -77,9 +81,18 @@ async function selectSite(pool, { tenantId, actorUserId, cloudId }) {
         if (!row) throw new JiraNotConnectedError('Jira is not connected');
         const site = row.available_sites.find((s) => s.cloudId === cloudId);
         if (!site) throw new JiraSiteError('That Jira site is not one this connection covers');
+        const { rows: [before] } = await client.query('SELECT cloud_id FROM jira_connections WHERE tenant_id = $1', [tenantId]);
         await client.query('UPDATE jira_connections SET cloud_id = $2, site_url = $3, site_name = $4 WHERE tenant_id = $1', [tenantId, site.cloudId, site.url, site.name]);
+        if (before.cloud_id !== site.cloudId) await forgetSiteData(client, tenantId);
         return site;
     });
+}
+
+/** Board ids and synced issues belong to one site: switching sites starts over (migration 010). */
+async function forgetSiteData(client, tenantId) {
+    await client.query('DELETE FROM jira_boards WHERE tenant_id = $1', [tenantId]);
+    await client.query('DELETE FROM jira_pis WHERE tenant_id = $1', [tenantId]); // and, by cascade, their issues
+    await client.query('UPDATE jira_connections SET current_pi = NULL, last_synced_at = NULL WHERE tenant_id = $1', [tenantId]);
 }
 
 /**

@@ -55,8 +55,15 @@ Each deploy also records whether its GitHub Actions run was started by hand (`ma
   access tokens are minted per use under a row lock, since Atlassian rotates refresh tokens. One Jira site per
   tenant (an admin picks it when the grant covers several). A revoked or expired grant shows up as `lastError`.
 
-Not yet: choosing Jira projects/boards and syncing issues (FR-008/FR-009; the dashboard's Jira panels are empty),
-GitHub webhooks.
+- **Jira issues** (FR-008/FR-009, `lib/jira-sync.js` + `lib/jira-model.js`): an admin picks Scrum boards; a board's
+  sprints define the PIs (`Sparks 27.3.2` -> `PI-27.3`; a team that doesn't name sprints after a PI gets each sprint
+  as its increment) and scope the sync to its team (only issues in that board's sprints). Each worker pass fully
+  re-syncs every board's current PI (plus the Epics its issues belong to) and replaces what was stored for it; a
+  board's first sync also takes the previous PI; earlier PIs stay as the snapshot taken while they were current
+  (the file-based per-PI shard model). The dashboard reads the index from `dashboard-data` and one PI's issues from
+  `/api/tenants/:id/jira-issues`.
+
+Not yet: GitHub webhooks.
 
 This directory is a separate dependency boundary from the repo root: its own `package.json` and the **only
 place in this repo with third-party dependencies** (`pg`, `fastify`, `@fastify/cookie` — see `@CLAUDE.md`'s
@@ -101,7 +108,8 @@ Dashboard:
 | `GET /` | — | Signed out: to sign-in. Signed in: to the first tenant's dashboard, or `/me` without a tenant. |
 | `GET /t/:tenantId/` | session + member (else sign-in and back) | The dashboard page (`docs/index.html`, minus its `data/*.json` preload hints). |
 | `GET /t/:tenantId/:asset` | — | `style.css`, `favicon.svg`, `app-*.js` only (the same public code GitHub Pages serves). |
-| `GET /api/tenants/:tenantId/dashboard-data` | session + member | Everything the page loads, in the `data/*.json` shapes: `deployments` (repo short name as `component`; `version` is the resolved release/tag/version-file/message label, else the short sha; `driftBehind` on each environment's latest successful deploy), `issueDeployments`, `componentsOrder` (tracked repos), `lastSyncedAt`, `flagsMeta`/`flagStates`/`flagStateHistory` (flags some source still reports; each value also carries `state`, `rollout` and `sourceName`); Jira parts empty for now. |
+| `GET /api/tenants/:tenantId/jira-issues?pi=PI-27.3` | session + member | One PI's issues (what a `data/jira-issues/<PI>.json` shard holds). |
+| `GET /api/tenants/:tenantId/dashboard-data` | session + member | Everything the page loads, in the `data/*.json` shapes: `deployments` (repo short name as `component`; `version` is the resolved release/tag/version-file/message label, else the short sha; `driftBehind` on each environment's latest successful deploy), `issueDeployments`, `componentsOrder` (tracked repos), `lastSyncedAt`, `flagsMeta`/`flagStates`/`flagStateHistory` (flags some source still reports; each value also carries `state`, `rollout` and `sourceName`); `jiraIndex` (current PI and every synced PI with its sprints) and `issueStatusIndex` (per issue key, its newest PI). |
 
 Deployments and settings:
 
@@ -118,7 +126,10 @@ Jira (only when the `ATLASSIAN_*` variables and `TOKEN_ENCRYPTION_KEY` are set):
 | `GET /tenants/:tenantId/jira/connect` | session + admin | Redirects to Atlassian's consent screen (state cookie naming the tenant). |
 | `GET /auth/atlassian/callback` | session + admin | The app's callback URL. Checks the state, exchanges the code, keeps the Jira sites the grant can read; ends on `/tenants/:tenantId/jira`. 400 for a bad state, declined consent or no Jira site; 502 when Atlassian rejects the code or grants no offline access. |
 | `GET /tenants/:tenantId/jira` | session + member | `{ connected: false }` or `{ connected: true, site: { cloudId, url, name } \| null, sites?, connectedAt, lastError }` (`sites` only while none is chosen). Never a token. |
-| `PUT /tenants/:tenantId/jira/site` | session + admin | Body `{ "cloudId": "..." }`, one of the sites the grant covers. |
+| `PUT /tenants/:tenantId/jira/site` | session + admin | Body `{ "cloudId": "..." }`, one of the sites the grant covers. Choosing another site drops the chosen boards and synced issues (board ids belong to one site). |
+| `GET /tenants/:tenantId/jira/boards` | session + admin | The site's Scrum boards `{ boards: [{ boardId, name, projectKey, projectName, selected }] }` (kanban boards have no sprints, so no PI). |
+| `PUT /tenants/:tenantId/jira/boards` | session + admin | Body `{ "boardIds": [10, 11] }` (at most 50): the boards to sync, replacing the selection; each must be a Scrum board of the site (else 400). Issues of boards no longer selected are removed. |
+| `POST /tenants/:tenantId/jira/sync` | session + admin | Syncs now (the worker also does every pass). Returns `{ boards, issues, currentPi }`. |
 | `GET /tenants/:tenantId/jira/projects` | session + admin | The chosen site's projects `{ projects: [{ id, key, name }] }`; proves the connection works. 409 when not connected, no site is chosen, or the grant was revoked. |
 | `DELETE /tenants/:tenantId/jira` | session + admin | Forgets the connection and its token. 204, or 404. |
 
@@ -190,7 +201,8 @@ not stripped or coerced).
   invitation whose token hash is set as `app.invite_token_hash` (how a not-yet-member reads the link).
   `github_installations` and `tracked_repos` (migration `004`), `deployments` and `issue_deployments`
   (migration `005`), `flag_sources`, `ingest_tokens`, `flags`, `flag_values` and `flag_value_history` (migration
-  `008`) and `jira_connections` (migration `009`) are tenant-scoped the same way. An ingest request carries no session: like an invitation, it can read
+  `008`), `jira_connections` (migration `009`), `jira_boards`, `jira_pis` and `jira_issues` (migration `010`) are
+  tenant-scoped the same way. An ingest request carries no session: like an invitation, it can read
   exactly the one `ingest_tokens` row whose hash it holds (`app.ingest_token_hash`), then works under that row's
   tenant, one ingest per tenant at a time (a transaction advisory lock).
   An unscoped query fails closed: zero rows, or an RLS error for a write.

@@ -1,11 +1,12 @@
 const { withScope } = require('./scope');
 const { roleOf, TenantNotFoundError } = require('./tenants');
 const { readDashboardFlags } = require('./flags');
+const { readDashboardJira } = require('./jira-sync');
 
 /**
  * Everything the dashboard (docs/app-*.js) loads, for one tenant, in the exact shapes of the file-based
  * data/*.json it reads on GitHub Pages -- so the views and their tests stay unchanged and only
- * app-data.js's loader differs. Parts that have no database source yet (Jira) come back empty;
+ * app-data.js's loader differs. Jira issues come per PI from GET /api/tenants/:id/jira-issues (loadJiraIssuesForPi);
  * the views already handle that (they render "no data" states, the same as before a first sync).
  */
 
@@ -53,7 +54,7 @@ function shortRef(ref) {
 /**
  * @param {import('pg').Pool} pool
  * @param {{ tenantId: string, actorUserId: string }} input
- * @returns {Promise<{ deployments: object[], flagsMeta: object, flagStates: object, jiraIndex: { currentPi: null, pis: [] },
+ * @returns {Promise<{ deployments: object[], flagsMeta: object, flagStates: object, jiraIndex: { currentPi: string|null, pis: object[] },
  *   flagStateHistory: [], componentsOrder: object[], issueStatusIndex: object, issueDeployments: object,
  *   summary: { components: object }, lastSyncedAt: string|null }>}
  * @throws {TenantNotFoundError} the user isn't a member
@@ -98,6 +99,7 @@ async function buildDashboardData(pool, { tenantId, actorUserId }) {
             return record;
         });
 
+        const { jiraIndex, issueStatusIndex } = await readDashboardJira(client, { tenantId });
         const { flagsMeta, flagStates, flagStateHistory } = await readDashboardFlags(client, {
             tenantId, componentOf: (repoId) => names.get(repoId),
         });
@@ -108,8 +110,8 @@ async function buildDashboardData(pool, { tenantId, actorUserId }) {
             flagsMeta,
             flagStates,
             flagStateHistory,
-            jiraIndex: { currentPi: null, pis: [] },
-            issueStatusIndex: {},
+            jiraIndex,
+            issueStatusIndex,
             issueDeployments,
             summary: { components: {} },
             componentsOrder: repos.map((r) => ({
