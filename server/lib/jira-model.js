@@ -1,7 +1,7 @@
 /**
  * Pure Jira rules for the server sync (FR-009): PIs from sprint names, the current sprint, and one raw Jira issue
- * mapped to the dashboard's issue shape (data/jira-issues/*.json). Ported in spirit from scripts/lib/jira-pi.js and
- * jira-issues.js, but scoped by board instead of by names: an issue's sprint is the one whose id belongs to the
+ * mapped to the dashboard's issue shape (data/jira-issues/*.json). Ported in spirit from the file-based sync's
+ * jira-pi.js and jira-issues.js, but scoped by board instead of by names: an issue's sprint is the one whose id belongs to the
  * board being synced, so the file-based Team-field and label heuristics are not needed.
  */
 
@@ -160,7 +160,7 @@ function compareNumbers(a, b) {
     return 0;
 }
 
-/** Descending by every embedded number, left to right ("PI-27.3" before "PI-27.2"); same as comparePiDesc in scripts/. */
+/** Descending by every embedded number, left to right ("PI-27.3" before "PI-27.2"); same as the file-based sync's comparePiDesc. */
 function comparePiDesc(a, b) {
     return compareNumbers(b, a) || String(a).localeCompare(String(b));
 }

@@ -1,8 +1,8 @@
 // Pure helpers for comparing two git trees (the listing GitHub returns from
 // GET /git/trees/{sha}?recursive=1) — used by lib/env-drift.js to answer "does the code of two environments
-// actually differ", independent of how many commits separate them. A copy of scripts/lib/tree-diff.js
-// (server/ deploys alone and can't require from scripts/); a fix to one belongs in both. Without the
-// file-based parseIgnorePaths(): here the patterns come validated from tracked_repos.drift_ignore_paths.
+// actually differ", independent of how many commits separate them. Ported from the file-based sync's
+// tree-diff (now only in the original circlek-global repository); the patterns come validated from
+// tracked_repos.drift_ignore_paths.
 
 /** Max changed paths kept on a drift record (and so shown in the modal); the full count is always kept. */
 const MAX_DIFF_PATHS = 20;

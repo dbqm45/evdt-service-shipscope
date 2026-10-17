@@ -1,9 +1,8 @@
 /**
  * Pure deployment logic for FR-005 (ingesting GitHub deployments of tracked repos). Ported from the
- * file-based sync's scripts/lib/deployment-records.js -- server/ deploys on its own (rootDir: server), so it
- * can't require from scripts/. The rules and their reasons are the same; see that file and CLAUDE.md's
- * "Deployments" section for the incidents behind each one. Differences: nothing logs (skips are returned),
- * and there is no file trimming here (retention lives in lib/retention.js).
+ * file-based sync's deployment-records.js (now only in the original circlek-global repository); the rules and
+ * their reasons are described in CLAUDE.md's "Deployments" section. Differences: nothing logs (skips are
+ * returned), and there is no file trimming here (retention lives in lib/retention.js).
  */
 
 /** Only test/qa/prod are tracked. Pre-production is checked first so "preprod" never counts as prod. */

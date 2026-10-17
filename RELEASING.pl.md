@@ -59,9 +59,8 @@ podejmie.
 
 Publiczne API to tu to, na czym polegają użytkownicy i integracje: trasy HTTP `server/` (ścieżki, metody, pola
 żądań i odpowiedzi, kody statusu, cookies), jego zmienne środowiskowe, schemat bazy widziany przez migracje,
-formaty `docs/data/*.json` czytane przez dashboard oraz reużywalne workflowy wołane z repo aplikacji
-(`check-flags.yml`, `notify-deployment.yml`). Szczegóły wewnętrzne (układ kodu, treść logów)
-się nie liczą.
+oraz kontrakt przyjmowania flag (`POST /api/flags/ingest`, `schemaVersion: 2`). Szczegóły wewnętrzne (układ
+kodu, treść logów) się nie liczą.
 
 ## Jak podbijana jest wersja (automatycznie)
 

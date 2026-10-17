@@ -4,7 +4,7 @@
 
 > **Status: niezrobione, niezdecydowane.** Pomysły z dyskusji wraz z tym, co ustalono przy ich ocenie. Każdy
 > to punkt wyjścia do decyzji, nie plan. Dług techniczny jest w [TODO.md](TODO.md). Sprawdzone z kodem
-> 2026-10-16.
+> 2026-10-17.
 
 ## Widok produktowy
 
@@ -22,9 +22,6 @@ Jirze nie zawsze jest wypełnione.
 - **W serwerze to już tanie:** każde zapisane zadanie ma `board_id` tablicy, przez którą zostało
   zsynchronizowane (`jira_issues.board_id`), a tablica to zespół. Brakuje nazwy tablicy przy zadaniu w danych
   dashboardu (`listPiIssues()` zwraca tylko `data`) i filtra w `docs/app-product.js`.
-- **W synchronizacji plikowej to drogie:** `sync-jira.js` łączy tablice przestrzeni w jedno JQL i nie zapisuje,
-  która tablica dopasowała zadanie; tablice w `docs/jira-spaces.json` nie mają etykiety zespołu. Warto tylko,
-  jeśli ścieżka plikowa zostaje.
 - Otwarte: czy dashboard służy całemu ART/PM (zespół jako filtr z etykietą przy wierszu), czy zespołowi/PO
   (domyślnie przefiltrowany do jednego zespołu)? Zespół → Epik → zadania jako drugi poziom grupowania czy
   płaski filtr?
@@ -51,8 +48,8 @@ przed budową sprawdzić limity Rendera.
 
 ## Ślad audytowy zmian
 
-W modelu plikowym każda zmiana danych to commit, więc `git log` na `live` jest darmowym dziennikiem (to z niego
-korzysta `backfill-flag-state-history.js`). Serwer ma historię tylko dla wartości flag (`flag_value_history`);
+W pierwotnym modelu plikowym każda zmiana danych była commitem, więc `git log` był darmowym dziennikiem. Serwer ma
+historię tylko dla wartości flag (`flag_value_history`);
 zmiany ustawień (śledzone repo, tablice, role, powiązania flag, usunięcie) nie zostawiają śladu, kto co zrobił.
 Domknęłaby to mała tabela `audit_events` zapisywana przy każdej akcji admina.
 

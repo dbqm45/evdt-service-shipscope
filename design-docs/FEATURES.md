@@ -4,7 +4,7 @@
 
 > **Status: not implemented, not decided.** Ideas that came up in discussion, with what was found while
 > assessing them. Each is a starting point for a decision, not a plan. Technical debt lives in
-> [TODO.md](TODO.md). Checked against the code on 2026-10-16.
+> [TODO.md](TODO.md). Checked against the code on 2026-10-17.
 
 ## Product view
 
@@ -21,9 +21,6 @@ Many Agile Teams, mostly one board each; Epics can span teams; Jira's `Team` fie
 - **In the server this is now cheap:** every stored issue already has the `board_id` it was synced through
   (`jira_issues.board_id`), and a board is a team. Missing: put the board's name on each issue in the dashboard
   data (`listPiIssues()` returns `data` only) and add the filter in `docs/app-product.js`.
-- **In the file-based sync it is expensive:** `sync-jira.js` merges a space's boards into one JQL and doesn't
-  record which board matched an issue; `docs/jira-spaces.json` boards have no team label. Only worth doing there
-  if the file-based path stays.
 - Open: is the dashboard used ART/PM-wide (Team is a filter with a per-row tag) or per team/PO (filtered to one
   team by default)? Team → Epic → issues as a second grouping level, or a flat filter?
 
@@ -48,8 +45,8 @@ Render's limits before building.
 
 ## Audit trail of changes
 
-In the file-based model every data change is a git commit, so `git log` on `live` is a free audit log (it is what
-`backfill-flag-state-history.js` mines). The server has history only for flag values (`flag_value_history`);
+In the original file-based model every data change was a git commit, so `git log` was a free audit log. The server
+has history only for flag values (`flag_value_history`);
 settings changes (repos tracked, boards, roles, flag links, deletion) leave no trace of who did what. A small
 `audit_events` table written next to each admin action would close that.
 

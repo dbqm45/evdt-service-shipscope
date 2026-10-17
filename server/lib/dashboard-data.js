@@ -23,7 +23,7 @@ function componentNames(repos) {
     }));
 }
 
-/** One deployments row as a data/deployments.json record (scripts/lib/deployment-records.js buildRecord()). */
+/** One deployments row as a data/deployments.json record (the file-based sync's buildRecord()). */
 function toLegacyRecord(row, component) {
     return {
         id: `gh-${row.deployment_id}`,

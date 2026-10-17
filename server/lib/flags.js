@@ -11,7 +11,7 @@ const {
  * Flags missing from a full-state message are marked removed; a value older than the stored one is ignored; every
  * actual change goes to history. Values are off/on/partial (with an optional rollout percentage).
  *
- * The file-based scripts/ ingest (scripts/lib/flag-ingest.js, schemaVersion 1) is a different, older contract for
+ * The file-based sync's ingest (flag-ingest.js, schemaVersion 1) is a different, older contract for
  * the single-tenant setup; this one replaces it for the server and is not a port of it.
  */
 

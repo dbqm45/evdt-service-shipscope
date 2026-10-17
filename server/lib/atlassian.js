@@ -288,7 +288,7 @@ async function fetchFlagFieldCandidates({ accessToken, cloudId, fetch: fetchFn =
 
 /**
  * The ids of the custom fields the issue mapping reads. Sprint and Epic Link by their fixed schema type; Flagged
- * by name (it has no dedicated type) -- the same lookup as the file-based scripts/lib/jira-issues.js.
+ * by name (it has no dedicated type) -- the same lookup as the file-based sync's jira-issues.js.
  *
  * @param {{ accessToken: string, cloudId: string, fetch?: typeof fetch }} input
  * @returns {Promise<{ sprintFieldId: string|null, epicLinkFieldId: string|null, flaggedFieldId: string|null }>}

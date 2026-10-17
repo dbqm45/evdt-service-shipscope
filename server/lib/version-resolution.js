@@ -1,7 +1,7 @@
 const { githubGet, GitHubApiError } = require('./github-app');
 
 /**
- * Which version a deployment shipped, ported from scripts/sync-github-deployments.js (see CLAUDE.md,
+ * Which version a deployment shipped, ported from the file-based sync (see CLAUDE.md,
  * "Deployments" -> `version`). Priority, most authoritative first: a GitHub Release on that exact sha, a git
  * tag on it, the repo's version file (`version=<ref>` at the deployed commit), a version-like string in the
  * commit message, else nothing (the dashboard then shows the short sha).
