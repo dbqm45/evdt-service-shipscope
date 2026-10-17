@@ -16,6 +16,8 @@ const SERVER_DIR = path.join(__dirname, '..');
 const ENV_FILE = path.join(SERVER_DIR, '.env');
 const ENV_EXAMPLE = path.join(SERVER_DIR, '.env.example');
 const PG_CONTAINER = 'shipscope-dev-pg';
+// The container the earlier manual setup (server/README.md before `npm run dev`) told people to create.
+const LEGACY_PG_CONTAINER = 'shipscope-pg';
 const PG_VOLUME = 'shipscope-dev-pg';
 const PG_IMAGE = 'postgres:16-alpine';
 const DEFAULT_PG_PORT = 54329;
@@ -183,20 +185,64 @@ function ensureDockerPostgres(port) {
     if (res.status !== 0) throw new DevError(`docker run ${PG_IMAGE} failed (is port ${port} free? change the port in DATABASE_URL in server/.env)`);
 }
 
-async function waitForPostgres(url, seconds = 60) {
+const redact = (url) => url.replace(/:[^:@/]*@/, ':***@');
+
+/** One connection attempt; resolves to whether the database answered. */
+async function canConnect(url) {
     const { Client } = require('pg');
+    const client = new Client({ connectionString: url, connectionTimeoutMillis: 3000 });
+    try {
+        await client.connect();
+        return true;
+    } catch {
+        return false;
+    } finally {
+        await client.end().catch(() => {});
+    }
+}
+
+async function waitForPostgres(url, seconds = 60, hint = '') {
     for (let i = 0; i < seconds; i++) {
-        const client = new Client({ connectionString: url });
-        try {
-            await client.connect();
-            await client.end();
-            return;
-        } catch {
-            await client.end().catch(() => {});
-            await new Promise((r) => setTimeout(r, 1000));
+        if (await canConnect(url)) return;
+        await new Promise((r) => setTimeout(r, 1000));
+    }
+    throw new DevError(`Postgres did not answer at ${redact(url)} within ${seconds}s.${hint}`);
+}
+
+/**
+ * A DATABASE_URL this script doesn't manage (e.g. from the earlier manual setup). When it doesn't answer and the old
+ * setup's stopped container exists, start it; otherwise say how to switch to the database `npm run dev` manages.
+ */
+async function ensureOtherDatabase(url) {
+    const hint = '\n  Start that database, or let `npm run dev` run its own in Docker: delete the DATABASE_URL line from server/.env.'
+        + '\n  (That gives a new, empty database; workspaces created in the old one stay there.)';
+    if (!(await canConnect(url))) {
+        let host = '';
+        try { host = new URL(url).hostname; } catch { /* reported by the wait below */ }
+        const local = ['localhost', '127.0.0.1'].includes(host);
+        const dockerUp = local && docker(['info', '--format', '{{.ServerVersion}}']).status === 0;
+        const legacy = dockerUp ? docker(['ps', '-a', '--filter', `name=^/${LEGACY_PG_CONTAINER}$`, '--format', '{{.State}}']).stdout.trim() : '';
+        if (legacy && legacy !== 'running') {
+            step(`Starting the Postgres container ${LEGACY_PG_CONTAINER} (from the earlier setup)`);
+            docker(['start', LEGACY_PG_CONTAINER], { stdio: 'inherit' });
+        } else if (!legacy) {
+            throw new DevError(`Postgres does not answer at ${redact(url)} (DATABASE_URL in server/.env).${hint}`);
         }
     }
-    throw new DevError(`Postgres did not answer at ${url.replace(/:[^:@/]*@/, ':***@')} within ${seconds}s`);
+    await waitForPostgres(url, 30, hint);
+
+    const { Client } = require('pg');
+    const client = new Client({ connectionString: url });
+    await client.connect();
+    try {
+        const { rows } = await client.query('SELECT rolsuper FROM pg_roles WHERE rolname = current_user');
+        if (rows[0] && rows[0].rolsuper) {
+            console.log('  Note: this database user is a superuser, so Row-Level Security is not enforced as it is on Render.'
+                + '\n  Delete the DATABASE_URL line from server/.env to switch to the database `npm run dev` manages (a new, empty one).');
+        }
+    } finally {
+        await client.end();
+    }
 }
 
 /** The app's own non-superuser role and database, as on Render: a superuser would bypass Row-Level Security. */
@@ -321,11 +367,11 @@ async function main() {
     if (pgPort) {
         ensureDockerPostgres(pgPort);
         step('Waiting for Postgres');
-        await waitForPostgres(adminDatabaseUrl(pgPort));
+        await waitForPostgres(adminDatabaseUrl(pgPort), 60);
         await ensureDatabase(pgPort);
     } else {
         step('Using DATABASE_URL from server/.env');
-        await waitForPostgres(fileEnv.DATABASE_URL, 10);
+        await ensureOtherDatabase(fileEnv.DATABASE_URL);
     }
     fileEnv = parseEnvFile(readEnvFile());
 
@@ -378,7 +424,9 @@ async function main() {
     await waitForHealth(baseUrl, children[0]);
     console.log(`\n  ${bold('ShipScope is running:')}  ${bold(baseUrl + '/')}`);
     console.log('\n  Sign in with GitHub, create a workspace, then follow its Getting started checklist.');
-    console.log(`  Ctrl+C stops ShipScope; the database keeps running (docker stop ${PG_CONTAINER} to stop it).\n`);
+    console.log(pgPort
+        ? `  Ctrl+C stops ShipScope; the database keeps running (docker stop ${PG_CONTAINER} to stop it).\n`
+        : '  Ctrl+C stops ShipScope.\n');
 }
 
 if (require.main === module) {
