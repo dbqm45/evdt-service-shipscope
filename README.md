@@ -85,6 +85,6 @@ not an off-the-shelf SaaS product.
 ## See also
 
 - [FAQ.md](FAQ.md) — plain-language answers to "how is this specific number/badge calculated?"
-- [ONBOARDING.md](ONBOARDING.md) — checklist for making a new component show up in ShipScope.
+- [ONBOARDING.md](ONBOARDING.md) — setting up a workspace on the ShipScope server, or adding a component to the file-based sync.
 - [CLAUDE.md](CLAUDE.md) — full technical reference (scripts, workflows, data model, `main`/`live` split).
 - [CHANGELOG.md](CHANGELOG.md) — notable changes over time.
