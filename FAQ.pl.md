@@ -235,6 +235,8 @@ prawdziwego PI. To znaczy, że synchronizacja nie dociera do Jiry: sprawdź jej 
 
 ## Workflowy (synchronizacja plikowa) — kiedy który się uruchamia?
 
+Działają w repozytorium synchronizacji plikowej (`circlek-global/evdt-service-shipscope`), nie w repozytorium serwera.
+
 - **`orchestrate-full-sync.yml`** (deploymenty i Jira) — po każdym deployu (`repository_dispatch` z repozytorium
   aplikacji), codziennie o 3:00 i ręcznie.
 - **`check-flags.yml`** — bez harmonogramu; repozytoria aplikacji wywołują go ze swojego CI.
@@ -278,4 +280,4 @@ własnego repozytorium ShipScope, a to `GITHUB_TOKEN` potrafi.
 
 **Klucz prywatny** GitHub App. Tokeny wygasają po godzinie, klucz nie, a może tworzyć tokeny z prawem zapisu do
 `live` i repozytoriów aplikacji. Trzymaj uprawnienia tokenów na minimum, przypnij akcję, która go używa, do SHA
-commita i wiedz, kto jest właścicielem klucza i kiedy był wymieniany (`design-docs/TODO.md`).
+commita i wiedz, kto jest właścicielem klucza i kiedy był wymieniany.

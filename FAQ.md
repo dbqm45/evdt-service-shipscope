@@ -226,6 +226,8 @@ real PI. That means the Jira sync is not reaching Jira: check its run log and th
 
 ## Workflows (file sync) — when does each run?
 
+These run in the file sync's own repository (`circlek-global/evdt-service-shipscope`), not in the server's.
+
 - **`orchestrate-full-sync.yml`** (deployments and Jira) — after each deploy (a `repository_dispatch` from the app
   repo), daily at 3 AM, and manually.
 - **`check-flags.yml`** — no schedule; app repos call it from their own CI.
@@ -268,4 +270,4 @@ repository, which `GITHUB_TOKEN` can do.
 
 The GitHub App **private key**. Tokens expire in an hour; the key does not, and it can mint tokens with write
 access to `live` and the app repos. Keep token permissions minimal, pin the action that uses it to a commit SHA and
-know who owns the key and when it was rotated (`design-docs/TODO.md`).
+know who owns the key and when it was rotated.

@@ -39,6 +39,9 @@ workspace.
 
 ## B. File-based sync
 
+The file-based sync and its workflows run from the original repository, `circlek-global/evdt-service-shipscope`
+(the one app repos reference in `uses:`); this repository has no copy of those workflows.
+
 ### 0. One-time setup of ShipScope itself
 
 Only needed for a new ShipScope instance, or when nothing syncs for any component.
@@ -152,8 +155,7 @@ does. Its metadata check fails until every flag's entry is filled in (`fill-flag
 ### 4. Build-time flags: set `featureFlagsIncluded: true`
 
 `retrigger-app-checks.yml` re-runs an app repo's failed `check-flags` runs after `flags-meta.json` changes, for
-components with `featureFlagsIncluded: true` (the copy of this workflow in this repository still targets only
-`evapl-service-frontend`, see `CLAUDE.md`). The sync app must be installed on the repo for this too.
+components with `featureFlagsIncluded: true`. The sync app must be installed on the repo for this too.
 
 ### 5. Optional: enrich older deployments
 

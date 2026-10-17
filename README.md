@@ -52,9 +52,9 @@ decided.
 See [FAQ.md](FAQ.md) for the mechanics behind each of these, and `CLAUDE.md` for the full technical
 reference.
 
-All of this is orchestrated by scheduled and event-triggered GitHub Actions workflows in
-`.github/workflows/`, which write their results as JSON under `docs/data/` and commit them to the `live`
-branch, the branch from which GitHub Pages serves the static dashboard.
+In the file-based setup this is orchestrated by GitHub Actions workflows in the original repository
+(`circlek-global/evdt-service-shipscope`), which write JSON under `docs/data/` to its `live` branch, served by
+GitHub Pages. The ShipScope server (`server/`) does the same work with a database and serves the dashboard itself.
 
 ## How this compares to existing tools
 

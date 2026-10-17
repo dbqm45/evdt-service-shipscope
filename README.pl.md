@@ -53,9 +53,9 @@ wdrażany komponent może obsługiwać więcej niż jedną aplikację, np. wspó
 Zobacz [FAQ.pl.md](FAQ.pl.md) po mechanikę stojącą za każdym z tych punktów, i `CLAUDE.md` (po angielsku) po
 pełne techniczne odniesienie.
 
-Wszystko to jest orkiestrowane przez zaplanowane i wywoływane zdarzeniami workflowy GitHub Actions w
-`.github/workflows/`, które zapisują swoje wyniki jako JSON pod `docs/data/` i commitują je na branch `live`,
-z którego GitHub Pages serwuje statyczny dashboard.
+W wariancie plikowym zajmują się tym workflowy GitHub Actions w oryginalnym repozytorium
+(`circlek-global/evdt-service-shipscope`), które zapisują JSON pod `docs/data/` na jego gałęzi `live`, serwowanej
+przez GitHub Pages. Serwer ShipScope (`server/`) robi to samo z bazą danych i sam serwuje dashboard.
 
 ## Jak to się ma do istniejących narzędzi
 
