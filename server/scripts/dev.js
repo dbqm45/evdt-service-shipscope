@@ -18,6 +18,8 @@ const ENV_EXAMPLE = path.join(SERVER_DIR, '.env.example');
 const PG_CONTAINER = 'shipscope-dev-pg';
 // The container the earlier manual setup (server/README.md before `npm run dev`) told people to create.
 const LEGACY_PG_CONTAINER = 'shipscope-pg';
+// The DATABASE_URL that setup's .env.example had: when nothing answers there, nothing is lost by switching.
+const LEGACY_DEFAULT_DATABASE_URL = 'postgres://postgres:postgres@localhost:5432/postgres';
 const PG_VOLUME = 'shipscope-dev-pg';
 const PG_IMAGE = 'postgres:16-alpine';
 const DEFAULT_PG_PORT = 54329;
@@ -211,7 +213,11 @@ async function waitForPostgres(url, seconds = 60, hint = '') {
 
 /**
  * A DATABASE_URL this script doesn't manage (e.g. from the earlier manual setup). When it doesn't answer and the old
- * setup's stopped container exists, start it; otherwise say how to switch to the database `npm run dev` manages.
+ * setup's stopped container exists, start it. Resolves false when it is the old setup's default address with nothing
+ * behind it (the caller then switches to the managed database); throws for any other address that doesn't answer.
+ *
+ * @param {string} url
+ * @returns {Promise<boolean>}
  */
 async function ensureOtherDatabase(url) {
     const hint = '\n  Start that database, or let `npm run dev` run its own in Docker: delete the DATABASE_URL line from server/.env.'
@@ -225,6 +231,8 @@ async function ensureOtherDatabase(url) {
         if (legacy && legacy !== 'running') {
             step(`Starting the Postgres container ${LEGACY_PG_CONTAINER} (from the earlier setup)`);
             docker(['start', LEGACY_PG_CONTAINER], { stdio: 'inherit' });
+        } else if (!legacy && url === LEGACY_DEFAULT_DATABASE_URL) {
+            return false;
         } else if (!legacy) {
             throw new DevError(`Postgres does not answer at ${redact(url)} (DATABASE_URL in server/.env).${hint}`);
         }
@@ -243,6 +251,7 @@ async function ensureOtherDatabase(url) {
     } finally {
         await client.end();
     }
+    return true;
 }
 
 /** The app's own non-superuser role and database, as on Render: a superuser would bypass Row-Level Security. */
@@ -261,6 +270,7 @@ async function ensureDatabase(port) {
     } finally {
         await client.end();
     }
+    return true;
 }
 
 function assertPortFree(port) {
@@ -363,15 +373,22 @@ async function main() {
         writeEnvValues({ DATABASE_URL: devDatabaseUrl(DEFAULT_PG_PORT), DATABASE_SSL: 'false' });
         fileEnv = parseEnvFile(readEnvFile());
     }
-    const pgPort = devDatabasePort(fileEnv.DATABASE_URL);
+    let pgPort = devDatabasePort(fileEnv.DATABASE_URL);
+    if (!pgPort) {
+        step('Using DATABASE_URL from server/.env');
+        if (!(await ensureOtherDatabase(fileEnv.DATABASE_URL))) {
+            console.log(`  Nothing answers at the earlier setup's default address and its ${LEGACY_PG_CONTAINER} container doesn't exist:`
+                + '\n  switching server/.env to the database `npm run dev` manages.');
+            writeEnvValues({ DATABASE_URL: devDatabaseUrl(DEFAULT_PG_PORT), DATABASE_SSL: 'false' });
+            fileEnv = parseEnvFile(readEnvFile());
+            pgPort = DEFAULT_PG_PORT;
+        }
+    }
     if (pgPort) {
         ensureDockerPostgres(pgPort);
         step('Waiting for Postgres');
         await waitForPostgres(adminDatabaseUrl(pgPort), 60);
         await ensureDatabase(pgPort);
-    } else {
-        step('Using DATABASE_URL from server/.env');
-        await ensureOtherDatabase(fileEnv.DATABASE_URL);
     }
     fileEnv = parseEnvFile(readEnvFile());
 
