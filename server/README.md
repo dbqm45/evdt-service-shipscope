@@ -278,8 +278,9 @@ role `shipscope_app` (as on Render, so Row-Level Security really applies), appli
 Service and the worker, and prints the address to open (`http://localhost:3000/`). Ctrl+C stops both; the database
 keeps running (`docker stop shipscope-dev-pg`). If `server/.env` already points `DATABASE_URL` at another database
 (e.g. `localhost:5432` from the earlier manual setup), that one is used: a stopped `shipscope-pg` container from that
-setup is started, and if the database still doesn't answer the script says so. Delete the `DATABASE_URL` line to
-switch to the database `npm run dev` manages (a new, empty one).
+setup is started; when that setup's default address has nothing behind it and no such container exists, the script
+switches `server/.env` to the database it manages. Any other address that doesn't answer is reported. Delete the
+`DATABASE_URL` line to switch to the managed database (a new, empty one) yourself.
 
 **First run: the GitHub App.** Signing in needs a GitHub App. When `server/.env` has none, `npm run dev` first
 prints a link to a local page with one button; GitHub then creates a private App for this server from a manifest
