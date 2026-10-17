@@ -156,3 +156,24 @@ test('without the dashboard files the page answers 503 instead of crashing', asy
     const res = await app.inject({ method: 'GET', url: `/t/${tenantId}/`, cookies: { sid: alice } });
     assert.strictEqual(res.statusCode, 503);
 });
+
+test('npm run dev:mock: members get the sample dataset and its issues; others still get 404', async (t) => {
+    const { loadMockDashboard } = require('../lib/mock-dashboard');
+    const mockDashboard = loadMockDashboard(path.join(__dirname, '..', '..', 'docs'));
+    const { app, alice, tenantId } = await setup(t, { mockDashboard });
+
+    const data = await app.inject({ method: 'GET', url: `/api/tenants/${tenantId}/dashboard-data`, cookies: { sid: alice } });
+    assert.strictEqual(data.statusCode, 200);
+    assert.strictEqual(data.json().mock, true);
+    assert.strictEqual(data.json().deployments.length, mockDashboard.data.deployments.length);
+
+    const pi = mockDashboard.data.jiraIndex.currentPi;
+    const issues = await app.inject({ method: 'GET', url: `/api/tenants/${tenantId}/jira-issues?pi=${encodeURIComponent(pi)}`, cookies: { sid: alice } });
+    assert.deepStrictEqual(issues.json().map((i) => i.key), mockDashboard.issuesByPi[pi].map((i) => i.key));
+    const none = await app.inject({ method: 'GET', url: `/api/tenants/${tenantId}/jira-issues?pi=nope`, cookies: { sid: alice } });
+    assert.deepStrictEqual(none.json(), []);
+
+    const mallory = await signIn(app, 'mallory');
+    assert.strictEqual((await app.inject({ method: 'GET', url: `/api/tenants/${tenantId}/dashboard-data`, cookies: { sid: mallory } })).statusCode, 404);
+    assert.strictEqual((await app.inject({ method: 'GET', url: `/api/tenants/${tenantId}/jira-issues?pi=${encodeURIComponent(pi)}`, cookies: { sid: mallory } })).statusCode, 404);
+});

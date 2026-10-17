@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-// One command for a local ShipScope: `npm run dev` (repo root or server/). It installs the server's dependencies,
+// One command for a local ShipScope: `npm run dev` (repo root or server/); `npm run dev:mock` (`--mock`) does the
+// same, but the dashboard shows the built-in sample data instead of the workspace's (lib/mock-dashboard.js). It installs the server's dependencies,
 // starts Postgres in Docker, creates the database and its non-superuser role, creates a GitHub App for you on the
 // first run (GitHub's manifest flow: one click), applies the migrations, starts the Web Service and the worker, and
 // prints the address to open. Ctrl+C stops both; the database container keeps its data for the next run.
@@ -403,7 +404,8 @@ async function main() {
         await assertPortFree(port);
     }
 
-    const env = { ...process.env, ...fileEnv, PUBLIC_BASE_URL: baseUrl, PORT: String(port) };
+    const mock = process.argv.includes('--mock');
+    const env = { ...process.env, ...fileEnv, PUBLIC_BASE_URL: baseUrl, PORT: String(port), ...(mock ? { SHIPSCOPE_MOCK_DATA: '1' } : {}) };
 
     step('Applying migrations');
     const migrate = spawnSync(process.execPath, ['scripts/migrate.js'], { cwd: SERVER_DIR, env, stdio: 'inherit' });
@@ -440,6 +442,7 @@ async function main() {
 
     await waitForHealth(baseUrl, children[0]);
     console.log(`\n  ${bold('ShipScope is running:')}  ${bold(baseUrl + '/')}`);
+    if (mock) console.log(`\n  ${bold('Mock data:')} every workspace's dashboard shows the built-in sample data.`);
     console.log('\n  Sign in with GitHub, create a workspace, then follow its Getting started checklist.');
     console.log(pgPort
         ? `  Ctrl+C stops ShipScope; the database keeps running (docker stop ${PG_CONTAINER} to stop it).\n`

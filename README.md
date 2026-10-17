@@ -22,7 +22,8 @@ npm run dev
 
 Needs Node.js 20+ and Docker. It starts the database, applies migrations, starts the server and the worker, and
 prints the link to open; on the first run it asks you to click once to create the GitHub App used for signing in.
-Details: [server/README.md](server/README.md#running-locally).
+`npm run dev:mock` does the same with sample data on the dashboard, for checking UI changes. Details:
+[server/README.md](server/README.md#running-locally).
 
 ## What it shows
 

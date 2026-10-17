@@ -28,12 +28,14 @@
             </div>
         </div>
         <div class="header-right">
-            <a class="settings-link" id="settingsLink" href="settings" hidden>Settings</a>
             <div class="status-badge" id="statusBadge">
                 <svg class="status-badge-dot" width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><circle cx="7" cy="7" r="7" fill="currentColor" fill-opacity="0.18"/><circle cx="7" cy="7" r="4" fill="currentColor"/></svg>
                 <span id="statusBadgeLabel">Loading…</span>
                 <span class="status-badge-time" id="statusBadgeTime"></span>
             </div>
+            <a class="settings-link" id="settingsLink" href="settings" title="Settings" aria-label="Settings" hidden>
+                <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
+            </a>
             <button class="theme-toggle" id="themeToggle" type="button" title="Switch to light theme" aria-label="Switch to light theme">
                 <svg class="theme-toggle-icon icon-moon" viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M13.5 9.3A5.8 5.8 0 0 1 6.7 2.5 5.8 5.8 0 1 0 13.5 9.3Z" fill="currentColor"/></svg>
                 <svg class="theme-toggle-icon icon-sun" viewBox="0 0 16 16" width="14" height="14" fill="none" aria-hidden="true"><circle cx="8" cy="8" r="3.2" fill="currentColor"/><path d="M8 1.3v2M8 12.7v2M1.3 8h2M12.7 8h2M3.3 3.3l1.4 1.4M11.3 11.3l1.4 1.4M3.3 12.7l1.4-1.4M11.3 4.7l1.4-1.4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>

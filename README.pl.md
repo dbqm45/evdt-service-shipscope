@@ -22,7 +22,8 @@ npm run dev
 
 Wymaga Node.js 20+ i Dockera. Polecenie uruchamia bazę danych, stosuje migracje, startuje serwer i worker, a na
 końcu wypisuje link do otwarcia; przy pierwszym uruchomieniu prosi o jedno kliknięcie, którym GitHub tworzy
-aplikację do logowania. Szczegóły: [server/README.md](server/README.md#running-locally).
+aplikację do logowania. `npm run dev:mock` robi to samo, ale dashboard pokazuje dane przykładowe — do sprawdzania zmian w interfejsie.
+Szczegóły: [server/README.md](server/README.md#running-locally).
 
 ## Co pokazuje
 

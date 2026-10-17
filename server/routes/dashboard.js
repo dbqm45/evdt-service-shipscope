@@ -23,8 +23,12 @@ const { withScope } = require('../lib/scope');
 function registerDashboardRoutes(app, ctx) {
     const {
         pool, githubApp, atlassian, requireUser, requireUserOrSignIn, dashboardDir, UI_DIR, DASHBOARD_HEADERS,
-        UUID_PARAM, ui, cookies: { SESSION_COOKIE },
+        UUID_PARAM, ui, cookies: { SESSION_COOKIE }, mockDashboard,
     } = ctx;
+    // `npm run dev:mock` (lib/mock-dashboard.js): members get the sample dataset instead of their tenant's data.
+    const assertMember = (tenantId, userId) => withScope(pool, { tenantId }, async (client) => {
+        if (!(await roleOf(client, { tenantId, userId }))) throw new TenantNotFoundError('Tenant not found');
+    });
     const assets = loadDashboardAssets(dashboardDir);
     if (!assets.has('index.html')) app.log.warn(`dashboard files not found in ${dashboardDir}; /t/:tenantId/ will answer 503`);
     const tenantParams = { type: 'object', required: ['tenantId'], properties: { tenantId: UUID_PARAM } };
@@ -100,6 +104,10 @@ function registerDashboardRoutes(app, ctx) {
         schema: { params: tenantParams },
     }, async (request, reply) => {
         reply.header('cache-control', 'no-store');
+        if (mockDashboard) {
+            await assertMember(request.params.tenantId, request.user.id);
+            return mockDashboard.data;
+        }
         return buildDashboardData(pool, { tenantId: request.params.tenantId, actorUserId: request.user.id });
     });
 
@@ -112,6 +120,11 @@ function registerDashboardRoutes(app, ctx) {
         },
     }, async (request, reply) => {
         reply.header('cache-control', 'no-store');
+        if (mockDashboard) {
+            await assertMember(request.params.tenantId, request.user.id);
+            const pis = request.query.pi === '@now' ? (mockDashboard.data.jiraIndex.pis.find((p) => p.pi === '@now') || {}).includes || [] : [request.query.pi];
+            return pis.flatMap((pi) => mockDashboard.issuesByPi[pi] || []);
+        }
         return listPiIssues(pool, { tenantId: request.params.tenantId, actorUserId: request.user.id, pi: request.query.pi });
     });
 }
