@@ -10,8 +10,9 @@ ShipScope joins three signals — Jira issues, deployments, and feature flag sta
 and `prod` environments, allowing engineers and product owners to see the real release status of a piece of
 work without manually cross-referencing a deployment log, a flag dashboard, and a Jira board.
 
-It is a static dashboard, with no backend server, fed by scheduled GitHub Actions workflows that pull data
-from GitHub, Jira, and backend flag endpoints into JSON files rendered by a plain HTML/JS page.
+It runs as a hosted, multi-tenant service: each organization gets a workspace, connects its GitHub App
+installation and Jira site, and sees the dashboard at its own address. The backend (`server/`, Node.js + Postgres)
+syncs the data; the dashboard is a plain HTML/JS page (`docs/`).
 
 ## What it shows
 
@@ -32,29 +33,25 @@ calculated.
 ### Release Notes
 
 A third tab lists the Jira issues already released to PROD, by PI → sprint, split into features and bug fixes,
-with a Service filter by **application** (a `docs/components.json` field, not Jira, since one deployable
-component can serve more than one application, e.g. a shared BFF). See [FAQ.md](FAQ.md) for how "released" is
+with a Service filter by **application**. See [FAQ.md](FAQ.md) for how "released" is
 decided.
 
 ## How it works
 
-- **Deployments** are retrieved from the GitHub Deployments API for each tracked application repository,
-  enriched with related Jira keys, duration, trigger type, rollback detection, and a resolved version
-  (Release → tag → commit message → SHA). Older records can be brought up to date retroactively; see
-  `scripts/backfill-deployment-metadata.js`.
-- **Feature flags** come from two sources tracked side by side: `build` flags, baked in at build time, and
-  `runtime-be` flags, toggled live by a backend service. Every change is recorded in a full, append-only
-  history (`flag-state-history.json`), and each flag requires a manually completed entry in
-  `flags-meta.json`.
-- **Jira issues** are fetched via JQL for the projects referenced in recent deployments, with a lightweight
-  commit-derived fallback when Jira is temporarily unreachable.
+- **Deployments** are read from the GitHub Deployments API of each tracked repository, through the workspace's
+  GitHub App installation, and enriched with related Jira keys, duration, trigger type, rollback detection,
+  environment drift and a resolved version (Release → tag → version file → commit message → SHA).
+- **Feature flags** are pushed to ShipScope by the workspace's own flag sources (a build step, a flag service),
+  each with its own token; ShipScope never reads them itself. Every change is kept in the flag's history.
+- **Jira issues** are synced from the boards an admin picks, through Atlassian sign-in, increment by increment
+  (PI, sprint, release or month, depending on the board).
 
-See [FAQ.md](FAQ.md) for the mechanics behind each of these, and `CLAUDE.md` for the full technical
-reference.
+Syncs run every 15 minutes by default and within about 30 seconds of a GitHub or Jira webhook. See
+[FAQ.md](FAQ.md) for the mechanics behind each of these, and `CLAUDE.md` for the full technical reference.
 
-In the file-based setup this is orchestrated by GitHub Actions workflows in the original repository
-(`circlek-global/evdt-service-shipscope`), which write JSON under `docs/data/` to its `live` branch, served by
-GitHub Pages. The ShipScope server (`server/`) does the same work with a database and serves the dashboard itself.
+ShipScope started as a file-based dashboard (GitHub Actions writing JSON to a branch served by GitHub Pages) in the
+original `circlek-global/evdt-service-shipscope` repository, where that setup still runs; this repository holds the
+service.
 
 ## How this compares to existing tools
 
@@ -85,6 +82,7 @@ not an off-the-shelf SaaS product.
 ## See also
 
 - [FAQ.md](FAQ.md) — plain-language answers to "how is this specific number/badge calculated?"
-- [ONBOARDING.md](ONBOARDING.md) — setting up a workspace on the ShipScope server, or adding a component to the file-based sync.
-- [CLAUDE.md](CLAUDE.md) — full technical reference (scripts, workflows, data model, `main`/`live` split).
+- [ONBOARDING.md](ONBOARDING.md) — setting up a workspace.
+- [CLAUDE.md](CLAUDE.md) — full technical reference (backend, data model, frontend).
+- [server/README.md](server/README.md) — routes, security model, running the server locally.
 - [CHANGELOG.md](CHANGELOG.md) — notable changes over time.

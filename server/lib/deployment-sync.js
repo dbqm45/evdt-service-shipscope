@@ -7,7 +7,7 @@ const { MAX_RUN_LOOKUPS, createCaches, resolveManual, resolveDisplayName } = req
 
 /**
  * FR-005: pulls new GitHub deployments of every tracked repo into the tenant's `deployments` table.
- * Same rules as the file-based scripts/sync-github-deployments.js (cursor, blocked/stuck deployments,
+ * Same rules as the file-based sync's sync-github-deployments.js (cursor, blocked/stuck deployments,
  * version from release/tag/version file/commit message, issue keys from the commit range between resolved
  * refs, rollback detection, per-run cap, environment drift); see lib/deployment-logic.js,
  * lib/version-resolution.js, lib/env-drift.js and lib/deployment-people.js (the `manual` flag, display names).

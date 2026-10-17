@@ -46,7 +46,7 @@ Each deploy also records whether its GitHub Actions run was started by hand (`ma
   environments it covers, with its own token. Flags it no longer lists there are marked removed; values are
   `off`/`on`/`partial` (+ rollout %); a sender's `changedAt` is kept (within 7 days back / 5 minutes ahead) and an
   older message never undoes a newer one. Several sources of one kind fold into the dashboard's `build`/`runtime-be`
-  slot by priority, then by the latest change. Not a port of `scripts/lib/flag-ingest.js` (schemaVersion 1, the
+  slot by priority, then by the latest change. Not a port of the file-based sync's `flag-ingest.js` (schemaVersion 1, the
   single-tenant contract): this one replaces it for the server.
 
 - **Jira connection** (FR-007, `lib/atlassian.js` + `lib/jira-connections.js`): an admin connects the tenant's
@@ -116,7 +116,7 @@ GitHub App routes (only when the `GITHUB_APP_*` variables are set):
 | `GET /tenants/:tenantId/github/installations/:installationId/repositories` | session + admin | The installation's repos from GitHub, each with `tracked`. |
 | `PUT /tenants/:tenantId/github/repos/:repoId` | session + admin | Body `{ "installationId": 123 }`. Tracks the repo if GitHub lists it for that installation. Idempotent. |
 | `DELETE /tenants/:tenantId/github/repos/:repoId` | session + admin | Stops tracking. 204, or 404. |
-| `PUT /tenants/:tenantId/github/repos/:repoId/settings` | session + admin | Body `{ "versionFile": "trigger.properties" \| null, "driftIgnorePaths": [".github/", "README.md"] }` (repo-relative, no leading `/` or `..`; at most 50 patterns; pattern rules as `driftIgnorePaths` in `docs/components.json`). Clears the stored drift so the next sync recomputes it. 404 if the repo isn't tracked. |
+| `PUT /tenants/:tenantId/github/repos/:repoId/settings` | session + admin | Body `{ "versionFile": "trigger.properties" \| null, "driftIgnorePaths": [".github/", "README.md"] }` (repo-relative, no leading `/` or `..`; at most 50 patterns; `dir/` = prefix from the repo root, a pattern with `/` = exact path, a bare name = that file name at any depth, `*` = anything but `/`). Clears the stored drift so the next sync recomputes it. 404 if the repo isn't tracked. |
 | `DELETE /tenants/:tenantId/github/installations/:installationId` | session + admin | Unlinks the installation and its tracked repos (it stays installed on GitHub). 204, or 404. |
 
 Dashboard:
@@ -213,7 +213,7 @@ not stripped or coerced).
   tenant is read under its own RLS scope -- the worker has no cross-tenant view either. All GitHub calls for a
   repo happen before its database transaction (30 s timeout each), and a repo's records, issue facts and
   cursor are written together. A failing repo stores its error on `tracked_repos.last_sync_error` and the
-  pass continues. Rules ported from `scripts/sync-github-deployments.js`: the cursor never passes a
+  pass continues. Rules ported from the file-based sync's `sync-github-deployments.js`: the cursor never passes a
   deployment that has no final status yet (unless it's stuck for 48 h); the newest *terminal* status
   decides (GitHub's `inactive` marker is ignored); a redeploy of the same commit inherits the previous
   record's issues instead of comparing a commit with itself; at most 200 new deployments per repo per pass,

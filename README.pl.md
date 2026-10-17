@@ -10,9 +10,9 @@ sygnały — issue z Jiry, deploymenty i stany feature flag — w środowiskach 
 inżynierowie i product ownerzy mogą zobaczyć realny status wydania danego elementu pracy bez ręcznego
 zestawiania logów deploymentów, dashboardu flag i tablicy Jiry.
 
-Jest to statyczny dashboard, bez backendowego serwera, zasilany przez zaplanowane workflowy GitHub Actions,
-które pobierają dane z GitHuba, Jiry i endpointów flagowych backendu do plików JSON renderowanych przez
-prostą stronę HTML/JS.
+Działa jako hostowana usługa dla wielu organizacji: każda dostaje workspace, łączy swoją instalację GitHub App i
+witrynę Jiry i widzi dashboard pod własnym adresem. Backend (`server/`, Node.js + Postgres) synchronizuje dane;
+dashboard to prosta strona HTML/JS (`docs/`).
 
 ## Co pokazuje
 
@@ -33,29 +33,26 @@ liczona.
 ### Release Notes
 
 Trzecia zakładka wymienia zadania z Jiry już wydane na PROD, według PI → sprintu, z podziałem na funkcje i
-poprawki błędów, z filtrem „Service” według **aplikacji** (pole w `docs/components.json`, nie w Jirze, bo jeden
-wdrażany komponent może obsługiwać więcej niż jedną aplikację, np. współdzielony BFF). Zobacz
+poprawki błędów, z filtrem „Service” według **aplikacji**. Zobacz
 [FAQ.pl.md](FAQ.pl.md), jak ustalane jest „wydane”.
 
 ## Jak to działa
 
-- **Deploymenty** są pobierane z GitHub Deployments API dla każdego śledzonego repozytorium aplikacji,
-  wzbogacone o powiązane klucze Jiry, czas trwania, typ triggera, wykrywanie rollbacku i rozwiązaną wersję
-  (Release → tag → komunikat commita → SHA). Starsze rekordy można doprowadzić do zgodności retroaktywnie;
-  patrz `scripts/backfill-deployment-metadata.js`.
-- **Feature flagi** pochodzą z dwóch źródeł śledzonych osobno: flag `build`, zaszytych na etapie budowania, i
-  flag `runtime-be`, przełączanych na żywo przez serwis backendowy. Każda zmiana jest zapisywana w pełnej,
-  append-only historii (`flag-state-history.json`), a każda flaga wymaga ręcznie wypełnionego wpisu w
-  `flags-meta.json`.
-- **Issue z Jiry** są pobierane przez JQL dla projektów, do których należą klucze wspomniane w ostatnich
-  deploymentach, z lekkim fallbackiem opartym na commitach, gdy Jira jest tymczasowo nieosiągalna.
+- **Deploymenty** są czytane z GitHub Deployments API każdego śledzonego repozytorium, przez instalację GitHub App
+  workspace'u, i wzbogacane o powiązane klucze Jiry, czas trwania, typ wyzwalacza, wykrywanie rollbacku, rozjazd
+  między środowiskami i ustaloną wersję (Release → tag → plik wersji → opis commita → SHA).
+- **Feature flagi** wysyłają do ShipScope własne źródła flag workspace'u (krok budowania, serwis flag), każde z
+  własnym tokenem; ShipScope sam ich nie czyta. Każda zmiana trafia do historii flagi.
+- **Zadania z Jiry** są synchronizowane z tablic wybranych przez admina, przez logowanie Atlassian, okres po okresie
+  (PI, sprint, wydanie albo miesiąc — zależnie od tablicy).
 
-Zobacz [FAQ.pl.md](FAQ.pl.md) po mechanikę stojącą za każdym z tych punktów, i `CLAUDE.md` (po angielsku) po
-pełne techniczne odniesienie.
+Synchronizacje działają domyślnie co 15 minut i w ciągu ok. 30 sekund od webhooka z GitHuba albo Jiry. Zobacz
+[FAQ.pl.md](FAQ.pl.md) po mechanikę stojącą za każdym z tych punktów, i `CLAUDE.md` (po angielsku) po pełne
+techniczne odniesienie.
 
-W wariancie plikowym zajmują się tym workflowy GitHub Actions w oryginalnym repozytorium
-(`circlek-global/evdt-service-shipscope`), które zapisują JSON pod `docs/data/` na jego gałęzi `live`, serwowanej
-przez GitHub Pages. Serwer ShipScope (`server/`) robi to samo z bazą danych i sam serwuje dashboard.
+ShipScope zaczynał jako dashboard plikowy (workflowy GitHub Actions zapisujące JSON na gałąź serwowaną przez GitHub
+Pages) w oryginalnym repozytorium `circlek-global/evdt-service-shipscope`, gdzie ten wariant nadal działa; to
+repozytorium zawiera usługę.
 
 ## Jak to się ma do istniejących narzędzi
 
@@ -85,7 +82,7 @@ kalkulacyjny, nie jako gotowy produkt SaaS.
 ## Zobacz też
 
 - [FAQ.pl.md](FAQ.pl.md) — proste odpowiedzi na pytanie „jak jest liczona ta konkretna liczba/badge?”
-- [ONBOARDING.pl.md](ONBOARDING.pl.md) — zakładanie workspace'u na serwerze ShipScope albo dodawanie komponentu do synchronizacji plikowej.
-- [CLAUDE.md](CLAUDE.md) — pełne techniczne odniesienie (po angielsku): skrypty, workflowy, model danych,
-  podział `main`/`live`.
+- [ONBOARDING.pl.md](ONBOARDING.pl.md) — zakładanie workspace'u.
+- [CLAUDE.md](CLAUDE.md) — pełne techniczne odniesienie (po angielsku): backend, model danych, frontend.
+- [server/README.md](server/README.md) — ścieżki HTTP, model bezpieczeństwa, uruchamianie serwera lokalnie.
 - [CHANGELOG.pl.md](CHANGELOG.pl.md) — najważniejsze zmiany w czasie.

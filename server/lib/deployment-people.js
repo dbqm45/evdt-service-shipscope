@@ -1,8 +1,7 @@
 const { githubGet } = require('./github-app');
 
 /**
- * Who started a deployment and how, ported from scripts/sync-github-deployments.js (resolveManualFlag) and
- * scripts/lib/github-users.js (resolveDisplayName). Both are display-only extras: every lookup degrades to
+ * Who started a deployment and how, ported from the file-based sync (resolveManualFlag, resolveDisplayName). Both are display-only extras: every lookup degrades to
  * null on any error and never fails the sync. Results are cached per sync pass (`caches`), so a run that
  * triggered several deploys, or a person behind many, costs one call.
  */

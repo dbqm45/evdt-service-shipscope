@@ -2,7 +2,7 @@ const { githubGet } = require('./github-app');
 const { diffTrees } = require('./tree-diff');
 
 /**
- * Environment drift, ported from scripts/sync-github-deployments.js (computeEnvDrift/compareTrees; see
+ * Environment drift, ported from the file-based sync (computeEnvDrift/compareTrees; see
  * CLAUDE.md, "Deployments" -> `driftBehind`). For each stage after the first (qa vs test, prod vs qa), the
  * latest successful deploys are compared:
  * - commit counts (`behindEnv`/`commitCount`, `untestedIn`/`untestedCommitCount`) are raw git history, context
