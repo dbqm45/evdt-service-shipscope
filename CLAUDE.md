@@ -22,12 +22,11 @@ ShipScope is a deployment / feature-flag / Jira status dashboard. Two ways of ru
 Both share the frontend. The domain rules for deployments and drift exist in both (see "Ports" below).
 
 **This repository vs. the running file-based sync.** The file-based path runs from the original repository
-(`circlek-global/evdt-service-shipscope`, which app repos reference in `uses:`), with its `live` branch. This
-repository has no `live` branch, and its `.github/workflows/` copies of the sync workflows are an older snapshot
-than the scripts: a single `ref: live` checkout instead of the `main`/`live` split, `retrigger-app-checks.yml` on
-`push` to `live` for one repo, no `prune-jira-pis.yml`, no `WARN_ONLY` input in `check-flags.yml`, and a leftover
-`sync-jira.yml` writing the pre-sharding `jira-issues.json`. The "Branch model" section describes the design the scripts are written for; check the actual
-workflow before relying on a detail of it.
+(`circlek-global/evdt-service-shipscope`, which app repos reference in `uses:`), with its `live` branch and its own
+workflows. This repository has no `live` branch, and its file-sync workflows (and `.github/actions/sync-with-retry`)
+were removed on 2026-10-17 because every run failed here; its only workflows are CI and releases (`test.yml`,
+`server-test.yml`, `pr-title.yml`, `release.yml`). `scripts/` and its tests stay: they are the reference for the
+server's ports. Workflow names below refer to the original repository.
 
 ## Layout and tooling
 
@@ -180,7 +179,7 @@ emptied. `sync_requests` (webhook queue) is the one non-RLS table; it holds no t
   get a Getting started checklist (`onboardingSteps()`); an empty dashboard links to it (`#setupBanner`); the
   header's `#settingsLink` shows only in API mode.
 
-## Branch model: `main` vs `live` (file-based sync)
+## Branch model: `main` vs `live` (file-based sync, original repository)
 
 - **`main`** holds source. **`live`** holds `docs/data/*.json`, which bots mutate continuously; GitHub Pages serves
   `live`. `sync-main-to-live.yml` merges `main` → `live` on pushes touching `scripts/**`, `docs/**`,
@@ -359,8 +358,8 @@ its generated file's shape, check these regexes first.
 - **Failure handling**: `resolveSpacesConfig()` throws when Jira's project list cannot be fetched (an empty result
   would route into the destructive `'full'` scope). A failed board/sprint lookup (`JiraBoardLookupError`, any non-2xx
   or network error) soft-degrades by default; `JIRA_BOARD_LOOKUP_STRICT=true` makes it fail the run instead. The
-  account's Agile API access was fixed on 2026-10-08, so strict mode can be enabled (an env var change, see
-  `design-docs/TODO.md`); a 401 only on `/rest/agile/1.0/*` means the token lacks Jira Software scopes or the account
+  account's Agile API access was fixed on 2026-10-08, so strict mode can be enabled in the original repository's
+  workflow env; a 401 only on `/rest/agile/1.0/*` means the token lacks Jira Software scopes or the account
   lacks the product role (`ONBOARDING.md`).
 - **Release status**: an issue links to flags via `flagsMeta[key].jiraKeys` and to deployments via
   `relatedIssues`; `issueStatusForEnv()` gives `none` / `deployed` (code shipped, flag off) / `released` (flag on) /
@@ -400,7 +399,7 @@ Shared helpers: `scripts/lib/cli.js` (`fail`, `safeRelativePath`), `json-file.js
 (`jira-config` env read at require time, `jira-pi`, `jira-jql`, `jira-spaces`, `jira-boards`, `jira-issues`
 — `fetchAndMapIssuesForJql(ctx)` —, `jira-shards`).
 
-| Script | Workflow | Purpose | Env |
+| Script | Workflow (original repo) | Purpose | Env |
 |---|---|---|---|
 | `scaffold-flags-meta.js` | check-flags.yml | Stub `flags-meta.json` entries for new build flags | `FLAGS_META_PATH`, `FLAGS_SEARCH_ROOT`, `COMPONENT` |
 | `resolve-all-flag-states.js` | check-flags.yml | Per-env `build` states from `flag-parts/`, stubs for missing meta, collision guard | `FLAGS_SEARCH_ROOT`, `FLAGS_META_PATH`, `FLAG_STATES_PATH`, `FLAG_STATE_HISTORY_PATH`, `CHANGED_BY`, `COMPONENT` (required) |
@@ -410,7 +409,7 @@ Shared helpers: `scripts/lib/cli.js` (`fail`, `safeRelativePath`), `json-file.js
 | `update-flag-state.js` | update-flag-state.yml | Set one flag/env/slot (manual or `flag-changed` dispatch); no-op when unchanged | `FLAG_KEY`, `ENVIRONMENT`, `ENABLED`, `CHANGED_BY`, optional paths |
 | `sync-github-deployments.js` | orchestrate-full-sync.yml | Deployments for one repo: records, cursor, summary, issue-deployments, drift; warns above `SIZE_WARNING_THRESHOLD_MB` (20) | `GITHUB_TOKEN`, `APP_REPO`, `COMPONENT`, `RETENTION_DAYS`, `CURSOR_PATH`, `ISSUE_DEPLOYMENTS_PATH`, `SUMMARY_PATH`, `SIZE_WARNING_THRESHOLD_MB`, `STUCK_DEPLOYMENT_MAX_AGE_HOURS`, `MAX_NEW_DEPLOYMENTS_PER_RUN`, `VERSION_FILE`, `DRIFT_IGNORE_PATHS`, `GITHUB_API_ETAG_CACHE_DIR` |
 | `sync-jira.js` | orchestrate-full-sync.yml, backfill-jira-issues.yml | Jira shards (modes above) and `status-index.json` | `JIRA_BASE_URL`, `JIRA_EMAIL`, `JIRA_API_TOKEN`, `JIRA_PROJECT_KEY`, `SPACES_PATH`, `JIRA_ISSUES_DIR`, `BACKFILL_PIS`, `JIRA_BOARD_LOOKUP_STRICT` |
-| `prune-jira-pis.js` | prune-jira-pis.yml (not in this repo) | Delete named PI shards and record them in `pruned-pis.json` | `JIRA_ISSUES_DIR`, `PRUNE_PIS` |
+| `prune-jira-pis.js` | prune-jira-pis.yml | Delete named PI shards and record them in `pruned-pis.json` | `JIRA_ISSUES_DIR`, `PRUNE_PIS` |
 | `retrigger-app-checks.js` | retrigger-app-checks.yml | Re-run failed `check-flags` runs in one app repo (the workflow is meant to be a matrix over components with `featureFlagsIncluded: true`) | `APP_REPO`, `APP_REPO_RERUN_TOKEN`, `WORKFLOW_FILE` |
 | `backfill-deployment-metadata.js` | backfill-deployment-metadata.yml | Fill newer fields on older records, re-resolve SHA-like versions, repair empty-range duplicates | `GITHUB_TOKEN`, `APP_REPO`, `COMPONENT`, `MAX_RECORDS_PER_RUN` |
 | `backfill-flag-state-history.js` | backfill-flag-state-history.yml | Seed flag history from `live`'s git history | `FLAG_STATES_PATH`, `FLAG_STATE_HISTORY_PATH` |

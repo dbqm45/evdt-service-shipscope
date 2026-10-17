@@ -40,6 +40,9 @@ W sekcji Workspace admin ustawia też, ile dni historii deploymentów przechowyw
 
 ## B. Synchronizacja plikowa
 
+Synchronizacja plikowa i jej workflowy działają z oryginalnego repozytorium, `circlek-global/evdt-service-shipscope`
+(tego, na które wskazują `uses:` w repozytoriach aplikacji); to repozytorium nie ma kopii tych workflowów.
+
 ### 0. Jednorazowa konfiguracja samego ShipScope
 
 Potrzebna tylko przy nowej instancji ShipScope albo gdy nic nie synchronizuje się dla żadnego komponentu.
@@ -155,8 +158,7 @@ to przekazuje.
 ### 4. Flagi build-time: ustaw `featureFlagsIncluded: true`
 
 `retrigger-app-checks.yml` ponawia nieudane przebiegi `check-flags` w repozytorium aplikacji po zmianie
-`flags-meta.json`, dla komponentów z `featureFlagsIncluded: true` (kopia tego workflowu w tym repozytorium wciąż
-obsługuje tylko `evapl-service-frontend`, zob. `CLAUDE.md`). Do tego też aplikacja synchronizacji musi być
+`flags-meta.json`, dla komponentów z `featureFlagsIncluded: true`. Do tego też aplikacja synchronizacji musi być
 zainstalowana na repozytorium.
 
 ### 5. Opcjonalnie: uzupełnij starsze deploymenty

@@ -1,14 +1,15 @@
 # Repository Guidelines
 
-ShipScope is a cross-repo deployment / feature-flag / Jira dashboard, currently serving one organization with a multi-tenant SaaS rewrite in progress (see `@context/foundation/prd.md`). No app server or build step: dependency-free Node.js scripts, run by GitHub Actions, sync data into JSON under `docs/data/`; a static vanilla-JS page renders it. Full depth lives in `@CLAUDE.md` — read it before touching sync logic or the branch model.
+ShipScope is a cross-repo deployment / feature-flag / Jira dashboard. Two runtimes share one static vanilla-JS frontend (`docs/`): the multi-tenant SaaS backend in `server/` (Fastify + Postgres, its own `package.json`; see `@context/foundation/prd.md`), and the original file-based sync — dependency-free Node scripts in `scripts/` that write JSON under `docs/data/`, run by GitHub Actions in the original `circlek-global/evdt-service-shipscope` repository (this repository keeps the scripts but not those workflows). Full depth lives in `@CLAUDE.md`.
 
 ## Hard rules
 
-- `main` holds source (`scripts/`, `.github/workflows/`); `live` holds the bot-mutated data JSON that GitHub Pages serves. Never confuse the two, and never expect code on `live` to be executed.
+- In the file-based setup `main` holds source and `live` holds the bot-mutated data JSON that GitHub Pages serves; code on `live` is never executed. This repository has no `live` branch.
+- Every query on a tenant table in `server/` goes through `withScope()` (`server/lib/scope.js`, `RLS_TABLES`); `scripts/` and `server/` never require from each other.
 - Every data-mutating script follows read-existing-JSON → merge → write-back and must stay idempotent — a no-op when nothing changed, since workflows only commit on `git diff --staged --quiet ||`.
 - Scripts read config from environment variables only, no CLI args. Validate any path input with the existing guard (`@scripts/lib/cli.js`'s `safeRelativePath`).
 - `docs/app-*.js` load as classic `<script>` tags in a fixed order (see `@docs/index.html`); `app-main.js` must stay last since it calls `init()`. Top-level statements can only use things from the same or an earlier file.
-- Zero dependencies by design (`@package.json`) — don't add an npm package without discussing it first.
+- Zero dependencies at the root by design (`@package.json`); `server/` has its own (`pg`, `fastify`, `@fastify/cookie`) — don't add an npm package without discussing it first.
 
 ## Security
 
@@ -16,7 +17,7 @@ ShipScope is a cross-repo deployment / feature-flag / Jira dashboard, currently 
 
 ## Build, test, and development
 
-- `npm test` runs the full suite (`node --test "test/*.test.js"`, ~420 cases).
+- `npm test` runs the full suite (`node --test "test/*.test.js"`, ~475 cases); `server/` has its own `npm test`.
 - Run one script directly: `node scripts/<name>.js`, after setting its required env vars (see `@CLAUDE.md`'s Scripts table).
 - Preview the dashboard by opening `docs/index.html` directly, or serving `docs/` with any static file server.
 
@@ -27,5 +28,5 @@ ShipScope is a cross-repo deployment / feature-flag / Jira dashboard, currently 
 
 ## Commits & CI
 
-- Commit messages follow `type(SHP): Description (#PR-number)` (e.g. `feat`, `refactor`) — Conventional Commits with a ticket prefix.
-- `.github/workflows/` has 11 automation workflows (data sync, flag management) but none currently run the test suite on PR — don't assume a broken test blocks a merge yet.
+- Commit messages and PR titles follow Conventional Commits with the `SHP` scope (`feat(SHP): ...`); PRs are squash-merged, so the title decides the version.
+- `.github/workflows/` runs both test suites on every PR and push to `main` (`test.yml`, `server-test.yml`), checks the PR title (`pr-title.yml`) and releases after each merge (`release.yml`, see `@RELEASING.md`).
