@@ -27,12 +27,6 @@ właściwość Springa), endpoint wymaga osobnego poświadczenia, a przy tym ods
 tylko flagi. Mały, celowy endpoint jest tańszy i bezpieczniejszy. To samo można kiedyś zrobić dla
 `evapl-service-frontend` (dziś flagi build-time), żeby każdy serwis czytać jednym mechanizmem.
 
-## CODEOWNERS wskazuje zespoły `circlek-global`
-
-`.github/CODEOWNERS` pochodzi z oryginalnego repozytorium: przypisuje przeglądy zespołom `@circlek-global/...`,
-których w `dbqm45` nie ma, więc nic nie wymusza. Ustawić właścicieli tego repozytorium (co najmniej dla
-`.github/workflows/`, `server/` i `render.yaml`) albo usunąć plik.
-
 ## Akcje przypięte do tagów, nie do commit SHA
 
 Workflowy (`test.yml`, `server-test.yml`, `pr-title.yml`, `release.yml`) używają `actions/checkout@v7` i
