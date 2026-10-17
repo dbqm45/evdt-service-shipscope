@@ -1,6 +1,9 @@
 const crypto = require('crypto');
 const { withScope, setScope } = require('./scope');
 const { assertAdmin, roleOf, TenantNotFoundError } = require('./tenants');
+const {
+    IngestPayloadError, checkPayload, planIngestWrites, sourceDescriptors, pickWinningValues, visibleFlagsMeta, historyRecords,
+} = require('./flags-logic');
 
 /**
  * Feature flags pushed from outside (migration 008, contract schemaVersion 2 -- server/README.md). A tenant names
@@ -13,18 +16,12 @@ const { assertAdmin, roleOf, TenantNotFoundError } = require('./tenants');
  */
 
 class IngestTokenError extends Error {}
-class IngestPayloadError extends Error {}
 class FlagSourceNotFoundError extends Error {}
 class FlagSourceConflictError extends Error {}
 
 const TOKEN_PREFIX = 'shpi_';
 const TOKEN_PATTERN = /^shpi_[A-Za-z0-9_-]{43}$/;
 const DEFAULT_PRIORITY = { build: 0, runtime: 100 };
-// A sender's own change time is trusted within these bounds; outside them the payload is rejected.
-const MAX_CHANGED_AT_AGE_MS = 7 * 24 * 3600e3;
-const MAX_CHANGED_AT_SKEW_MS = 5 * 60e3;
-// Keys become object keys in the dashboard's flag data; these would turn into prototype writes there.
-const DANGEROUS_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
 
 function hashToken(token) {
     return crypto.createHash('sha256').update(token).digest('hex');
@@ -180,56 +177,6 @@ async function revokeIngestToken(pool, { tenantId, actorUserId, tokenId }) {
 }
 
 /**
- * Checks what the JSON schema can't express and normalizes the payload.
- *
- * @param {{ complete?: boolean, environments?: string[], observations: Array<{ key: string, env: string, state: string, rollout?: number, changedAt?: string }>, flags?: Array<{ key: string, description?: string|null, jiraKeys?: string[] }> }} payload
- * @param {Date} now
- * @returns {{ complete: boolean, environments: string[], observations: Array<{ key: string, env: string, state: string, rollout: number|null, changedAt: Date }>, metaByKey: Map<string, object> }}
- * @throws {IngestPayloadError}
- */
-function checkPayload(payload, now) {
-    const seen = new Map();
-    const observations = [];
-    payload.observations.forEach((obs, i) => {
-        if (DANGEROUS_KEYS.has(obs.key)) throw new IngestPayloadError(`observations[${i}].key is not a valid flag key`);
-        if (obs.rollout !== undefined && obs.state !== 'partial') throw new IngestPayloadError(`observations[${i}]: rollout is only meaningful with state "partial"`);
-        let changedAt = now;
-        if (obs.changedAt !== undefined) {
-            changedAt = new Date(obs.changedAt);
-            const t = changedAt.getTime();
-            if (Number.isNaN(t)) throw new IngestPayloadError(`observations[${i}].changedAt is not a date`);
-            if (t > now.getTime() + MAX_CHANGED_AT_SKEW_MS) throw new IngestPayloadError(`observations[${i}].changedAt is in the future`);
-            if (t < now.getTime() - MAX_CHANGED_AT_AGE_MS) throw new IngestPayloadError(`observations[${i}].changedAt is more than 7 days old`);
-        }
-        const value = { key: obs.key, env: obs.env, state: obs.state, rollout: obs.rollout ?? null, changedAt };
-        const id = `${obs.key}\u0000${obs.env}`;
-        const previous = seen.get(id);
-        if (previous) {
-            if (previous.state !== value.state || previous.rollout !== value.rollout) throw new IngestPayloadError(`conflicting values for ${obs.key}.${obs.env}`);
-            return;
-        }
-        seen.set(id, value);
-        observations.push(value);
-    });
-    const environments = payload.environments || [...new Set(observations.map((o) => o.env))];
-    const outside = observations.find((o) => !environments.includes(o.env));
-    if (outside) throw new IngestPayloadError(`${outside.key}.${outside.env}: environment ${outside.env} is not in "environments"`);
-
-    const observedKeys = new Set(observations.map((o) => o.key));
-    const metaByKey = new Map();
-    for (const [i, meta] of (payload.flags || []).entries()) {
-        if (DANGEROUS_KEYS.has(meta.key)) throw new IngestPayloadError(`flags[${i}].key is not a valid flag key`);
-        if (metaByKey.has(meta.key)) throw new IngestPayloadError(`flags[${i}]: ${meta.key} is listed twice`);
-        // Metadata only travels with values: a sender describes the flags it reports, never someone else's.
-        if (!observedKeys.has(meta.key)) throw new IngestPayloadError(`flags[${i}]: ${meta.key} has no observations in this payload`);
-        metaByKey.set(meta.key, meta);
-    }
-    return { complete: payload.complete !== false, environments, observations, metaByKey };
-}
-
-const sameValue = (row, obs) => row.state === obs.state && (row.rollout === null ? null : Number(row.rollout)) === obs.rollout;
-
-/**
  * Applies one source's message. Resolves the token through its own RLS policy, then works under its tenant, one
  * ingest per tenant at a time. Per observation: ignored when the stored value changed later (a delayed message);
  * written, with a history entry, when it differs from what is stored or the flag had been removed. With
@@ -262,8 +209,6 @@ async function ingestFlags(pool, { token, payload, now = new Date() }) {
              WHERE tenant_id = $1 AND source_id = $2 AND (environment = ANY($3) OR key = ANY($4))`,
             [tenantId, sourceId, environments, keys]
         );
-        const current = new Map(existing.map((r) => [`${r.key}\u0000${r.environment}`, r]));
-
         const { rows: inserted } = await client.query(
             `INSERT INTO flags (tenant_id, key, created_at) SELECT $1, k, $3 FROM unnest($2::text[]) AS k
              ON CONFLICT (tenant_id, key) DO NOTHING RETURNING key`,
@@ -278,19 +223,7 @@ async function ingestFlags(pool, { token, payload, now = new Date() }) {
             );
         }
 
-        const writes = [];
-        let stale = 0;
-        for (const obs of observations) {
-            const before = current.get(`${obs.key}\u0000${obs.env}`);
-            // A message delayed in transit must not undo a newer one already applied.
-            if (before && before.changed_at > obs.changedAt) { stale += 1; continue; }
-            if (before && !before.removed_at && sameValue(before, obs)) continue;
-            writes.push(obs);
-        }
-        const listed = new Set(observations.map((o) => `${o.key}\u0000${o.env}`));
-        const removals = complete
-            ? existing.filter((r) => environments.includes(r.environment) && !r.removed_at && !listed.has(`${r.key}\u0000${r.environment}`))
-            : [];
+        const { writes, removals, stale } = planIngestWrites({ observations, existing, complete, environments });
 
         if (writes.length) {
             const cols = [writes.map((w) => w.key), writes.map((w) => w.env), writes.map((w) => w.state), writes.map((w) => w.rollout), writes.map((w) => w.changedAt)];
@@ -411,10 +344,7 @@ async function setFlagDetails(pool, { tenantId, actorUserId, key, description, j
  */
 async function readDashboardFlags(client, { tenantId, componentOf }) {
     const { rows: sourceRows } = await client.query('SELECT id, name, kind, priority, repo_id FROM flag_sources WHERE tenant_id = $1', [tenantId]);
-    const sources = new Map(sourceRows.map((s) => [s.id, {
-        name: s.name, slot: s.kind === 'runtime' ? 'runtime-be' : 'build', priority: s.priority,
-        component: s.repo_id === null ? null : componentOf(Number(s.repo_id)) || null,
-    }]));
+    const sources = sourceDescriptors(sourceRows, componentOf);
     const { rows: flags } = await client.query(
         'SELECT key, description, jira_keys, manual_description, manual_jira_keys, created_at FROM flags WHERE tenant_id = $1',
         [tenantId]
@@ -430,52 +360,9 @@ async function readDashboardFlags(client, { tenantId, componentOf }) {
         [tenantId]
     );
 
-    const winners = new Map();
-    const componentsOf = new Map();
-    for (const v of values) {
-        const source = sources.get(v.source_id);
-        const id = `${v.key}\u0000${v.environment}\u0000${source.slot}`;
-        const best = winners.get(id);
-        if (!best || source.priority > best.source.priority || (source.priority === best.source.priority && v.changed_at > best.v.changed_at)) {
-            winners.set(id, { v, source });
-        }
-        if (!componentsOf.has(v.key)) componentsOf.set(v.key, new Set());
-        if (source.component) componentsOf.get(v.key).add(source.component);
-    }
-    const flagStates = {};
-    const slotsOf = new Map();
-    for (const { v, source } of winners.values()) {
-        ((flagStates[v.key] ||= {})[v.environment] ||= {})[source.slot] = {
-            enabled: v.state !== 'off',
-            state: v.state,
-            rollout: v.rollout === null ? null : Number(v.rollout),
-            changedAt: v.changed_at.toISOString(),
-            changedBy: v.changed_by,
-            component: source.component,
-            sourceName: source.name,
-        };
-        if (!slotsOf.has(v.key)) slotsOf.set(v.key, new Set());
-        slotsOf.get(v.key).add(source.slot);
-    }
-    const flagsMeta = {};
-    // A flag no source reports any more (removed everywhere, or its sources deleted) is not shown.
-    for (const f of flags.filter((row) => slotsOf.has(row.key))) {
-        flagsMeta[f.key] = {
-            description: f.manual_description || f.description || '',
-            source: slotsOf.get(f.key).has('runtime-be') ? 'runtime-be' : 'build',
-            jiraKeys: [...new Set([...f.jira_keys, ...f.manual_jira_keys, ...(fromJira.get(f.key) || [])])].sort(),
-            components: [...componentsOf.get(f.key)].sort(),
-            createdAt: f.created_at.toISOString(),
-        };
-    }
-    return {
-        flagsMeta,
-        flagStates,
-        flagStateHistory: history.map((h) => ({
-            key: h.key, env: h.environment, source: sources.get(h.source_id).slot, enabled: h.state !== 'off',
-            changedAt: h.changed_at.toISOString(), changedBy: h.changed_by,
-        })),
-    };
+    const { flagStates, slotsOf, componentsOf } = pickWinningValues(values, sources);
+    const flagsMeta = visibleFlagsMeta(flags, { slotsOf, componentsOf }, fromJira);
+    return { flagsMeta, flagStates, flagStateHistory: historyRecords(history, sources) };
 }
 
 module.exports = {

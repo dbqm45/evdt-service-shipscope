@@ -11,14 +11,13 @@ const { createTestDb } = require('./helpers/test-db');
 const { buildApp } = require('../web');
 const { AUTH, fakeGitHub, signIn } = require('./helpers/auth');
 const { fakeAtlassian } = require('./helpers/atlassian');
-const { withScope } = require('../lib/scope');
+const { withScope, RLS_TABLES } = require('../lib/scope');
 
 const USERS = { alice: { id: 870_000_001, login: 'alice' }, bob: { id: 870_000_002, login: 'bob' }, carol: { id: 870_000_003, login: 'carol' } };
 const SITE = { id: 'cloud-a', url: 'https://acme.atlassian.net', name: 'acme', scopes: ['read:jira-work'] };
 const ATLASSIAN = { clientId: 'atl-client', clientSecret: 'atl-secret', encryptionKey: crypto.randomBytes(32), webhookUrl: 'https://shipscope.example/webhooks/jira' };
-// Every table that holds tenant data: after deleting a tenant, none of them may keep a row of it.
-const TENANT_TABLES = ['memberships', 'invitations', 'github_installations', 'tracked_repos', 'deployments', 'issue_deployments', 'flag_sources',
-    'ingest_tokens', 'flags', 'flag_values', 'flag_value_history', 'jira_connections', 'jira_boards', 'jira_pis', 'jira_issues'];
+// Every RLS table holds tenant data (scope.js's RLS_TABLES): after deleting a tenant, none of them may keep a row of it.
+const TENANT_TABLES = RLS_TABLES;
 
 const sprint = { id: 103, name: 'Sparks 27.3.2', state: 'active', startDate: '2026-10-01', endDate: '2026-10-30' };
 const issue = {
