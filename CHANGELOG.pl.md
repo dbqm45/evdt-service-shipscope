@@ -7,6 +7,12 @@ dashboard, nie publikowany pakiet), dlatego wpisy są pogrupowane według dat. I
 ShipScope, znajdują się w `README.pl.md`, pełne techniczne odniesienie w `CLAUDE.md` (po angielsku), a
 wyjaśnienie sposobu liczenia poszczególnych wartości/badge'y w `FAQ.pl.md`.
 
+## [0.2.1] - 2026-10-17
+
+### Nowe
+
+- **SHP:** add npm run dev and drop the frontend's file mode (#41)
+
 ## [0.2.0] - 2026-10-17
 
 ### Niezgodne
