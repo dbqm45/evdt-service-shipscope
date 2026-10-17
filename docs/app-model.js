@@ -8,25 +8,13 @@ function componentDeployments(component, environment){
     return state.deployments.filter(d=> d.component === component && d.environment === environment && d.status==='success');
 }
 function currentVersion(component, environment){
-    // Fast path: precomputed by sync-github-deployments.js (SUMMARY_PATH) from the exact same "latest
-    // successful record per component/env" logic this function otherwise redoes by scanning the full
-    // (potentially large) state.deployments array — see loadData()'s own fetch comment. A present entry
-    // is trusted outright, including a `current: null` (no successful deployment yet) — it's the same
-    // underlying data, just already reduced. Only a *missing* component/env (summary.json predates that
-    // component's onboarding, or is unreachable/fallback data) falls through to the full scan below.
-    const cached = state.summary && state.summary.components[component] && state.summary.components[component][environment];
-
-    if (cached) {
-        return cached.current;
-    }
-
     const list = componentDeployments(component, environment).sort((a, b) => new Date(b.deployedAt) - new Date(a.deployedAt));
 
     return list[0] || null;
 }
 /** Falls back to state.issueDeployments (never trimmed, unlike state.deployments — see
- *  sync-github-deployments.js's ISSUE_DEPLOYMENTS_PATH) when the live record has aged out of
- *  deployments.json. The synthesized stand-in only carries what callers actually read off a real record
+ *  the server's issue_deployments table) when the live record has aged out of
+ *  retention. The synthesized stand-in only carries what callers actually read off a real record
  *  here (deployedAt/commitUrl) — enough for release-status joins and ghostFlagAge's own deployedAt read. */
 function issueDeployedOnComponent(component, issueKey, env) {
     const live = componentDeployments(component, env).find(d => (d.relatedIssues || []).includes(issueKey));
@@ -252,7 +240,7 @@ function isRealPi(pi){
 }
 
 /** Sorts PI labels ("PI-27.2") and sprint names (any string with a "27.2.3"-shaped run of numbers in it,
- *  same numeric shape sync-jira.js's extractPiFromSprintName looks for) newest-first, e.g. 27.2 before
+ *  same numeric shape the server's extractPiFromSprintName looks for) newest-first, e.g. 27.2 before
  *  26.5, and 27.2.3 before 27.2.2. Falls back to a plain descending string compare when neither string has
  *  that shape, so an odd/unassigned label still sorts deterministically instead of throwing. */
 function compareVersionDesc(a, b){
@@ -425,15 +413,15 @@ function epicHasOpenBug(children){
     return children.some(c => c.type === ISSUE_TYPE.BUG && c.statusCategory !== 'done');
 }
 
-/** The PI the team is presumed to be working in right now — resolved server-side by sync-jira.js (from a
+/** The PI the team is presumed to be working in right now — resolved server-side (server/lib/jira-model.js) (from a
  *  configured board's active sprint, falling back to the highest PI seen among synced non-Epic issues —
- *  see CLAUDE.md's Jira issues section) and shipped in `data/jira-issues/index.json`; `state.jiraIssues` holds
+ *  see CLAUDE.md's Jira issues section) and shipped in `jiraIndex`; `state.jiraIssues` holds
  *  only the selected PI (`state.selectedPi`), so it can't be found client-side. */
 function currentPi(){
     return (state.jiraIndex && state.jiraIndex.currentPi) || null;
 }
 
-/** The index entry of an increment (`data/jira-issues/index.json`'s `pis`), or null. */
+/** The index entry of an increment (`jiraIndex.pis`), or null. */
 function incrementEntry(pi){
     return ((state.jiraIndex && state.jiraIndex.pis) || []).find(e => e.pi === pi) || null;
 }
@@ -469,8 +457,8 @@ const SPRINT_ALL = '';
  *  name, so it can never collide with one. */
 const SPRINT_CURRENT_PLUS_UNRESOLVED = '__current_plus_unresolved__';
 
-/** The sprint objects (`{name, startDate, endDate}`) `index.json` carries for whichever PI is currently
- *  loaded — the same list `sync-jira.js` rolls up from the raw Jira Sprint field, at zero extra fetch
+/** The sprint objects (`{name, startDate, endDate}`) `jiraIndex` carries for whichever PI is currently
+ *  loaded — the same list the server rolls up from the raw Jira Sprint field, at zero extra fetch
  *  cost (see CLAUDE.md's Jira issues section). */
 function sprintsForSelectedPi(){
     const entry = (state.jiraIndex && state.jiraIndex.pis || []).find(e => e.pi === state.selectedPi);
@@ -529,7 +517,7 @@ function issuesInSprintScope(issues){
     return names ? issues.filter(i => names.includes(i.sprint)) : issues;
 }
 
-/** `state.issueStatusIndex` (status-index.json, cross-PI — see CLAUDE.md's Jira issues section) knows
+/** `state.issueStatusIndex` (cross-PI, from the server's buildJiraIndex()) knows
  *  which PI an issue key belongs to *right now*, independent of whichever PI shard happens to be loaded
  *  into `state.jiraIssues`. An issue that moved to a different PI since the currently-selected PI's shard
  *  was last synced would otherwise just sit there showing a status frozen at that last-sync moment, with

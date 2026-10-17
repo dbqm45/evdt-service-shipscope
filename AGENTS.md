@@ -17,7 +17,7 @@ ShipScope is a multi-tenant deployment / feature-flag / Jira dashboard: a backen
 ## Build, test, and development
 
 - `npm test` runs the root suite (`node --test "test/*.test.js"`: frontend, release scripts, boundary check); `cd server && npm install && npm test` runs the backend's (real-Postgres tests need `TEST_DATABASE_URL`, see `@server/README.md`).
-- Preview the dashboard by opening `docs/index.html` directly (it shows built-in sample data), or run the server (see `@server/README.md`).
+- Run everything locally with `npm run dev` (Node 20+, Docker): database, migrations, server and worker, then it prints the link to open. Opening `docs/index.html` directly shows built-in sample data.
 
 ## Coding style & testing
 

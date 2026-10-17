@@ -8,23 +8,6 @@
     <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="style.css">
 
-    <!-- Preload the JSON data loadData() (app-data.js) fetches on startup, so the browser starts
-         downloading them during HTML parsing instead of waiting for the scripts to load and run first.
-         `as="fetch" crossorigin` is required for a preload to actually be reused by a later fetch()
-         call (fetch()'s default request mode is "cors"); without it the browser fetches each file
-         twice and logs an unused-preload warning. jira-issues/{pi}.json is deliberately not preloaded
-         here — which shard to load is only known after index.json itself comes back. -->
-    <link rel="preload" href="data/deployments.json" as="fetch" crossorigin>
-    <link rel="preload" href="data/flags-meta.json" as="fetch" crossorigin>
-    <link rel="preload" href="data/flag-states.json" as="fetch" crossorigin>
-    <link rel="preload" href="data/jira-issues/index.json" as="fetch" crossorigin>
-    <link rel="preload" href="data/flag-state-history.json" as="fetch" crossorigin>
-    <link rel="preload" href="components.json" as="fetch" crossorigin>
-    <link rel="preload" href="data/jira-issues/status-index.json" as="fetch" crossorigin>
-    <link rel="preload" href="data/issue-deployments.json" as="fetch" crossorigin>
-    <link rel="preload" href="data/sync-meta.json" as="fetch" crossorigin>
-    <link rel="preload" href="data/summary.json" as="fetch" crossorigin>
-
     <script>
         try {
             if (localStorage.getItem('shipscope-theme') === 'light') document.documentElement.setAttribute('data-theme', 'light');

@@ -72,7 +72,8 @@ Bez trzech ostatnich logowanie działa, ale podłączanie repozytoriów i synchr
 
 ## 2. Zmienne środowiskowe
 
-Lokalnie: `cp server/.env.example server/.env` i uzupełnij. W Renderze: te same nazwy w ustawieniach
+Lokalnie: `npm run dev` (w katalogu głównym repozytorium) tworzy `server/.env`, bazę i — przy pierwszym
+uruchomieniu — aplikację GitHub; resztę (np. Atlassian) dopisujesz do `server/.env` ręcznie. W Renderze: te same nazwy w ustawieniach
 serwisów (`render.yaml` ustawia `DATABASE_URL` sam; sekrety mają `sync: false`, czyli wpisujesz je ręcznie).
 
 | Zmienna | Web | Worker | Uwagi |

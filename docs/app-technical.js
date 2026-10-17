@@ -4,9 +4,8 @@
 // fourth file, since nothing outside this group of four needs them at load time.
 
 /**
- * Orders by components.json's own array (fetched in loadData) instead of alphabetically — same file
- * onboarding a component already edits, so display order just follows it with nothing extra to keep in
- * sync. Any component missing from that list (or the list itself missing) sorts alphabetically instead.
+ * Orders by `state.componentsOrder` (the workspace's tracked repos, as the dashboard data lists them) instead of
+ * alphabetically. Any component missing from that list sorts alphabetically after it.
  */
 function orderedComponents(list){
     const order = (state.componentsOrder || []).map(c => c.name);
@@ -16,7 +15,7 @@ function orderedComponents(list){
     return [...known, ...unknown];
 }
 
-/** Metadata entry for a component name from components.json, or null if it's not listed there. */
+/** Metadata entry for a component name from `state.componentsOrder`, or null if it's not listed there. */
 function componentMeta(name){
     return (state.componentsOrder || []).find(c => c.name === name) || null;
 }
@@ -32,7 +31,7 @@ function componentsForIssue(issue){
     return [...new Set([...fromLinks, ...fromDeploys])];
 }
 
-/** Applications a component belongs to — `application` in components.json is an array, since a
+/** Applications a component belongs to — `application` on a `componentsOrder` entry is an array, since a
  *  component can be shared across more than one application (e.g. a BFF used by two frontends). Falls
  *  back to the component's own name (a singleton group) when unset/empty (null/unconfirmed). */
 function applicationsForComponent(name){
@@ -48,7 +47,7 @@ function applicationsForIssue(issue){
 }
 
 /** Same ordering pattern as orderedComponents() above, but over application names derived from
- *  components.json's own array order, so onboarding order still drives display order. */
+ *  `state.componentsOrder`'s order. */
 function orderedApplications(list){
     const order = [];
 

@@ -16,7 +16,7 @@ function switchToTab(view){
 /**
  * Populates and wires the one PI selector shared by Product view, Release Notes, and Insights (see
  * CLAUDE.md's Jira issues section — all three render one PI at a time). Options come from
- * `state.jiraIndex.pis` (already sorted newest-first, same order sync-jira.js wrote them in); the
+ * `state.jiraIndex.pis` (already sorted newest-first, same order the server's buildJiraIndex() returns); the
  * server-resolved `currentPi()` gets a visible marker so switching away and back is obvious. On change,
  * fetches the newly-selected PI's shard, swaps it into `state.jiraIssues`/`state.selectedPi`, then
  * refreshes+resets both tabs' filters (reusing their own Clear buttons, so there's exactly one place

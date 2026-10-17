@@ -146,8 +146,7 @@ async function untrackRepo(pool, { tenantId, actorUserId, repoId }) {
 }
 
 /**
- * A tracked repo's version/drift settings (what docs/components.json's `versionFile`/`driftIgnorePaths` are for the
- * file-based sync). Clears the stored drift, so the next sync recomputes it under the new settings. Admins only.
+ * A tracked repo's version/drift settings (`version_file`, `drift_ignore_paths`). Clears the stored drift, so the next sync recomputes it under the new settings. Admins only.
  *
  * @param {import('pg').Pool} pool
  * @param {{ tenantId: string, actorUserId: string, repoId: number, versionFile: string|null, driftIgnorePaths: string[] }} input

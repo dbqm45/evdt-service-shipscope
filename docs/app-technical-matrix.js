@@ -4,7 +4,7 @@
 
 /* ---------- Rendering: technical view ---------- */
 /** True when a record's `driftBehind` says its code differs from the previous stage. New records carry `diff`
- *  (tree comparison, see sync-github-deployments.js); records written before it existed only carry the raw
+ *  (tree comparison, see server/lib/env-drift.js); records written before it existed only carry the raw
  *  commit counts, which still count as drift so older data keeps showing the marker. */
 function hasDrift(drift){
     return !!(drift && (drift.diff || drift.commitCount || drift.untestedCommitCount));
@@ -17,7 +17,7 @@ function driftComparedEnv(drift){
 
 /** The title row of one env card: bars icon, env name, service count, and a "latest builds" / "N differ from X" /
  *  "in sync with X" note — every env after the first compares against the previous stage in the promotion
- *  chain (test -> qa -> prod), same chain driftBehind already walks in sync-github-deployments.js. */
+ *  chain (test -> qa -> prod), same chain driftBehind already walks in server/lib/env-drift.js. */
 function envCardHeaderHtml(env, envIndex, components){
     const prevEnv = ENVIRONMENTS[envIndex - 1];
     const behindCount = prevEnv

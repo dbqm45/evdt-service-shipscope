@@ -239,7 +239,7 @@ function resetIssuePagination(){
 }
 
 /**
- * Repopulates the Sprint scope `<select>` from whichever PI is currently loaded (`index.json`'s `sprints`
+ * Repopulates the Sprint scope `<select>` from whichever PI is currently loaded (`jiraIndex`'s `sprints`
  * for that PI) and resets `state.selectedSprint` to this PI's default — the literal current sprint's name
  * when one can be resolved, else "All sprints" (never the Gap B hybrid option below — that one is opt-in
  * only, never a default). Called once at init and again on every PI switch

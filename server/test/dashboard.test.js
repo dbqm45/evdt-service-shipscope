@@ -65,8 +65,7 @@ test('only the dashboard\'s own assets are served -- never data/*.json or config
 
     for (const url of [
         `/t/${tenantId}/data/deployments.json`,
-        `/t/${tenantId}/components.json`,
-        `/t/${tenantId}/jira-spaces.json`,
+        `/t/${tenantId}/GLOSSARY.md`,
         `/t/${tenantId}/app-missing.js`,
         `/t/${tenantId}/index.html`,
         `/t/${tenantId}/..%2Fpackage.json`,
@@ -115,7 +114,7 @@ test('dashboard-data: the tenant\'s deployments in the data/*.json shapes the vi
     assert.deepStrictEqual(data.issueDeployments, { 'ABC-1': { prod: { web: { deployedAt: '2026-10-15T10:00:00.000Z', commitUrl: 'https://github.com/acme/web/compare/a...b' } } } });
     assert.strictEqual(data.lastSyncedAt, '2026-10-16T11:00:00.000Z');
     assert.strictEqual(data.jiraBrowseUrl, null, 'no Jira connected: keys stay unlinked rather than pointing at another site');
-    assert.deepStrictEqual([data.flagsMeta, data.flagStates, data.jiraIndex, data.summary], [{}, {}, { currentPi: null, pis: [] }, { components: {} }]);
+    assert.deepStrictEqual([data.flagsMeta, data.flagStates, data.jiraIndex], [{}, {}, { currentPi: null, pis: [] }]);
 
     const mallory = await signIn(app, 'mallory');
     assert.strictEqual((await app.inject({ method: 'GET', url: `/api/tenants/${tenantId}/dashboard-data`, cookies: { sid: mallory } })).statusCode, 404);

@@ -4,6 +4,7 @@
   "private": true,
   "description": "ShipScope — no dependencies; this file exposes `npm test` and the release scripts (RELEASING.md).",
   "scripts": {
+    "dev": "node server/scripts/dev.js",
     "test": "node --test \"test/*.test.js\"",
     "release": "node scripts/release.js",
     "lint:commit": "node scripts/check-commit-message.js",

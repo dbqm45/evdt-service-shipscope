@@ -32,8 +32,8 @@ The SaaS-pivot backend scoped by `@context/foundation/prd.md`, deployed to Rende
   An admin sets the version file and ignore patterns per repo (`PUT .../github/repos/:repoId/settings`).
 
 - **Dashboard** (`docs/`, served by the Web Service at `/t/<tenantId>/`): the existing page, whose
-  `app-data.js` recognizes that path and loads the tenant's data from `/api/tenants/<tenantId>/dashboard-data`
-  (same shapes as the file-based `data/*.json`) instead of static files.
+  `app-data.js` recognizes that path and loads the tenant's data from `/api/tenants/<tenantId>/dashboard-data`.
+  Opened anywhere else, the page shows built-in sample data.
 
 Each deploy also records whether its GitHub Actions run was started by hand (`manual`, needs the App's
 **Actions** read permission; without it the flag stays unknown) and the creator's public display name
@@ -135,10 +135,10 @@ Webhooks (migration `013`; the worker picks up what they ask for every 30 second
 |---|---|---|
 | `POST /webhooks/github` | `X-Hub-Signature-256` with `GITHUB_APP_WEBHOOK_SECRET` (route off without it) | A `deployment_status` (or `deployment`) event queues a sync of its repo, in every tenant that tracks it. Other events are accepted and ignored. 202 `{ queued }`; 401 for a missing or wrong signature, 400 for a body that isn't JSON, 415 for one that isn't `application/json`. |
 | `POST /webhooks/jira` | `Authorization: Bearer <JWT>`, HS256 with `ATLASSIAN_CLIENT_SECRET` | An issue event from a webhook ShipScope registered queues a sync of the tenant(s) it names (`matchedWebhookIds`, else the issue's site). 202 `{ queued }`; 401 for a missing, forged, expired or non-HS256 token. |
-| `GET /t/:tenantId/` | session + member (else sign-in and back) | The dashboard page (`docs/index.html`, minus its `data/*.json` preload hints). |
+| `GET /t/:tenantId/` | session + member (else sign-in and back) | The dashboard page (`docs/index.html`). |
 | `GET /t/:tenantId/:asset` | — | `style.css`, `favicon.svg`, `app-*.js` only (the same public code GitHub Pages serves). |
 | `GET /api/tenants/:tenantId/jira-issues?pi=PI-27.3` | session + member | One PI's issues (what a `data/jira-issues/<PI>.json` shard holds); `pi=@now` gives every board's current increment together. |
-| `GET /api/tenants/:tenantId/dashboard-data` | session + member | Everything the page loads, in the `data/*.json` shapes: `deployments` (repo short name as `component`; `version` is the resolved release/tag/version-file/message label, else the short sha; `driftBehind` on each environment's latest successful deploy), `issueDeployments`, `componentsOrder` (tracked repos), `lastSyncedAt`, `flagsMeta`/`flagStates`/`flagStateHistory` (flags some source still reports; each value also carries `state`, `rollout` and `sourceName`); `jiraIndex` (current increment -- `@now` when boards are in different ones -- and every synced increment with its `kind` (`pi`/`sprint`/`now`) and sprints) and `issueStatusIndex` (per issue key, its newest PI). |
+| `GET /api/tenants/:tenantId/dashboard-data` | session + member | Everything the page loads (shapes in CLAUDE.md, "Dashboard data"): `deployments` (repo short name as `component`; `version` is the resolved release/tag/version-file/message label, else the short sha; `driftBehind` on each environment's latest successful deploy), `issueDeployments`, `componentsOrder` (tracked repos), `lastSyncedAt`, `flagsMeta`/`flagStates`/`flagStateHistory` (flags some source still reports; each value also carries `state`, `rollout` and `sourceName`); `jiraIndex` (current increment -- `@now` when boards are in different ones -- and every synced increment with its `kind` (`pi`/`sprint`/`now`) and sprints) and `issueStatusIndex` (per issue key, its newest PI). |
 
 Deployments and settings:
 
@@ -266,49 +266,41 @@ not stripped or coerced).
 
 ## Running locally
 
-Everything to configure outside the code (GitHub App settings and permissions, environment variables,
-first steps for a tenant) is collected in [SETUP.pl.md](SETUP.pl.md) (Polish).
+One command, from the repo root or from `server/` (needs Node 20+ and Docker running):
 
-1. Start Postgres and apply migrations:
+```bash
+npm run dev
+```
 
-   ```bash
-   docker run -d --name shipscope-pg -e POSTGRES_PASSWORD=postgres -p 5432:5432 postgres:16-alpine
-   npm install
-   cp .env.example .env            # gitignored
-   node --env-file=.env scripts/migrate.js
-   ```
+It installs the dependencies (`npm ci`), creates `server/.env` from `.env.example`, starts Postgres in Docker
+(container and volume `shipscope-dev-pg`, port 54329), creates the database `shipscope` owned by a non-superuser
+role `shipscope_app` (as on Render, so Row-Level Security really applies), applies the migrations, starts the Web
+Service and the worker, and prints the address to open (`http://localhost:3000/`). Ctrl+C stops both; the database
+keeps running (`docker stop shipscope-dev-pg`). If `server/.env` already points `DATABASE_URL` at another database,
+that one is used and Docker is left alone.
 
-   `DATABASE_SSL=false` (already in `.env.example`) is required for this local container: `lib/db.js`
-   uses TLS by default because Render's Postgres requires it.
+**First run: the GitHub App.** Signing in needs a GitHub App. When `server/.env` has none, `npm run dev` first
+prints a link to a local page with one button; GitHub then creates a private App for this server from a manifest
+(callback `http://localhost:3000/auth/github/callback`, setup URL `/github/setup` with redirect on update,
+read-only Metadata, Deployments, Contents and Actions, webhook inactive) and the script saves its five
+`GITHUB_APP_*` values to `server/.env`. Set `SHIPSCOPE_DEV_GITHUB_ORG=<org>` (environment or `server/.env`) to create
+it under an organization instead of your account; a private App can only be installed on the account that owns it.
+To use an App you already have, fill `GITHUB_APP_CLIENT_ID`/`_SECRET` (and `GITHUB_APP_ID`/`_SLUG`/`_PRIVATE_KEY` for
+repo connections) in `server/.env` yourself. The deployed environment needs its own App; settings in
+[SETUP.pl.md](SETUP.pl.md) (Polish).
 
-2. Register a GitHub App for development (GitHub → Settings → Developer settings → GitHub Apps → New):
-   - **Callback URL**: `http://localhost:3000/auth/github/callback`
-   - **Webhook**: untick "Active" locally (GitHub can't reach localhost; see SETUP.pl.md for the deployed App)
-   - **Permissions**: none needed for sign-in
-   - Copy the **Client ID**, generate a **client secret**, put both in `.env`.
+**Jira** is optional: create an Atlassian OAuth 2.0 (3LO) app (callback `http://localhost:3000/auth/atlassian/callback`, scopes
+in [SETUP.pl.md](SETUP.pl.md))
+and put `ATLASSIAN_CLIENT_ID`, `ATLASSIAN_CLIENT_SECRET` and `TOKEN_ENCRYPTION_KEY` (`openssl rand -base64 32`) into
+`server/.env`, then restart `npm run dev`.
 
-   Use a separate GitHub App (or add a second callback URL) for the deployed environment.
+After signing in you land on `/start` (create a workspace) until you have one, and on its dashboard
+(`/t/<tenantId>/`) afterwards; configuration is on `/t/<tenantId>/settings`. A manual test checklist for everything
+that needs real GitHub, Atlassian and Render accounts is in [TESTY-RECZNE.pl.md](TESTY-RECZNE.pl.md) (Polish).
 
-   To connect repos (FR-004), configure the same App further and add its server-to-server credentials:
-   - **Setup URL**: `http://localhost:3000/github/setup`, with **Redirect on update** ticked
-   - **Request user authorization (OAuth) during installation**: leave unticked (ShipScope signs the user in
-     itself after the setup redirect, to verify the installation)
-   - **Repository permissions**: Metadata, **Deployments**, **Contents** and **Actions**, all read-only
-     (Contents for the commit range of each deploy, tags, releases, the version file and the git trees compared
-     for drift; Actions only to tell a manually started deploy run apart -- optional, without it that badge is
-     never shown)
-   - **Where can this GitHub App be installed?**: Any account, so other organizations can install it
-   - Put the **App ID**, the App's URL name (**slug**, the last part of its public page URL) and a generated
-     **private key** (the `.pem` file's contents) into `.env` as `GITHUB_APP_ID`, `GITHUB_APP_SLUG` and
-     `GITHUB_APP_PRIVATE_KEY`. Without these three, sign-in still works and the GitHub routes are off.
-
-3. `npm run dev`, then open `http://localhost:3000/`. After GitHub you land on `/start` (create a workspace) until
-   you have one, and on its dashboard (`/t/<tenantId>/`) afterwards; configuration is on `/t/<tenantId>/settings`.
-   A manual test checklist for everything that needs real GitHub, Atlassian and Render accounts is in
-   [TESTY-RECZNE.pl.md](TESTY-RECZNE.pl.md) (Polish).
-
-Other commands: `npm start` (Web Service, env from the process), `npm run worker` (heartbeat, deployment sync when the `GITHUB_APP_*` variables are set, daily retention cleanup),
-`npm run migrate` (pending `migrations/*.sql`).
+Separate commands, for when you run the pieces yourself: `npm start` (Web Service, env from the process),
+`npm run worker` (heartbeat, deployment and Jira sync when configured, daily retention cleanup), `npm run migrate`
+(pending `migrations/*.sql`).
 
 ## Testing
 

@@ -14,6 +14,16 @@ Działa jako hostowana usługa dla wielu organizacji: każda dostaje workspace, 
 witrynę Jiry i widzi dashboard pod własnym adresem. Backend (`server/`, Node.js + Postgres) synchronizuje dane;
 dashboard to prosta strona HTML/JS (`docs/`).
 
+## Uruchomienie lokalne
+
+```bash
+npm run dev
+```
+
+Wymaga Node.js 20+ i Dockera. Polecenie uruchamia bazę danych, stosuje migracje, startuje serwer i worker, a na
+końcu wypisuje link do otwarcia; przy pierwszym uruchomieniu prosi o jedno kliknięcie, którym GitHub tworzy
+aplikację do logowania. Szczegóły: [server/README.md](server/README.md#running-locally).
+
 ## Co pokazuje
 
 Dwa widoki, oba czytające te same dane źródłowe:

@@ -37,7 +37,7 @@ function loadApp() {
 const dep = (component, env, extra = {}) => ({ component, environment: env, status: 'success', deployedAt: daysAgo(1), relatedIssues: [], ...extra });
 const flagState = (enabled, changedAt) => ({ prod: { build: { enabled, changedAt } }, qa: { build: { enabled, changedAt } } });
 
-test('componentDeployments / currentVersion: scan, ordering and summary fast path', () => {
+test('componentDeployments / currentVersion: latest successful deploy per component/env', () => {
     const { run, j, setState } = loadApp();
 
     setState({ deployments: [
@@ -48,17 +48,6 @@ test('componentDeployments / currentVersion: scan, ordering and summary fast pat
     assert.equal(run('currentVersion("c","prod").id'), 'new');
     assert.equal(run('currentVersion("c","qa")'), null);
 
-    // summary present but missing this component/env -> falls through to the scan
-    setState({ summary: { components: { x: {} } }, deployments: [dep('c', 'prod', { id: 's' })] });
-    assert.equal(run('currentVersion("c","prod").id'), 's');
-    setState({ summary: { components: { c: {} } }, deployments: [dep('c', 'prod', { id: 's' })] });
-    assert.equal(run('currentVersion("c","prod").id'), 's');
-
-    // present entry is trusted outright, even a null current
-    setState({ summary: { components: { c: { prod: { current: { id: 'cached' }, latestOverall: null } } } }, deployments: [dep('c', 'prod', { id: 's' })] });
-    assert.equal(run('currentVersion("c","prod").id'), 'cached');
-    setState({ summary: { components: { c: { prod: { current: null, latestOverall: null } } } }, deployments: [dep('c', 'prod', { id: 's' })] });
-    assert.equal(run('currentVersion("c","prod")'), null);
     assert.deepEqual(j('currentVersion("c","qa")'), null);
 });
 
