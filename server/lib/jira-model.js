@@ -7,6 +7,9 @@
 
 const DEFAULT_PI_PATTERN = /(\d+\.\d+)\.\d+/;
 const TEMPLATE_MAX_LENGTH = 100;
+// The dashboard's "Now" increment: every selected board's current one together (teams in different rhythms --
+// a PI, a sprint -- are all "now" at once). Not a name Jira can produce: increments are PI labels or sprint names.
+const NOW_KEY = '@now';
 
 class RhythmTemplateError extends Error {}
 
@@ -205,6 +208,85 @@ function previousPiOf(sprints, pi, rhythm) {
     return i >= 0 && i + 1 < pis.length ? pis[i + 1] : null;
 }
 
+/**
+ * The increments to sync for a board, current first (none when it has nothing current: no sprints in a sprint
+ * rhythm, no versions for a release, no project for a release or flow month): each with its JQL, the board's
+ * sprints in it, and its entries for the index's sprint list. A board's first sync also takes the increment
+ * before the current one. Pure: `sprints`/`versions` are already fetched (deciding *whether* to fetch them --
+ * cheapest when the rhythm is already known -- is the caller's job, since that's about the API calls, not this
+ * decision).
+ *
+ * @param {{ board: { project_key: string|null, rhythm: 'auto'|'pi'|'sprint'|'release'|'flow', pi_template: string|null }, sprints: array, versions?: array, firstSync: boolean, now: Date }} input
+ * @returns {Array<{ pi: string, kind: 'pi'|'sprint'|'release'|'flow', jql: string, sprints: array, index: array }>}
+ */
+function planBoardIncrements({ board, sprints, versions = [], firstSync, now }) {
+    const projectKey = typeof board.project_key === 'string' && PROJECT_KEY.test(board.project_key) ? board.project_key : null;
+    const rhythm = rhythmOf({ rhythm: board.rhythm, piTemplate: board.pi_template }, sprints, versions);
+
+    if (rhythm.kind === 'release') {
+        const current = projectKey ? currentReleaseOf(versions) : null;
+        if (!current) return [];
+        const previous = firstSync ? previousReleaseOf(versions, current) : null;
+        return [current, previous].filter(Boolean).map((v) => {
+            const pi = releaseName(projectKey, v.name);
+            return { pi, kind: 'release', jql: releaseJql(projectKey, v.id), sprints: [], index: [{ name: pi, startDate: v.startDate, endDate: v.releaseDate }] };
+        });
+    }
+    if (rhythm.kind === 'flow') {
+        if (!projectKey) return [];
+        return (firstSync ? [0, -1] : [0]).map((offset) => {
+            const month = flowMonth(now, offset);
+            return {
+                pi: month.name, kind: 'flow', jql: flowJql(projectKey, month, offset === 0), sprints: [],
+                index: [{ name: month.name, startDate: `${month.start}T00:00:00.000Z`, endDate: `${month.end}T00:00:00.000Z` }],
+            };
+        });
+    }
+    const current = currentPiOf(sprints, rhythm);
+    if (!current) return [];
+    const previous = firstSync ? previousPiOf(sprints, current, rhythm) : null;
+    return [current, previous].filter(Boolean).map((pi) => {
+        const inPi = sprints.filter((s) => piOfSprint(s.name, rhythm) === pi);
+        return {
+            pi,
+            kind: rhythm.kind === 'pi' && inPi.some((s) => extractPiFromSprintName(s.name, rhythm.pattern)) ? 'pi' : 'sprint',
+            jql: `sprint in (${inPi.map((s) => s.id).join(',')}) ORDER BY key`,
+            sprints: inPi,
+            index: inPi.map((s) => ({ name: s.name, startDate: s.startDate, endDate: s.endDate })),
+        };
+    });
+}
+
+/**
+ * The dashboard's jira-issues index (data/jira-issues/index.json shape) plus the per-issue newest-increment
+ * status (status-index.json shape), given a tenant's synced PI rows, its raw issue (key, pi, statusCategory)
+ * rows, and its boards' current increments. More than one current increment (teams in different rhythms)
+ * joins them under NOW_KEY, so the dashboard opens on every team at once.
+ *
+ * @param {{ pis: Array<{ pi: string, kind: string, sprints: array }>, issues: Array<{ key: string, pi: string, status_category: string|null }>, current: string[] }} input
+ * @returns {{ jiraIndex: { currentPi: string|null, pis: object[] }, issueStatusIndex: object }}
+ */
+function buildJiraIndex({ pis, issues, current }) {
+    const sorted = [...pis].sort((a, b) => comparePiDesc(a.pi, b.pi));
+    const rank = new Map(sorted.map((p, i) => [p.pi, i]));
+    const issueStatusIndex = {};
+    for (const i of [...issues].sort((a, b) => rank.get(a.pi) - rank.get(b.pi))) {
+        if (!issueStatusIndex[i.key]) issueStatusIndex[i.key] = { pi: i.pi, statusCategory: i.status_category };
+    }
+    const entries = sorted.map((p) => ({ pi: p.pi, kind: p.kind, file: `${String(p.pi).replace(/[^A-Za-z0-9.-]/g, '_')}.json`, sprints: p.sprints }));
+    if (current.length > 1) {
+        const joined = entries.filter((e) => current.includes(e.pi));
+        entries.unshift({
+            pi: NOW_KEY, kind: 'now', label: `Now: ${current.join(', ')}`, file: 'now.json', includes: current,
+            sprints: joined.flatMap((e) => e.sprints),
+        });
+    }
+    return {
+        jiraIndex: { currentPi: current.length > 1 ? NOW_KEY : current[0] || null, pis: entries },
+        issueStatusIndex,
+    };
+}
+
 // Localized names of the types the dashboard knows, for instances without hierarchyLevel on issue types.
 const TYPE_NAMES = { epic: 'Epic', epik: 'Epic', story: 'Story', historyjka: 'Story', bug: 'Bug', 'błąd': 'Bug', task: 'Task', zadanie: 'Task' };
 
@@ -320,6 +402,8 @@ function mapIssue(raw, fieldIds, { pi, sprintsInScope, sprint: fallbackSprint = 
 }
 
 module.exports = {
+    NOW_KEY,
     RhythmTemplateError, extractPiFromSprintName, compileTemplate, rhythmOf, piOfSprint, comparePiDesc, currentPiOf, previousPiOf,
     releaseName, currentReleaseOf, previousReleaseOf, flowMonth, releaseJql, flowJql, issueType, issueFields, extractFlagKeys, mapIssue,
+    planBoardIncrements, buildJiraIndex,
 };

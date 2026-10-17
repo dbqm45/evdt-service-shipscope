@@ -4,6 +4,7 @@ const crypto = require('crypto');
 const {
     piOfSprint, currentPiOf, previousPiOf, issueType, mapIssue, comparePiDesc, compileTemplate, rhythmOf, RhythmTemplateError,
     releaseName, currentReleaseOf, previousReleaseOf, flowMonth, releaseJql, flowJql, extractFlagKeys, issueFields,
+    planBoardIncrements, buildJiraIndex, NOW_KEY,
 } = require('../lib/jira-model');
 
 const FIELD_IDS = { sprintFieldId: 'customfield_10020', epicLinkFieldId: 'customfield_10014', flaggedFieldId: 'customfield_10021' };
@@ -137,6 +138,80 @@ test('jira model: an issue mapped to the dashboard shape, its sprint taken from 
     assert.deepStrictEqual(['Epik', 'Historyjka', 'Błąd', 'Zadanie', 'Spike'].map((name) => issueType({ name, hierarchyLevel: name === 'Epik' ? 1 : 0 })), ['Epic', 'Story', 'Bug', 'Task', 'Task']);
     assert.strictEqual(issueType({ name: 'Initiative', hierarchyLevel: 2 }), null);
     assert.strictEqual(issueType({ name: 'Bug', subtask: true, hierarchyLevel: -1 }), null, 'a sub-task type named like a standard one is still a sub-task');
+});
+
+test('jira model: planBoardIncrements -- a pi/sprint board takes the current (plus the previous on its first sync)', () => {
+    const board = { board_id: 10, project_key: 'ABC', rhythm: 'pi', pi_template: null };
+    const sprints = [sp(1, 'S 27.2.1', 'closed', null, '2026-07-01'), sp(2, 'S 27.3.1', 'active')];
+
+    const notFirst = planBoardIncrements({ board, sprints, versions: [], firstSync: false, now: new Date('2026-08-01') });
+    assert.deepStrictEqual(notFirst.map((inc) => inc.pi), ['PI-27.3']);
+    assert.strictEqual(notFirst[0].kind, 'pi');
+    assert.match(notFirst[0].jql, /^sprint in \(2\) ORDER BY key$/);
+
+    const first = planBoardIncrements({ board, sprints, versions: [], firstSync: true, now: new Date('2026-08-01') });
+    assert.deepStrictEqual(first.map((inc) => inc.pi), ['PI-27.3', 'PI-27.2'], 'first sync also takes the previous increment');
+});
+
+test('jira model: planBoardIncrements -- a release-rhythm board with no project key, or no current release, syncs nothing', () => {
+    const released = { id: '10001', name: '1.0', released: true, startDate: null, releaseDate: '2026-01-01' };
+    const withKey = { board_id: 10, project_key: 'ABC', rhythm: 'release', pi_template: null };
+    const noKey = { board_id: 10, project_key: null, rhythm: 'release', pi_template: null };
+
+    assert.deepStrictEqual(planBoardIncrements({ board: withKey, sprints: [], versions: [released], firstSync: false, now: new Date() }).map((i) => i.pi), ['ABC 1.0']);
+    assert.deepStrictEqual(planBoardIncrements({ board: withKey, sprints: [], versions: [], firstSync: false, now: new Date() }), [], 'no current release');
+    assert.deepStrictEqual(planBoardIncrements({ board: noKey, sprints: [], versions: [released], firstSync: false, now: new Date() }), [], 'no project key');
+});
+
+test('jira model: planBoardIncrements -- a flow-rhythm board with no project key syncs nothing; with one, this month (plus last on first sync)', () => {
+    const board = { board_id: 10, project_key: 'ABC', rhythm: 'flow', pi_template: null };
+    const noKey = { ...board, project_key: null };
+    const now = new Date('2026-10-15');
+
+    assert.deepStrictEqual(planBoardIncrements({ board: noKey, sprints: [], versions: [], firstSync: true, now }), []);
+    const notFirst = planBoardIncrements({ board, sprints: [], versions: [], firstSync: false, now });
+    assert.deepStrictEqual(notFirst.map((i) => i.pi), ['Flow 2026-10']);
+    const first = planBoardIncrements({ board, sprints: [], versions: [], firstSync: true, now });
+    assert.deepStrictEqual(first.map((i) => i.pi), ['Flow 2026-10', 'Flow 2026-09']);
+});
+
+test('jira model: buildJiraIndex -- entries newest-PI-first; each issue keeps only its newest increment\'s status', () => {
+    const pis = [
+        { pi: 'PI-27.2', kind: 'pi', sprints: [{ name: 'S 27.2.1' }] },
+        { pi: 'PI-27.3', kind: 'pi', sprints: [{ name: 'S 27.3.1' }] },
+    ];
+    // ABC-1 appears in both PIs (carried over); its PI-27.3 (newer) status must win.
+    const issues = [
+        { key: 'ABC-1', pi: 'PI-27.2', status_category: 'done' },
+        { key: 'ABC-1', pi: 'PI-27.3', status_category: 'indeterminate' },
+        { key: 'ABC-2', pi: 'PI-27.2', status_category: 'new' },
+    ];
+    const { jiraIndex, issueStatusIndex } = buildJiraIndex({ pis, issues, current: ['PI-27.3'] });
+    assert.deepStrictEqual(jiraIndex.pis.map((p) => p.pi), ['PI-27.3', 'PI-27.2'], 'newest first');
+    assert.strictEqual(jiraIndex.pis[0].file, 'PI-27.3.json');
+    assert.strictEqual(jiraIndex.currentPi, 'PI-27.3');
+    assert.deepStrictEqual(issueStatusIndex['ABC-1'], { pi: 'PI-27.3', statusCategory: 'indeterminate' });
+    assert.deepStrictEqual(issueStatusIndex['ABC-2'], { pi: 'PI-27.2', statusCategory: 'new' });
+});
+
+test('jira model: buildJiraIndex -- more than one current increment joins under NOW_KEY, each keeping its own sprints', () => {
+    const pis = [
+        { pi: 'PI-27.3', kind: 'pi', sprints: [{ name: 'Sparks 27.3.1' }] },
+        { pi: 'Sprint 7', kind: 'sprint', sprints: [{ name: 'Sprint 7' }] },
+    ];
+    const { jiraIndex } = buildJiraIndex({ pis, issues: [], current: ['PI-27.3', 'Sprint 7'] });
+    assert.strictEqual(jiraIndex.currentPi, NOW_KEY);
+    assert.strictEqual(jiraIndex.pis[0].pi, NOW_KEY);
+    assert.strictEqual(jiraIndex.pis[0].kind, 'now');
+    assert.deepStrictEqual(jiraIndex.pis[0].includes, ['PI-27.3', 'Sprint 7']);
+    assert.deepStrictEqual(jiraIndex.pis[0].sprints, [{ name: 'Sparks 27.3.1' }, { name: 'Sprint 7' }]);
+
+    const single = buildJiraIndex({ pis, issues: [], current: ['PI-27.3'] });
+    assert.strictEqual(single.jiraIndex.currentPi, 'PI-27.3', 'exactly one current increment: no synthetic Now entry');
+    assert.strictEqual(single.jiraIndex.pis.length, 2);
+
+    const none = buildJiraIndex({ pis: [], issues: [], current: [] });
+    assert.strictEqual(none.jiraIndex.currentPi, null);
 });
 
 if (!process.env.TEST_DATABASE_URL) {

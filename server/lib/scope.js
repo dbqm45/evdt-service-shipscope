@@ -1,10 +1,23 @@
 /**
- * Row-Level Security scoping. Every query against an RLS table (today: memberships) must run inside
+ * Row-Level Security scoping. Every query against an RLS table (RLS_TABLES below) must run inside
  * withScope(), which opens a transaction and sets app.current_tenant_id / app.current_user_id with
  * set_config(..., is_local = true). Transaction-local settings end at COMMIT/ROLLBACK by themselves,
  * so a pooled connection can never carry one request's tenant into the next request -- the leak
  * test/rls.test.js documents for session-level set_config cannot happen through this path.
  */
+
+/**
+ * Every table migration 002 (and the ones that followed it) put under Row-Level Security -- the one place
+ * this list lives, instead of only in CLAUDE.md's prose and a second hardcoded copy in a test. An unscoped
+ * read against one of these returns zero rows; an unscoped write fails outright (RLS error) -- the
+ * database's own fail-safe, which lib/withscope-guard.js adds a second, visible-at-review-time guard on top
+ * of (design-docs/REPORT_ARCH.md, Problem 6).
+ */
+const RLS_TABLES = [
+    'memberships', 'invitations', 'github_installations', 'tracked_repos', 'deployments', 'issue_deployments',
+    'flag_sources', 'ingest_tokens', 'flags', 'flag_values', 'flag_value_history', 'jira_connections', 'jira_boards',
+    'jira_pis', 'jira_issues',
+];
 
 /**
  * Sets the RLS scope for the rest of the current transaction. Must be called after BEGIN.
@@ -46,4 +59,4 @@ async function withScope(pool, scope, fn) {
     }
 }
 
-module.exports = { setScope, withScope };
+module.exports = { setScope, withScope, RLS_TABLES };

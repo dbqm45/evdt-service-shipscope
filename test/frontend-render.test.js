@@ -6,7 +6,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 
-const FILES = ['app-html', 'app-core', 'app-components', 'app-data', 'app-model', 'app-product', 'app-technical', 'app-release-notes', 'app-insights'];
+const FILES = ['app-html', 'app-core', 'app-components', 'app-data', 'app-model', 'app-product', 'app-technical', 'app-technical-matrix', 'app-technical-timeline', 'app-technical-flags', 'app-release-notes', 'app-insights'];
 const EVIL = '<img src=x onerror=alert(1)>';
 
 function stubElement() {

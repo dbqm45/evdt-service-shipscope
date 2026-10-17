@@ -7,7 +7,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 
 const DOCS = path.join(__dirname, '..', 'docs');
-const FILES = ['app-html', 'app-core', 'app-components', 'app-data', 'app-model', 'app-product', 'app-technical', 'app-release-notes', 'app-insights'];
+const FILES = ['app-html', 'app-core', 'app-components', 'app-data', 'app-model', 'app-product', 'app-technical', 'app-technical-matrix', 'app-technical-timeline', 'app-technical-flags', 'app-release-notes', 'app-insights'];
 const NOW = Date.parse('2026-10-09T12:20:00.000Z');
 const DAY = 86400000;
 const EVIL = '<img src=x onerror=alert(1)>';
