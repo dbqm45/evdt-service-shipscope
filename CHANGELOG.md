@@ -7,6 +7,12 @@ dashboard, not a published package), so entries are grouped by date instead. See
 ShipScope is, `CLAUDE.md` for the technical reference, and `FAQ.md` for how specific numbers/badges are
 calculated.
 
+## [0.2.4] - 2026-10-17
+
+### Added
+
+- **SHP:** add npm run dev:mock and a settings gear in the header (#44)
+
 ## [0.2.3] - 2026-10-17
 
 ### Fixed
