@@ -10,3 +10,4 @@ server/node_modules/
 .env.*
 !.env.example
 .pem
+CLAUDE.local.md
