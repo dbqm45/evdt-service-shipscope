@@ -2,557 +2,270 @@
 
 *Polska wersja: [FAQ.pl.md](FAQ.pl.md)*
 
-This document is a plain-language companion to `README.md`, which describes what ShipScope is, and
-`CLAUDE.md`, which is the full technical reference. Its purpose is to answer a recurring category of
-question: for a given number or badge shown on the dashboard, where does that value actually come from. Each
-answer names the responsible script or function so the logic can be verified directly. No prior familiarity
-with the codebase is assumed.
+For each number or badge on the dashboard: where the value comes from, in plain language, with the script or
+function that computes it so it can be checked. `README.md` says what ShipScope is; `CLAUDE.md` is the technical
+reference; `docs/GLOSSARY.md` explains terms that have more than one name.
 
-## Deployments (Technical view → timeline)
+ShipScope runs in two ways that share the same dashboard: the **file-based sync** (GitHub Actions write JSON files,
+GitHub Pages serves them) and the **ShipScope server** (a hosted workspace per organization, configured in
+Settings). The rules are the same in both unless an answer says otherwise.
+
+## Deployments (Technical view)
 
 ### How is "rollback" decided?
 
-Whenever a new deployment is synced, ShipScope compares the newly deployed commit against whatever was
-previously live on the same environment. That comparison already has to happen for other reasons: it is how
-related Jira tickets are identified and how the "commit range" link is built. GitHub's response to a compare
-request includes a `status` field, with possible values `ahead`, `behind`, `diverged`, or `identical`.
-
-A status of **`behind`** means the newly deployed commit is an ancestor of the commit that was already
-running. In other words, the deploy moved the environment backward in history rather than forward. This is
-what "rollback" means in this context: not that someone clicked an undo button, but that the code currently
-live is older than the code live a moment earlier on the same environment, regardless of whether that was a
-deliberate revert or a mistake.
-
-Because this reuses a comparison that is already performed, detecting a rollback requires no additional call
-to GitHub. (Script: `sync-github-deployments.js`, function `issuesInRange`, which returns the comparison
-`status`; `main()` converts `status === 'behind'` into `rollback: { toRef: <the commit this deploy went back to> }`; the rollback badge names that commit.)
-
-For deployments recorded before this check existed, the one-off `backfill-deployment-metadata.js` script
-performs the same comparison retroactively, one GitHub API call per deployment not yet checked.
+Each new deployment is compared on GitHub with what was previously live on the same environment (the same
+comparison that finds its Jira tickets and builds the commit-range link). If GitHub says the new commit is
+**`behind`** — an ancestor of what was already running — the environment moved backward in history, and the
+deployment gets a rollback badge naming the commit it went back to. It does not matter whether that was a
+deliberate revert or a mistake. No extra API call is needed.
+(File sync: `sync-github-deployments.js`, `issuesInRange`, field `rollback: { toRef }`. Server:
+`server/lib/deployment-sync.js`.)
 
 ### How is "manual" versus "automatic" decided?
 
-Every deployment on GitHub carries a history of deployment statuses, one of which normally includes a
-`log_url` pointing at the GitHub Actions run that performed the deploy. ShipScope extracts the numeric run ID
-from that URL, queries GitHub for what triggered that specific run, and checks whether the answer is
-`workflow_dispatch` — GitHub's designation for a run started manually via the "Run workflow" button, as
-opposed to a run started automatically by a push, a schedule, or a similar event.
-
-If no `log_url` is present, the trigger type cannot be determined, and the deployment is treated as not
-manual by default.
-
-To keep this inexpensive when a sync run has to process a large backlog at once, for example after an
-outage, ShipScope limits itself to 30 of these trigger-type lookups per sync run. Any deployment beyond that
-limit in the same run is left unresolved rather than allowing the run to become open-endedly expensive.
-(Script: `sync-github-deployments.js`, function `resolveManualFlag`, constant `MAX_MANUAL_LOOKUPS_PER_RUN`.)
+A deployment's status history usually links to the GitHub Actions run that performed it. ShipScope asks GitHub what
+triggered that run: `workflow_dispatch` (the "Run workflow" button) means manual; a push, a schedule and similar
+mean automatic. Without such a link the deployment counts as not manual. The file sync looks up at most 30 runs per
+sync so a large backlog cannot make one run expensive; the rest stay unresolved.
+(`sync-github-deployments.js`, `resolveManualFlag`, `MAX_MANUAL_LOOKUPS_PER_RUN`; server:
+`server/lib/deployment-people.js`, which needs the GitHub App's Actions read permission.)
 
 ### How is deploy duration calculated?
 
-GitHub records a timestamped status each time a deployment changes state — queued, in progress, succeeded,
-failed, and so on. ShipScope takes the earliest and latest of those timestamps for a given deployment and
-subtracts one from the other. If GitHub only ever reported a single status for that deployment, there is
-nothing to subtract, and no duration is shown. This does not indicate an instant deploy; it indicates that
-there is insufficient data to measure one.
+The time between the earliest and the latest status GitHub recorded for the deployment (queued, in progress,
+succeeded…). GitHub's `inactive` marker, added later when a newer deployment replaces this one, is ignored. With
+only one status there is nothing to measure, so no duration is shown — that does not mean an instant deploy.
+(`computeDeployDurationMs`.)
 
-(Script: `sync-github-deployments.js`, function `computeDeployDurationMs`.)
+### Where does the version shown for a deploy come from?
 
-### Where does the version shown for each deploy come from? A Release, a tag, or something else? Does this differ per environment?
+The same rule for every environment; what differs is only which commit is deployed there. First match wins:
 
-The resolution mechanism is identical for every environment (test, qa, prod); there is no environment-specific
-logic. What differs per environment is simply which commit happens to be deployed there, and whether that
-particular commit is associated with a Release, a tag, or a version string in its commit message.
+1. a GitHub **Release** pointing at that exact commit;
+2. a plain git **tag** on that commit;
+3. a **version file** in the deployed commit, when the component has one configured (`versionFile` in the file
+   sync; Settings → GitHub → Tracked repositories → Version file on the server) — for repos whose QA/PROD deploy commits only contain
+   a line like `version=v1.6.0`;
+4. a version-like string (`v1.2.3`, `1.2.3`) in the **commit message**;
+5. the shortened **commit SHA**.
 
-For a given deployed commit, ShipScope checks the following, in order, stopping at the first one that
-produces a result:
-
-1. **A GitHub Release pointing at that exact commit.** GitHub Releases are built on top of tags, so ShipScope
-   cross-references each Release's tag name against the repository's tag list to find the exact commit it
-   points to.
-2. **A plain git tag on that exact commit**, with no associated Release required.
-3. **A version-looking string inside the commit's own message** — a loose pattern match for something shaped
-   like `v1.2.3` or `1.2.3` anywhere in the text.
-4. **The raw commit SHA**, shortened, used only when none of the above produce a result.
-
-Releases and tags are checked before the commit message deliberately: free text in a commit message can
-incidentally contain something that resembles a version without denoting one, for example a commit stating
-that it fixes a bug introduced in a prior version, whereas a Release or a tag is a deliberate, unambiguous
-signal. This is why an environment deployed directly from a feature-branch commit, with no tag and no
-release-worthy message, will often fall through to a bare SHA: no version signal exists on that commit for
-ShipScope to find.
-
-Checking for Releases and tags costs two list calls to GitHub per sync run, not per deployment, so the cost
-does not scale with the number of deployments processed in a given run. (Script:
-`sync-github-deployments.js`; see `shaToRelease`, `shaToTag`, and `extractPromotedVersion`.)
-
-Deployments recorded before this priority order existed can be re-resolved after the fact by the one-off
-`backfill-deployment-metadata.js` script. It only processes records whose version still resembles a bare SHA,
-and attempts the cost-free Release/tag lookups before falling back to an API call that reads the commit
-message.
+Releases and tags come before the message because free text can mention an unrelated version; a Release or tag is
+a deliberate signal. A deploy straight from a feature-branch commit usually ends at the SHA because no signal
+exists. Only a verified Release/tag (or the SHA) is used for GitHub comparisons; a version taken from a message is
+shown, not trusted. Releases and tags are fetched once per sync, not per deployment.
+(`sync-github-deployments.js`: `shaToRelease`, `shaToTag`, `extractPromotedVersion`; server:
+`server/lib/version-resolution.js`.)
 
 ### What does "Diff to TEST" mean, and when does it show up?
 
-An environment card shows **"Diff to TEST"** (the environment it is compared with — the previous stage in the
-promotion chain `test` → `qa` → `prod`) only when the *code* of its current deployment differs from that
-environment's. Nothing else is printed on the card; the details are in the modal opened by clicking it.
-(Script: `sync-github-deployments.js`, functions `computeEnvDrift()`/`compareTrees()`; stored as `driftBehind`.)
+An environment card shows **"Diff to TEST"** (or "Diff to QA" — the previous stage in `test` → `qa` → `prod`) only
+when the **code** of its current deployment differs from that environment's. Click it for details.
 
-How it is decided, per pair of environments:
+How it is decided for each pair of environments:
 
-1. The two deployed commits' **git trees** are compared. Identical tree = identical files = no marker, however
-   many commits separate the two (merges, squashes and separate deployment branches create new commits for
-   identical code).
-2. Otherwise the recursive tree listings (`GET /git/trees/{sha}?recursive=1`) are diffed by path + blob SHA.
-   Paths matched by the component's `driftIgnorePaths` (`docs/components.json` — deployment plumbing such as
-   `.github/`, `README.md`, `CODEOWNERS`; `dir/` = prefix from the repo root, a pattern with `/` = exact
-   path, a bare name = that file name at any depth, `*` = any characters except `/`) are not counted. No
-   differing file left = no marker.
-3. If the comparison can't be trusted — a GitHub API error, or a repository too large for one listing
-   (GitHub truncates at 100,000 entries / 7 MB) — the record gets `diff: { unknown: true }` and the modal says
-   **Unknown**; it is never silently treated as "no difference".
+1. The two deployed commits' **git trees** are compared. The same tree means the same files: no marker, however many
+   commits separate them (merges, squashes and deployment branches create new commits for identical code).
+2. Otherwise the file lists are compared by path and content. Paths in the component's ignore list (deployment
+   plumbing such as `.github/`, `README.md`, `trigger.properties`; `driftIgnorePaths` in the file sync, Settings → GitHub on
+   the server) do not count. No differing file left: no marker.
+3. If the comparison cannot be trusted — a GitHub error, or a repository too large for one listing (100,000 entries
+   / 7 MB) — the result is **Unknown**, never "no difference".
 
-The modal shows, in order: the **file diff** (number of differing files — a rename counts as two — the first 20
-paths, and how many more were ignored by `driftIgnorePaths`); the raw **Git history** counts from the GitHub
-compare call (`commitCount`: commits the other environment has that this one doesn't; `untestedCommitCount`:
-the opposite direction — e.g. a hotfix that bypassed the earlier environment). The history numbers measure
-commits, not code, so a large number such as "786 behind TEST" does not mean a large difference; they are kept
-for context only. Both come from the same compare call that already produces `commitUrl`/`relatedIssues`,
-so they cost nothing extra; the tree comparison adds up to four API calls per pair when the commits' trees differ.
+The window shows the number of differing files (a rename counts as two), the first 20 paths and how many were
+ignored; then the **Git history** counts: commits the other environment has that this one lacks, and the opposite
+(e.g. a hotfix that skipped the earlier environment). History counts commits, not code, so "786 behind TEST" can
+mean zero changed files; they are context only. It does not cover configuration, environment variables, images or
+feature flags.
 
-**What this does not show:** a tree comparison covers the repository's files only. It does not confirm that the
-deployments are otherwise identical (configuration, environment variables, images, feature flags).
+To see whether two environments really run different changes, compare the Jira issues (or the commit range link)
+of their current deployments in Deployment history: no overlap means unrelated changes, not the same release at a
+different pace.
+(`compareTrees()`, `scripts/lib/tree-diff.js`; server: `server/lib/env-drift.js`.)
 
-**Older records:** records synced before this comparison existed have no `diff`; their modal has no
-file-diff section and shows only the Git history until the service's next sync replaces the record.
+### How long are deployments kept, and when does a new one appear?
 
-**Components that deploy from `deployment/*` trigger branches:** if QA/PROD deploy a commit that only edits
-`trigger.properties` (`version=v1.6.0`), set `versionFile` in `docs/components.json` so the compared refs come from
-the tag the file names (see `versionFile` in `ONBOARDING.md`), and list `trigger.properties` in
-`driftIgnorePaths`.
+ShipScope shows the current state; GitHub keeps the full history. Deployments older than 90 days are removed on
+every sync (file sync: `RETENTION_DAYS`; server: Settings → Workspace, 7–730 days), except — per component and
+environment — the latest deployment and the latest successful one, which are what "current version", drift and
+rollback need. Whether an issue ever shipped is remembered separately and survives this cleanup
+(`issue-deployments.json` / the `issue_deployments` table).
 
-**Worked example** (real data, `evapl-service-frontend`, 2026-10-06): TEST deployed `v1.0.0` at 14:44 (commit
-`42e7ce8`, carrying issues EBO-16806/ECST-9871/…). Two minutes later, QA deployed a commit also *displayed*
-as `v1.0.0` — but it was actually a different commit (`cfd213e`), carrying a completely different,
-non-overlapping set of issues (ARP-4953/EBO-8399/EBO-13020). TEST's subsequent deploys (`v1.1.0`, `v1.2.0`)
-never included `cfd213e` or its issues either, confirming that commit genuinely never passed through TEST at
-any point. The "233 commit(s) skipped TEST" shown against that QA record (the pre-"Diff to" wording) was accurate, not a false alarm:
+- **File sync:** one shared `docs/data/deployments.json` for all components. A deploy triggers a sync of just that
+  component (the app repo's "Notify ShipScope" workflow, see `ONBOARDING.md`), so it appears within minutes; a
+  daily 3 AM run syncs everything in case a signal was missed. `deployments-cursor.json` remembers the highest
+  deployment already processed, so trimmed deployments are not processed again.
+- **Server:** every 15 minutes by default, and within about 30 seconds of a GitHub webhook when webhooks are on.
 
-| Env | Deploy time | Displayed version | Actual commit | Jira issues |
-|---|---|---|---|---|
-| TEST | 14:44 | `v1.0.0` (verified tag) | `42e7ce8` | EBO-16806, ECST-9871, … |
-| QA | 14:46 | `v1.0.0` (unverified — commit-message match) | `cfd213e` | ARP-4953, EBO-8399, EBO-13020 |
+### What is `docs/data/summary.json`?
 
-To check whether a specific "skipped" warning fits this same shape, compare the related Jira issues (or the
-commit range behind that deployment's own `commitUrl` link) between the two environments' current records in
-Deployment history — no overlap at all means the two environments are genuinely running different, unrelated
-changes, not just the same release at a different pace.
+A precomputed copy, per component and environment, of the current (latest successful) deployment and the latest
+deployment of any outcome — exactly what the sync already works out when trimming old records. It only makes the
+first render faster: without it the page scans all of `deployments.json` once per component and per matrix cell.
+If an entry is missing, the page falls back to the scan, so it can be stale for a moment but never wrong. File sync
+only. (`buildSummary`; `currentVersion()` in `docs/app-model.js`.)
 
-### Is `deployments.json` split per component or per PI, and when does a new deployment actually become visible?
+### Why do some GitHub API calls use conditional (ETag) requests?
 
-No splitting by component or PI — it is one shared file, `docs/data/deployments.json`, holding records for
-every tracked component at once (each record carries its own `component` field). A second, tiny,
-never-trimmed file, `docs/data/deployments-cursor.json`, tracks the highest GitHub deployment ID ever
-synced per component, so an already-processed deployment can still be recognized as such even after its
-actual record has aged out of the main file.
-
-Records older than 90 days are physically removed from `deployments.json` on every sync (`RETENTION_DAYS`),
-except the single latest record and the single latest **successful** record per component/environment,
-which are kept regardless of age — these are what the dashboard's "current version"/drift/rollback logic
-depends on, so they can never be trimmed away.
-
-The sync script runs once per component: it reads the whole existing file, leaves every other component's
-records untouched, merges in fresh records for just the one component it was invoked for, trims, and writes
-the whole file back.
-
-This runs as the `sync_deployments` job in `orchestrate-full-sync.yml`. A `repository_dispatch` fired right
-after a deployment — by that app repository's own `notify_shipscope` step — syncs only that one component;
-the daily 3 AM cron and a manual run sync every tracked component.
-
-In practice: a new deployment of a given component becomes visible within minutes of that deployment
-finishing, because the deployment itself is what triggers the sync for that component. The only way this is
-delayed is if the deploying repository's own workflow never calls `notify_shipscope` at all — in which case
-that deployment simply waits for the next 3 AM safety-net run (as long as it is still within the retention
-window by then).
-
-The typical cause: a deployment started from a long-lived branch such as `deployment/qa` (a commit bumping
-`version` in `trigger.properties`). GitHub reads the workflow file from the branch that was pushed, so that
-branch's copy of the workflow lacks a `notify_shipscope` step added only on `main`. The fix that needs no
-server and no per-branch maintenance is a small workflow on the service repo's **default branch**, triggered
-by `workflow_run` (which only fires from the default branch's YAML, whatever branch the deploy ran on) and
-calling `notify-deployment.yml` — see the "Notify ShipScope" workflow in `ONBOARDING.md`.
-
-(Script: `sync-github-deployments.js`, functions `trimOldRecords`, `main`. Workflow:
-`orchestrate-full-sync.yml`, job `sync_deployments`. Trigger: `notify-deployment.yml`'s `notify_shipscope`
-step.)
-
-### What is `docs/data/summary.json`, and why does it exist alongside `deployments.json`?
-
-It is a small, **precomputed** file: for every component and environment, just the single current (latest
-successful) deployment record and the single latest record overall, success or not. It exists purely for
-render speed, not because the dashboard needs any data that isn't already in `deployments.json`.
-
-Without it, showing "what's currently running in prod for service X" means scanning the *entire*
-`deployments.json` array — every record, for every component, across the whole retention window — and
-sorting the matches, every single time that question is asked. The dashboard asks it a lot on first load:
-once for every component (the top summary cards) and once again for every component×environment
-combination (the matrix). For a large tracked fleet with months of retained history, redoing that full
-scan dozens of times before the page has even finished painting is wasted work, because the answer barely
-ever changes between syncs.
-
-`summary.json` precomputes that answer once, server-side, at the exact moment the sync script already has
-the data in hand — building it costs nothing extra: `trimOldRecords()` already has to figure out "what's
-the latest record, and the latest *successful* record, for each component/environment" in order to decide
-what's safe to keep when trimming old history, so writing those same two values out to their own small
-file is just reusing work already done, not doing new work. The dashboard then reads a direct lookup out
-of this file instead of recomputing it in the browser, and only falls back to the old full-scan behavior
-when a component or environment is missing from it (for example, a component that was onboarded after this
-file already existed needs one more sync before it shows up here).
-
-Because it is precomputed rather than independently maintained, it can never disagree with
-`deployments.json` in a way that matters: both are written from the same data in the same sync run. The one
-accepted gap is that the one-off, manually-triggered `backfill-deployment-metadata.js` script edits older
-deployment records directly and does not update this file — so a backfilled correction to what happens to
-be a component's *current* record won't be reflected here until that component's next regular sync. That
-is a stale cache for a few minutes at most, not an incorrect dashboard, since the full-scan fallback always
-remains available if this file is ever absent or out of date.
-
-(Script: `sync-github-deployments.js`, functions `trimOldRecords`, `buildSummary`. File: `docs/app.js`,
-function `currentVersion`.)
-
-### Why do some GitHub API calls use conditional (ETag) requests, and not others?
-
-GitHub's REST API supports a standard HTTP mechanism called conditional requests: a response carries an
-`ETag` header (a fingerprint of that exact response), and a later request for the same URL can include
-that fingerprint as `If-None-Match`. If nothing has changed, GitHub replies `304 Not Modified` with no body
-at all, instead of sending the same data again as a real `200`. The useful part for ShipScope specifically
-is that a `304` response does **not** count against GitHub's API rate limit, while an ordinary `200` does.
-
-ShipScope uses this for exactly three endpoints: fetching the first page of a component's deployments, its
-tags, and its releases — the three list calls that get fetched on *every single sync run*, regardless of
-whether anything on GitHub's side actually changed since the last run. In the common case — a steady-state
-cron run across many components, most of which have nothing new — these calls now mostly come back as free
-`304`s instead of spending real rate-limit budget on data that turned out to be identical to what was
-already known.
-
-This is deliberately **not** applied to the many other GitHub calls a sync run makes per deployment
-(fetching a commit, comparing two commits, reading a deployment's statuses, resolving a workflow run) — not
-for lack of trying, but because none of them would actually benefit: each of those URLs is already fetched,
-at most, once in this script's entire lifetime (the sync cursor guarantees a given deployment is only ever
-processed once), so there is nothing to revalidate on a second call that never happens. Caching an ETag
-only pays off for a URL that gets re-requested later with the chance that the answer hasn't changed — true
-for the three list endpoints above, not true for a one-shot per-deployment lookup.
-
-For the cache to actually help, it has to survive *between* separate workflow runs, not just within one —
-a cache that only lived for the duration of a single job would reset to empty (and thus never produce a
-`304`) on every scheduled run. `orchestrate-full-sync.yml`'s `sync_deployments` job wires an
-`actions/cache` step around a directory the sync script writes its per-component ETag cache file into,
-keyed so that a fresh run can restore the previous run's cache before deciding what to re-fetch.
-
-(Script: `scripts/lib/github-api.js`, functions `githubApiRequest`/`githubApiGet`, parameter `etagCache`;
-`sync-github-deployments.js`, constant `ETAG_CACHE_PATH`. Workflow: `orchestrate-full-sync.yml`, job
-`sync_deployments`, step "Cache GitHub API ETags".)
+GitHub answers a repeated request whose data has not changed with `304 Not Modified`, which does not count against
+the rate limit. The file sync uses this for the three lists it fetches on every run (the first page of deployments,
+tags, releases); most runs find nothing new, so these come back free. Per-deployment calls are made once each, so
+there is nothing to revalidate. The cache is kept between runs with `actions/cache`.
+(`scripts/lib/github-api.js`, `etagCache`; `orchestrate-full-sync.yml`, step "Cache GitHub API ETags".)
 
 ## Feature flags
 
-### How is the "flag has been idle too long" note (🧹 stale flag) calculated?
+### Where do flags come from, and how is on/off determined?
 
-This check only considers a flag if it has at least one linked Jira ticket, and every linked ticket is
-already marked Done in Jira. When that condition holds, ShipScope examines every environment where the flag
-is currently switched on, calculates how many days it has held that value, and shows the cleanup note if the
-longest of those periods is 60 days or more. If even one linked ticket is not yet Done, or the flag is not on
-anywhere, nothing is shown; the logic is deliberately conservative rather than speculative.
+There are two slots per flag and environment, kept apart: **build** (baked into an application at build time) and
+**runtime** (switched live by a backend). When both exist, runtime wins on the dashboard, and a disagreement is
+marked (see below).
 
-This is computed in the browser from data already loaded, with no additional step and no additional API
-call. (File: `docs/app.js`, function `flagStaleWarning`, constant `STALE_FLAG_DAYS`.)
+- **Server:** ShipScope never reads flags itself (`design-docs/ADR-001-flags-pushed-from-outside.md`). An admin adds
+  flag sources in Settings; each source sends the full state of its flags (`off` / `on` / `partial` with a rollout
+  percentage) with its own token to `POST /api/flags/ingest`. A flag the source stops sending disappears; an older
+  message never overwrites a newer one; when several sources of one kind report the same flag, the higher priority
+  wins. (`server/lib/flags.js`, rules in `server/lib/flags-logic.js`.)
+- **File sync:** build flags are found by scanning app repos (`*.generated.ts` files show a flag exists;
+  `flag-parts/` directories with `default.ts` + optional `test.ts`/`qa.ts`/`prod.ts` give its value per
+  environment; both by regular expressions, so a change in how those files are generated is the first thing to
+  check). Runtime flags are polled from a backend's HTTP endpoint per environment. Each flag needs a filled-in
+  `flags-meta.json` entry (description, Jira keys, components); new flags get a stub and a PR check fails until it
+  is completed. (`resolve-all-flag-states.js`, `sync-runtime-be-flags.js`, `check-flags-metadata.js`.)
 
-### Where do flags currently come from, and how does ShipScope determine their on/off state?
+### Which Jira issues does a flag belong to?
 
-Flags come from two independent sources, tracked separately rather than merged into one:
+- **Server:** from three places, merged: the keys the sending source attaches, keys an admin sets by hand in
+  Settings (never overwritten by a source), and Jira itself — a custom field or a label prefix the workspace
+  chose in Settings (Jira → Feature flags in Jira).
+- **File sync:** `jiraKeys` in `flags-meta.json`.
 
-- **`build` flags** live inside an application's own code, baked in at build time. ShipScope discovers them
-  by scanning each app repository for two kinds of files:
-  - `*.generated.ts` files, used only to establish that a flag exists, in order to scaffold a metadata entry.
-  - `flag-parts/` directories, each containing a `default.ts` plus optional `test.ts`/`qa.ts`/`prod.ts`
-    overrides, used to resolve the flag's actual on/off value per environment (a per-environment override
-    takes precedence over `default.ts` when one exists).
-  Both mechanisms rely on regular-expression matching against the TypeScript source rather than a full
-  TypeScript parser. If a caller repository restructures how these files are generated, this is the first
-  place to check.
-- **`runtime-be` flags** are toggled live by a backend service, with no code change or deploy involved.
-  ShipScope polls that service's HTTP endpoint for each environment on a schedule and records the response.
+### How is the stale flag note (🧹) calculated?
 
-When a flag has both a build-time default and a live backend override, the backend override takes precedence
-for display purposes. ShipScope also flags the cases where the two currently disagree — see "build versus
-runtime-be divergence" — since the hidden build default would resurface if the override were ever removed.
-
-Every flag additionally requires a manually completed entry in `flags-meta.json` (description, Jira keys,
-owning components) before it counts as fully documented. New flags are scaffolded automatically as
-incomplete stubs, and a PR check (`check-flags-metadata.js`) fails continuous integration until the entry is
-filled in.
-
-(Scripts: `resolve-all-flag-states.js` for build flags, `sync-runtime-be-flags.js` for runtime-be flags;
-`docs/app.js`, function `effectiveFlagState`, decides which source takes precedence when both exist.)
+Only for a flag with at least one linked Jira issue, all of them Done. ShipScope then takes the longest time the
+flag has been on in any environment; at 60 days or more it suggests removing the flag. If any linked issue is not
+Done, or the flag is off everywhere, nothing is shown. (`flagStaleWarning`, `STALE_FLAG_DAYS`,
+`docs/app-technical-flags.js`.)
 
 ### How is the "blast radius" warning calculated?
 
-This check only applies to flags linked to more than one Jira ticket. ShipScope examines the status category
-of every ticket linked to that flag; if at least one is Done and at least one is not (still `new` or
-`indeterminate`), it warns that enabling the flag would release the unfinished ticket alongside the finished
-one. If every linked ticket is Done, or none of them are, nothing is shown, since there is no mixed-readiness
-condition to flag.
+Only for a flag linked to more than one Jira issue: if at least one is Done and at least one is not, turning the
+flag on would release unfinished work together with finished work, so a warning is shown. (`flagBlastRadius`.)
 
-(File: `docs/app.js`, function `flagBlastRadius`.)
+### How is "build versus runtime divergence" shown?
 
-### How is "build versus runtime-be divergence" calculated?
+Where a flag and environment have both a build value and a runtime value that disagree, the environment's badge in
+the flags list gets a dashed outline and its tooltip shows the hidden build value — the one that comes back if the
+runtime override is removed. (`renderFlags`, `docs/app-technical-flags.js`.)
 
-This applies only where a flag/environment combination has both a build-time default and a live runtime-be
-override. ShipScope compares their `enabled` values directly. If they disagree, the environment's badge in
-the flags list receives a dashed outline, and its tooltip displays the current hidden build default, since
-that is the value that would resurface if the live override were ever removed or expired.
+### When did a flag first appear, and who changed it?
 
-(File: `docs/app.js`, inside `renderFlags`; see `envEntry.build` and `envEntry['runtime-be']`.)
-
-### How does ShipScope determine when a flag first appeared?
-
-Every flag's metadata (`flags-meta.json`) carries a `createdAt` value, stamped once, at the moment the flag
-is first scaffolded — discovered from `*.generated.ts`/`flag-parts/` files, or from a `runtime-be` poll — or
-manually filled in, and left unchanged on every subsequent edit. This value powers the "new flag" entry on
-the merged timeline. Flags that existed before this field was introduced simply do not have one, and there is
-no way to reconstruct it retroactively without mining Git history for older versions of `flags-meta.json`,
-which is not currently done.
-
-(Scripts: `scaffold-flags-meta.js`, `sync-runtime-be-flags.js`, `fill-flag-metadata.js`.)
-
-### Can flag history from before the audit log existed be recovered?
-
-Partially. Every change ever made to `flag-states.json` was already recorded as a separate git commit on the
-`live` branch, so `scripts/backfill-flag-state-history.js` (workflow `backfill-flag-state-history.yml`,
-triggered manually) walks that commit history, compares each revision against the one before it, and seeds
-`flag-state-history.json` with what changed and when. What cannot be recovered is who made the change:
-commits to that file are always authored by an automated process, never by the person who actually triggered
-it. Backfilled entries are therefore explicitly marked `changedBy: "unknown (backfilled from git history)"`
-rather than attributing an author that cannot be verified.
+The file sync stamps `createdAt` once, when the flag is first discovered or filled in; flag-state changes are kept
+in `flag-state-history.json`. Changes from before that log existed can be recovered from the `live` branch's git
+history (`backfill-flag-state-history.js`), but not who made them — those entries say "unknown (backfilled from
+git history)". The server keeps every value change in `flag_value_history`.
 
 ## Jira
 
-### Where do the Epic/Story/Task numbers come from?
+### Which issues does ShipScope show?
 
-Indirectly, from commit messages. The chain works as follows:
+- **Server:** an admin picks boards in Settings. Each sync re-reads every board's current increment (PI, sprint,
+  release or month, depending on the board's rhythm) in full, plus the Epics of its issues; a board's first sync
+  also takes the previous increment. An issue's sprint is the one on the board being synced. Older increments stay
+  as they were last seen.
+- **File sync:** the current PI is found from the active sprint of the boards in `docs/jira-spaces.json`, and all
+  issues of that PI (by sprint, or by a `PI-X.Y` label with evidence of the right team) are fetched. Without
+  configured boards ShipScope falls back to the issue keys found in deployed commit messages (`EBO-1234`), checking
+  each key's project exists in Jira first. If Jira cannot be reached, it builds placeholder issues from those keys
+  (no title, no status) so the dashboard is not empty.
 
-1. When a deployment is synced, ShipScope scans the commit messages within that deployment's range for
-   anything shaped like a Jira key, for example `EBO-1234`, and records those against the deployment as
-   `relatedIssues`.
-2. Separately, ShipScope searches Jira for exactly those keys (`key in (EBO-1234, ...)`), not for their
-   whole owning projects — a ticket mentioned once in a commit message shouldn't pull in every other,
-   unrelated ticket that happens to share its project. (Passing `JIRA_PROJECT_KEY` opts a sync run into the
-   old, broader behavior — searching a whole project end to end — for a project that should be tracked
-   completely from the outset rather than just where commits happen to reference it.)
+### How is "sprint" different from "PI"?
 
-The Jira keys themselves ultimately originate from developers including them in commit messages. ShipScope
-does not invent or infer a Jira key on its own.
+A PI (Program Increment) usually spans several sprints. Both come from the same Jira Sprint field: `pi` is derived
+from the sprint name (`27.3.1` → `PI-27.3`), `sprint` is the name itself. When an issue has several sprints, the
+active one counts, else the last one; in the file sync only sprints of the space's own boards are considered.
+(`pickRelevantSprintInfo`, `extractPiFromSprintName` in `scripts/lib/jira-pi.js`; server:
+`server/lib/jira-model.js`.)
 
-Because step 1 treats *any* `XXX-123`-shaped string in a commit message as a candidate Jira key, it can pick
-up things that aren't actually Jira issues in this instance — a ticket ID from an unrelated system, or a
-typo. Before querying, ShipScope checks each candidate's project prefix against Jira's own, visible project
-list and drops anything that doesn't resolve, since a single invalid project inside the search would
-otherwise fail the whole query and silently zero out every other project's results too, not just the bad
-one's. (Function: `filterExistingProjectKeys`.)
+### How are issues stored, and when does a change appear?
 
-If Jira cannot be reached at all, due to an outage or a permissions issue, ShipScope falls back to
-constructing lightweight substitute issue records directly from the same commit-derived keys, inferring a
-rough type (`feat`/`fix`/`chore`) from the commit message's own prefix. This is a deliberately degraded
-substitute for real Jira data, lacking a title or a real status, sufficient only to keep the dashboard
-showing something rather than nothing.
+One file per PI (`docs/data/jira-issues/PI-27.3.json`) plus `index.json` (the PIs, their sprints and dates, and the
+current PI) and `status-index.json` (each issue's PI and status across all PIs, for the flags panel). The page loads
+one PI at a time. Only the current PI is refreshed automatically, and it is replaced in full, so an issue that left
+the PI simply disappears. Other PIs are snapshots from the last manual `backfill-jira-issues.yml` run.
 
-(Scripts: `sync-github-deployments.js` extracts keys from commit messages; `sync-jira.js` performs the actual
-Jira fetch and the no-Jira fallback.)
-
-### How is Jira data split into files, and when does something new in a sprint actually become visible?
-
-Jira data is not a single file. There is one JSON file per PI (e.g. `docs/data/jira-issues/PI-27.3.json`),
-plus an `index.json` listing every PI ShipScope has data for — including each PI's own sprint names and
-dates — and a separate `status-index.json`, a flat `key → {pi, statusCategory}` map spanning every PI at
-once, used only by the Technical view's Flags panel, since that panel has no PI selector of its own to pick
-a shard with. The dashboard loads `index.json` up front, then only the single PI's file currently selected;
-it never holds more than one PI's issues in memory at a time.
-
-Only the current PI — the one `sync-jira.js` derives from a configured board's active sprint — is refreshed
-automatically, and it is replaced wholesale on every sync, not merged: whatever the latest fetch returns
-becomes the *entire* new content of that PI's file. An issue that moved out of the PI is simply absent from
-the next version, with no separate cleanup step needed.
-
-Any other PI's file is a snapshot from whenever someone last ran the manual `backfill-jira-issues.yml`
-workflow for it, and is never touched again automatically. If a sprint belongs to a PI other than the
-current one, nothing new in it will appear until that backfill is run again by hand.
-
-Jira sync runs as the `sync_jira` job in `orchestrate-full-sync.yml`, which fires after every deployment of
-any tracked component (via `repository_dispatch`), on a daily 3 AM safety-net schedule, or when triggered
-manually — and it runs on every single one of those occasions, not just the "sync everything" ones, because
-the job is marked `if: always()` so one component's deployment-sync failure can't skip it.
-
-In practice: a new item added to the current PI's current sprint becomes visible after the very next Jira
-sync — which, in a reasonably active org, means within minutes of *anyone's* next deploy, since that alone
-retriggers the whole workflow. If nothing deploys that day, it still appears by the next 3 AM cron run at
-the latest. Running the workflow manually makes it appear immediately. An item added to a PI that is not
-the current one will not appear at all until someone runs the backfill workflow for it.
-
-(Script: `sync-jira.js`, functions `resolveCurrentPiForSpaces`, `runCurrentPiMode`, `writePiShards`.
-Workflow: `orchestrate-full-sync.yml`, job `sync_jira`. Manual snapshot path: `backfill-jira-issues.yml`.)
+In the file sync, Jira is synced after every deploy of any component, daily at 3 AM and on a manual run, so a new
+item in the current sprint usually appears within minutes of anyone's next deploy. On the server it appears within
+15 minutes, or about 30 seconds after a Jira webhook.
 
 ## Release Notes tab
 
-### How do I even see this tab?
+### What does it show?
 
-It is always there, next to Product view and Technical view. (The Insights tab is the one still behind a URL
-switch: load the page with `?insights=1`. That is a soft launch, not access control: the data is the same with or
-without it.)
+Issues that are live for users on PROD — `released` (deployed and its flag on) or deployed with no flag to wait for
+— grouped by PI and sprint (newest first) and split into "Features & Improvements" and "Bug Fixes". Unreleased
+issues are not listed. Each item shows a PROD status pill, its Jira key and the date it first reached PROD. The
+Service filter narrows the list to one application from `docs/components.json` (`application`); a component without
+one stands for itself. (`docs/app-release-notes.js`, `issueIsReleasedToProd`, `earliestProdDeployedAt`.)
 
-### How is an issue grouped into an "application"?
+### Why does it say there is nothing to show although the PI has issues?
 
-Not from Jira at all — from `docs/components.json`. Every Jira issue is first resolved to the set of
-components it touches (from linked feature flags, or from raw deployment history when it has no linked
-flag), and each of those components carries its own `application` list in `docs/components.json`. An issue
-appears once under every application any of its components belongs to; a component with no `application`
-set falls back to using its own name as a one-component "application" instead of being dropped.
+Every issue is a placeholder built from commit messages (see "Which issues does ShipScope show?"), which has no
+real PI. That means the Jira sync is not reaching Jira: check its run log and the `JIRA_BASE_URL` / `JIRA_EMAIL` /
+`JIRA_API_TOKEN` secrets (file sync) or the Jira connection in Settings (server).
 
-This is an array on the component, not a single value, specifically so a component shared between two
-applications (e.g. a backend also used by two different frontends) has its issues show up under both,
-rather than forcing an arbitrary single owner.
+## Data freshness
 
-(File: `docs/app.js`, functions `componentsForIssue`, `applicationsForComponent`, `applicationsForIssue`.)
+### What does "synced HH:MM" in the header mean?
 
-### How is "sprint" different from "PI", and where does it come from?
+- **File sync:** the time of the last run that re-synced every component's deployments plus Jira (the daily run, a
+  manual run, or an unrecognized trigger) — not a single component's post-deploy sync, which can silently fail to
+  fire. The separate `source: data/*.json` tag only says the files were fetched. (`record-full-sync.js`,
+  `docs/data/sync-meta.json`.)
+- **Server:** the most recent successful deployment sync of any of the workspace's repositories.
 
-A PI (Program Increment) usually spans several sprints. Both values are read from the exact same Jira
-Sprint field on an issue — `pi` is a regex-derived summary of it (e.g. `24.4.3` → `PI-24.4`), while `sprint`
-is that same field's raw resolved name, kept alongside `pi` rather than instead of it. Release Notes nests
-sprints inside their PI rather than replacing the PI grouping with it, since a PI-level view still answers a
-different, useful question ("is this whole increment out yet") than a sprint-level one.
+## Workflows (file sync) — when does each run?
 
-(Script: `scripts/sync-jira.js`, functions `pickRelevantSprintName`, `extractPiFromSprintName`.)
+- **`orchestrate-full-sync.yml`** (deployments and Jira) — after each deploy (a `repository_dispatch` from the app
+  repo), daily at 3 AM, and manually.
+- **`check-flags.yml`** — no schedule; app repos call it from their own CI.
+- **`sync-runtime-be-flags.yml`** — when a backend flag service reports a change, after any app deploy, daily at
+  3:15 AM, and manually.
+- **`update-flag-state.yml`** — manually, or when a backend reports a single flag change.
+- **`fill-flag-metadata.yml`** — manually, to fill in a flag's description, Jira keys or components.
+- **`retrigger-app-checks.yml`** — after `flags-meta.json` changes, to re-run app repos' failed `check-flags` runs.
+- **`sync-main-to-live.yml`** — on each push to `main` touching `scripts/`, `docs/` or `.github/`; it carries code to
+  the `live` branch that GitHub Pages serves.
+- **`backfill-deployment-metadata.yml`, `backfill-flag-state-history.yml`, `backfill-jira-issues.yml`** — manual
+  maintenance only.
 
-### How is "Fully released to PROD" decided for a group (application, PI, or sprint)?
+## Credentials
 
-Every issue in that group must be either `released` (deployed **and** its flag is on) or
-`deployed_code_only` (no flag links to it at all, so a successful deployment referencing it is as final as
-that issue's status can get) on `prod`, per the same `issueStatusForEnv` logic the Product view already
-uses for its per-issue pills. A single issue anywhere in the group that's merely `deployed` (flag off),
-`partial`, or `none` keeps the whole group's badge at "In progress" — this is intentionally an
-all-or-nothing rollup, not an average or a percentage.
+### Server
 
-(File: `docs/app.js`, function `issuesFullyReleasedToProd`.)
+No secrets per app repo. The workspace connects the ShipScope GitHub App (installed by the organization, chosen
+repositories only) and Jira (Atlassian sign-in; ShipScope stores only an encrypted refresh token). Flag sources
+use their own tokens, created and revoked in Settings.
 
-### Where does the date next to "Fully released to PROD" come from?
+### File sync: why is a GitHub App token needed when the Jira secrets already exist?
 
-For each issue, the moment it actually became released is the *later* of the deployment that shipped it
-and (if it's flag-gated) the moment its flag was turned on — both had to be true at once, so whichever
-happened second is when the issue was actually released. A group's date is the latest of its issues' own
-release moments, since the group only finished releasing once the last one crossed that line. This is why
-it only appears next to "Fully released to PROD" and never next to "In progress" — a still-open group
-doesn't have a single meaningful "since" moment to show.
-
-(File: `docs/app.js`, functions `issueReleasedAtProd`, `groupReleasedAtProd`.)
-
-### Why does the tab show "No PI-tagged issues to show yet" even though the loaded PI's shard isn't empty?
-
-Because every issue in it is a deployment-derived fallback stub (see "Where do the Epic/Story/Task numbers
-come from?" above) — `pi: "—"`, not a real PI. The Release Notes tab filters on `isRealPi`, and a stub's
-placeholder `"—"` never matches it. This means
-the tab is only ever useful once `sync-jira.js` is actually reaching Jira successfully; check that
-workflow's run logs and the `JIRA_BASE_URL`/`JIRA_EMAIL`/`JIRA_API_TOKEN` secrets first if every issue looks
-like a stub.
-
-## Data freshness (header)
-
-### What does the "synced HH:MM" text in the header's status badge mean?
-
-The `source · data/*.json` tag next to the tabs only confirms the data files were successfully fetched
-from `live` — it says nothing about how recently, or how completely, those files were last updated on the
-server side.
-
-"synced HH:MM" is stricter. It is stamped only after a run of `orchestrate-full-sync.yml` has successfully
-re-synced *every* tracked component's deployments (not just one) plus Jira — the branch of that workflow
-triggered by the daily cron safety net, a manual run, or an unknown/malformed dispatch, never the
-single-component `repository_dispatch` fired right after one specific deploy. That distinction matters
-because the single-component path can silently fail to fire at all, if the deploying app repository's own
-workflow file — on whichever branch triggered that particular deploy — never received the step that calls
-it (see the `main`/`live` branch model in `CLAUDE.md`); without a separate indicator, the dashboard would
-have no way of showing that a sync was ever missed.
-
-(Script: `record-full-sync.js`, which writes `docs/data/sync-meta.json`. Workflow: `orchestrate-full-sync.yml`,
-job `record_full_sync`, gated on `needs.prepare.outputs.full == 'true'`. File: `docs/app.js`, rendered into
-the `#statusBadgeTime` element inside the header's status badge.)
-
-## Workflows — when does each one actually run?
-
-- **`orchestrate-full-sync.yml`** (deployments and Jira) — runs automatically immediately after a deployment
-  completes, via a webhook from the app repository; on a daily 3 AM safety-net schedule in case a webhook is
-  ever missed; and can also be triggered manually from the Actions tab.
-- **`check-flags.yml`** — has no schedule of its own. It is called by each app repository's own CI, and
-  therefore runs whenever that repository decides to call it, typically on a push or pull request that
-  touches flag-related files.
-- **`sync-runtime-be-flags.yml`** — runs whenever the backend flag service sends a webhook indicating a flag
-  changed, and also whenever any app repository's deployment completes, since a backend release can itself
-  change a flag's default. A daily 3:15 AM safety-net schedule covers the case where either signal is missed,
-  and the workflow can also be triggered manually. It previously polled unconditionally every 15 minutes;
-  this was relaxed once the webhook and deploy triggers made frequent polling unnecessary, given how
-  infrequently these flags actually change in practice.
-- **`update-flag-state.yml`** — never runs on a timer. It runs only when triggered manually, or when a
-  backend service sends a webhook indicating that a specific flag has changed.
-- **`fill-flag-metadata.yml`** — manual only, used when a person fills in a flag's Jira keys, components, or
-  description.
-- **`retrigger-app-checks.yml`** — runs automatically whenever `flags-meta.json` itself changes on `live`, to
-  re-run any `check-flags` runs in app repositories that previously failed due to missing metadata.
-- **`sync-main-to-live.yml`** — runs automatically on every push to `main` that touches `scripts/`, `docs/`,
-  or `.github/workflows/`. This is the mechanism that carries code changes from `main` onto the `live` branch
-  that GitHub Pages actually serves.
-- **`backfill-deployment-metadata.yml`** and **`backfill-flag-state-history.yml`** — one-off maintenance
-  tools, never run automatically. They exist to be triggered manually when older, already-recorded data needs
-  to be brought up to date with a newer version of the sync logic.
-
-## Secrets and tokens — which credential does what?
-
-### Is `create-github-app-token` still needed, given that `JIRA_API_TOKEN` already lives in Repository Secrets?
-
-Yes — the two serve completely different systems and neither replaces the other.
-
-- **`JIRA_BASE_URL` / `JIRA_EMAIL` / `JIRA_API_TOKEN`** (Repository Secrets) give access to **Jira only** —
-  `scripts/sync-jira.js` sends them as HTTP Basic auth on every Jira API call. GitHub knows nothing about them.
-- **`actions/create-github-app-token`** exchanges a GitHub App's private key (`SHIPSCOPE_APP_PRIVATE_KEY` or
-  `CIRCLEK_GLOBAL_GITHUB_EVDT_APP_PRIVATE_KEY`) for a short-lived (about one hour) token scoped to the listed
-  repositories. It is used for **GitHub operations only**.
-
-The App token is used in seven places, always for the same underlying reason — the default `GITHUB_TOKEN` can't
-do the job:
+They are for different systems. `JIRA_BASE_URL` / `JIRA_EMAIL` / `JIRA_API_TOKEN` give `sync-jira.js` read access to
+**Jira only**. `actions/create-github-app-token` turns a GitHub App's private key into a token valid for about an
+hour, used for **GitHub only**:
 
 | Workflow | What the App token is for |
 |---|---|
-| `orchestrate-full-sync.yml`, `backfill-deployment-metadata.yml` | Reading an app repository's Deployments, commits and compare data (`repositories: ${{ matrix.repo }}`). |
-| `retrigger-app-checks.yml` | Re-running failed `check-flags` runs in app repositories (`actions: write` there). |
-| `check-flags.yml`, `notify-deployment.yml` | Run inside an app repository's workflow, but write to / send events to `evdt-service-shipscope`. |
-| `fill-flag-metadata.yml`, `sync-runtime-be-flags.yml` | Fire the `flags-meta-changed` `repository_dispatch` event. |
+| `orchestrate-full-sync.yml`, `backfill-deployment-metadata.yml` | Reading an app repo's deployments, commits and comparisons. |
+| `retrigger-app-checks.yml` | Re-running failed `check-flags` runs in app repos. |
+| `check-flags.yml`, `notify-deployment.yml` | Running in an app repo but writing to / signalling ShipScope. |
+| `fill-flag-metadata.yml`, `sync-runtime-be-flags.yml` | Firing the `flags-meta-changed` event. |
 
-`GITHUB_TOKEN` is not a substitute for two reasons: it only covers the repository the workflow runs in (so it
-can't reach an app repository, or reach ShipScope from one), and events or pushes it creates deliberately do not
-trigger further workflow runs (so it can't fire `repository_dispatch` that is supposed to start another
-workflow).
+The default `GITHUB_TOKEN` cannot replace it: it covers only the repository the workflow runs in, and events it
+creates do not start other workflows. The Jira sync job needs no App token — it only writes to ShipScope's own
+repository, which `GITHUB_TOKEN` can do.
 
-### Does the `sync_jira` job use a GitHub App token?
+### Which credential matters most?
 
-No. `sync_jira` in `orchestrate-full-sync.yml` needs only the Jira secrets plus the ordinary `GITHUB_TOKEN`.
-Its run log shows exactly this: two `actions/checkout` steps (`main` at the workspace root for the scripts, `live`
-into `data/` for the JSON files), then the `sync-with-retry` composite action — there is no
-`create-github-app-token` step in that job. The Jira secrets are passed as `env:` to that single step only, and
-the commit to `live` is made with the checkout's default `GITHUB_TOKEN` credentials, which is enough because the
-job only writes to the same repository it runs in. The App token you see earlier in the same workflow belongs to
-the `sync_deployments` job (it reads the *app* repository), not to `sync_jira`.
-
-A side effect worth knowing: because that push is made with `GITHUB_TOKEN`, it does not itself trigger other
-workflows. Nothing downstream is meant to react to a Jira data commit, so this is fine — but it's the reason
-anything that *should* fan out (like `flags-meta-changed`) uses the App token instead.
-
-### Which of these credentials is the long-lived one worth protecting most?
-
-The App **private key**. The tokens it mints expire in about an hour, but the key itself doesn't, and it can mint
-tokens with write access to `live` and to the app repositories. That is why pinning third-party actions that
-handle it (`create-github-app-token`) to a commit SHA, keeping each token's `permission-*` to the minimum a step
-needs, and tracking the key's owner and rotation date are all worth doing — see `design-docs/TODO.md`.
+The GitHub App **private key**. Tokens expire in an hour; the key does not, and it can mint tokens with write
+access to `live` and the app repos. Keep token permissions minimal, pin the action that uses it to a commit SHA and
+know who owns the key and when it was rotated (`design-docs/TODO.md`).

@@ -85,7 +85,7 @@ kalkulacyjny, nie jako gotowy produkt SaaS.
 ## Zobacz też
 
 - [FAQ.pl.md](FAQ.pl.md) — proste odpowiedzi na pytanie „jak jest liczona ta konkretna liczba/badge?”
-- [ONBOARDING.pl.md](ONBOARDING.pl.md) — checklista dotycząca dodawania nowego komponentu do ShipScope.
+- [ONBOARDING.pl.md](ONBOARDING.pl.md) — zakładanie workspace'u na serwerze ShipScope albo dodawanie komponentu do synchronizacji plikowej.
 - [CLAUDE.md](CLAUDE.md) — pełne techniczne odniesienie (po angielsku): skrypty, workflowy, model danych,
   podział `main`/`live`.
 - [CHANGELOG.pl.md](CHANGELOG.pl.md) — najważniejsze zmiany w czasie.
