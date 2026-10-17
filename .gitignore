@@ -9,5 +9,5 @@ server/node_modules/
 .env
 .env.*
 !.env.example
-.pem
+*.pem
 CLAUDE.local.md
