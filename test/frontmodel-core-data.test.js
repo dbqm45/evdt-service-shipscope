@@ -10,7 +10,7 @@ const NOW = new Date(2026, 9, 9, 12, 0, 0).getTime();
 function stubElement() {
     const classes = new Set();
     const el = {
-        classList: { add: c => classes.add(c), remove: c => classes.delete(c), contains: c => classes.has(c), toggle: c => (classes.has(c) ? classes.delete(c) : classes.add(c)) },
+        classList: { add: c => classes.add(c), remove: c => classes.delete(c), contains: c => classes.has(c), toggle: (c, force) => ((force === undefined ? !classes.has(c) : force) ? classes.add(c) : classes.delete(c)) },
         style: {}, dataset: {}, attrs: {}, children: [], textContent: '', innerHTML: '', title: '',
         addEventListener() {}, appendChild(c) { el.children.push(c); },
         getAttribute(k) { return k in el.attrs ? el.attrs[k] : null; }, setAttribute(k, v) { el.attrs[k] = v; },
@@ -229,6 +229,15 @@ test('API mode: one request to the tenant API, live badge with the last sync tim
     assert.match(boxes.statusBadgeTime.textContent, /^synced \d\d:\d\d · source: ShipScope API$/);
     assert.equal(boxes.settingsLink.hidden, false, 'the server\'s settings page is linked');
     assert.equal(boxes.setupBanner.hidden, true, 'data: no "finish setting up" banner');
+});
+
+test('API mode with npm run dev:mock: a "Mock" badge, not "Live"', async () => {
+    const { boxes, run } = loadApp({ fetchImpl: () => jsonResponse({ mock: true, deployments: [{ id: 'd1' }], lastSyncedAt: '2026-10-09T05:30:00Z' }), loc: apiLocation() });
+    await run('loadData()');
+    assert.equal(boxes.statusBadgeLabel.textContent, 'Mock');
+    assert.equal(boxes.statusBadgeTime.textContent, 'source: sample data');
+    assert.ok(boxes.statusBadge.classList.contains('fallback'));
+    assert.match(boxes.statusBadge.title, /dev:mock/);
 });
 
 test('API mode: a workspace with no data yet points at its setup checklist; any data hides the banner', async () => {

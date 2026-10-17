@@ -28,12 +28,16 @@ the server's dependencies, creates `server/.env`, starts Postgres in Docker (`sh
 database owned by the non-superuser role `shipscope_app` (RLS applies, as on Render), creates a GitHub App on the
 first run through GitHub's manifest flow (one click on a local page; the keys go to `server/.env`), applies the
 migrations, starts `web.js` and `worker.js`, and prints `http://localhost:3000/`. A `DATABASE_URL` pointing elsewhere is
-used as is. Pure helpers are tested in `server/test/dev.test.js`.
+used as is. Pure helpers are tested in `server/test/dev.test.js`. `npm run dev:mock` (`--mock`) runs the same, but with
+`SHIPSCOPE_MOCK_DATA=1`: the dashboard-data and jira-issues routes answer members with the `FALLBACK` sample dataset
+(`server/lib/mock-dashboard.js` builds it once by running `docs/app-*.js` in a `vm` sandbox, so there is one copy of
+it) and the badge reads "Mock". Sign-in, workspaces and settings stay real; refused unless `PUBLIC_BASE_URL` is
+localhost.
 
 ## Layout and tooling
 
 - No linter, bundler or TypeScript. Root `package.json` has no dependencies and only exposes scripts:
-  `npm run dev`, `npm test` (`node --test "test/*.test.js"`), `npm run release`, `npm run lint:commit`,
+  `npm run dev`, `npm run dev:mock`, `npm test` (`node --test "test/*.test.js"`), `npm run release`, `npm run lint:commit`,
   `npm run hooks:install`.
 - `scripts/` holds only tooling: the release scripts (`release.js`, `release-notes.js`, `check-commit-message.js`,
   `lib/conventional.js`, `lib/json-file.js`) and the module-boundary check.
@@ -163,7 +167,7 @@ emptied. `sync_requests` (webhook queue) is the one non-RLS table; it holds no t
   `docs/app-html.js`). `settings.js` is a classic script on `html` with pure `render*` sections and `data-action`
   buttons/forms calling the JSON routes (which enforce roles), tested in `server/test/settings-ui.test.js`. Admins
   get a Getting started checklist (`onboardingSteps()`); an empty dashboard links to it (`#setupBanner`); the
-  header's `#settingsLink` shows only in API mode.
+  header's `#settingsLink` (a gear icon after the status badge) shows only in API mode.
 
 ## Dashboard data (what `GET /api/tenants/:id/dashboard-data` returns)
 

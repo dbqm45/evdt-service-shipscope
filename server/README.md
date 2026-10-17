@@ -282,6 +282,11 @@ setup is started; when that setup's default address has nothing behind it and no
 switches `server/.env` to the database it manages. Any other address that doesn't answer is reported. Delete the
 `DATABASE_URL` line to switch to the managed database (a new, empty one) yourself.
 
+**Mock data:** `npm run dev:mock` does the same, but every workspace's dashboard shows the built-in sample data
+(the set `docs/index.html` shows over `file://`, badge "Mock") instead of its own, so dashboard changes can be checked
+against every visual state without real repositories or Jira. Sign-in, workspaces and settings stay real. It sets
+`SHIPSCOPE_MOCK_DATA=1`, which the server refuses unless `PUBLIC_BASE_URL` is localhost.
+
 **First run: the GitHub App.** Signing in needs a GitHub App. When `server/.env` has none, `npm run dev` first
 prints a link to a local page with one button; GitHub then creates a private App for this server from a manifest
 (callback `http://localhost:3000/auth/github/callback`, setup URL `/github/setup` with redirect on update,

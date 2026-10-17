@@ -17,6 +17,7 @@ const { InvitationNotFoundError, InvitationUnusableError, TOKEN_PATTERN } = requ
 const { InstallationNotFoundError, InstallationTakenError } = require('./lib/github-connections');
 const { IngestTokenError, IngestPayloadError, FlagSourceNotFoundError, FlagSourceConflictError, FlagNotFoundError } = require('./lib/flags');
 const { getSessionUser } = require('./lib/sessions');
+const { mockDataEnabled, loadMockDashboard } = require('./lib/mock-dashboard');
 
 const { registerHealthRoutes } = require('./routes/health');
 const { registerAuthRoutes } = require('./routes/auth');
@@ -98,7 +99,8 @@ function splitCookie(value, first, second) {
  * exercise sign-in); the real entry point below always passes a validated config. Without `githubApp`,
  * sign-in works but the repo-connection routes (FR-004/FR-006) don't exist.
  *
- * The dashboard (docs/) is served at /t/<tenantId>/ from `dashboardDir`.
+ * The dashboard (docs/) is served at /t/<tenantId>/ from `dashboardDir`. With `mockDashboard`
+ * (lib/mock-dashboard.js, `npm run dev:mock`), its data routes answer members with the sample dataset.
  *
  * Routes live one domain per file under routes/ (design-docs/REPORT_ARCH.md, Problem 1): this function is
  * the composition root — it builds the Fastify instance, the central error handler (every domain's error
@@ -106,10 +108,10 @@ function splitCookie(value, first, second) {
  * the small set of cross-domain helpers (requireUser, assertAdminOf, ...) every route file receives through
  * `ctx` instead of its own copy.
  *
- * @param {{ pool: import('pg').Pool, auth?: ReturnType<typeof loadAuthConfig>, githubApp?: ReturnType<typeof loadGitHubAppConfig>, atlassian?: ReturnType<typeof loadAtlassianConfig>, fetch?: typeof fetch, logger?: boolean|object, dashboardDir?: string }} options
+ * @param {{ pool: import('pg').Pool, auth?: ReturnType<typeof loadAuthConfig>, githubApp?: ReturnType<typeof loadGitHubAppConfig>, atlassian?: ReturnType<typeof loadAtlassianConfig>, fetch?: typeof fetch, logger?: boolean|object, dashboardDir?: string, mockDashboard?: { data: object, issuesByPi: Record<string, object[]> }|null }} options
  * @returns {import('fastify').FastifyInstance}
  */
-function buildApp({ pool, auth, githubApp = null, atlassian = null, fetch: fetchFn = fetch, logger = false, dashboardDir = DEFAULT_DASHBOARD_DIR }) {
+function buildApp({ pool, auth, githubApp = null, atlassian = null, fetch: fetchFn = fetch, logger = false, dashboardDir = DEFAULT_DASHBOARD_DIR, mockDashboard = null }) {
     const app = Fastify({
         // Fastify's defaults silently strip unknown body fields and coerce types (42 -> "42"). External
         // input is rejected instead of rewritten (CLAUDE.md: validate every external boundary).
@@ -172,7 +174,7 @@ function buildApp({ pool, auth, githubApp = null, atlassian = null, fetch: fetch
         cookies: { SESSION_COOKIE, LINK_COOKIE },
         UUID_PATTERN, UUID_PARAM, TOKEN_PARAM, GITHUB_ID_PARAM,
         STATE_TTL_SECONDS, POST_LOGIN_REDIRECT, RETURN_TO_PATTERN,
-        DASHBOARD_HEADERS, dashboardDir, UI_DIR,
+        DASHBOARD_HEADERS, dashboardDir, UI_DIR, mockDashboard,
         // Set by registerDashboardRoutes() once ui/invite.html is confirmed deployed; read lazily by
         // registerInvitationRoutes() — a mutable slot instead of a return value because the invitation
         // route is registered before the dashboard routes, and only the *value at request time* matters.
@@ -196,7 +198,10 @@ if (require.main === module) {
     const githubApp = loadGitHubAppConfig(process.env);
     const atlassian = loadAtlassianConfig(process.env);
     const pool = createPool();
-    const app = buildApp({ pool, auth, githubApp, atlassian, logger: true, dashboardDir: process.env.DASHBOARD_DIR || DEFAULT_DASHBOARD_DIR });
+    const dashboardDir = process.env.DASHBOARD_DIR || DEFAULT_DASHBOARD_DIR;
+    const mockDashboard = mockDataEnabled(process.env) ? loadMockDashboard(dashboardDir) : null;
+    if (mockDashboard) console.warn('SHIPSCOPE_MOCK_DATA=1: every dashboard shows the built-in sample data');
+    const app = buildApp({ pool, auth, githubApp, atlassian, logger: true, dashboardDir, mockDashboard });
     const port = Number(process.env.PORT) || 3000;
     app.listen({ port, host: '0.0.0.0' }).catch((err) => {
         console.error(err);

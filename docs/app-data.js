@@ -441,12 +441,12 @@ async function loadApiData(tenantId){
     }
 
     const data = await res.json();
-    badge.classList.remove('fallback');
-    badge.title = '';
-    document.getElementById('statusBadgeLabel').textContent = 'Live';
-    document.getElementById('statusBadgeTime').textContent = data.lastSyncedAt
-        ? `synced ${fmtTime(data.lastSyncedAt)} · source: ShipScope API`
-        : 'source: ShipScope API';
+    badge.classList.toggle('fallback', !!data.mock);
+    badge.title = data.mock ? 'Sample data from a local server started with npm run dev:mock' : '';
+    document.getElementById('statusBadgeLabel').textContent = data.mock ? 'Mock' : 'Live';
+    document.getElementById('statusBadgeTime').textContent = data.mock
+        ? 'source: sample data'
+        : data.lastSyncedAt ? `synced ${fmtTime(data.lastSyncedAt)} · source: ShipScope API` : 'source: ShipScope API';
 
     // A new workspace's dashboard is empty: point at what's left to set up rather than a blank page.
     const nothingYet = !(data.deployments || []).length && !Object.keys(data.flagsMeta || {}).length && !((data.jiraIndex || {}).pis || []).length;
