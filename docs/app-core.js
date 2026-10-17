@@ -4,9 +4,6 @@ const SERVICE_TYPE = Object.freeze({ FE: 'FE', BE: 'BE' });
 const ISSUE_TYPE = Object.freeze({ EPIC: 'Epic', STORY: 'Story', TASK: 'Task', BUG: 'Bug' });
 // What issueStatusForEnv() reports for one issue on one environment (`.level`).
 const RELEASE_LEVEL = Object.freeze({ NONE: 'none', DEPLOYED: 'deployed', DEPLOYED_CODE_ONLY: 'deployed_code_only', PARTIAL: 'partial', RELEASED: 'released' });
-// The file-based dashboard's Jira (GitHub Pages can't read the sync's secret). Served by the ShipScope server, each
-// tenant's own site comes with its data instead: see jiraIssueUrl().
-const JIRA_BASE_URL = 'https://circlek.atlassian.net/browse';
 
 /** Light/dark toggle. Dark is the default — index.html's inline head script already applies a stored
  *  'light' preference before first paint, so this only has to wire up the button and persist a change. */
@@ -101,10 +98,10 @@ function effectiveFlagState(envEntry){
 }
 let state = null;
 
-/** A Jira issue's link: the tenant's own site when the server says which (`state.jiraBrowseUrl`, null until Jira
- *  is connected: then the key is shown unlinked), else this org's site for the file-based dashboard. */
+/** A Jira issue's link on the tenant's own site (`state.jiraBrowseUrl`), or null — no Jira connected yet, or the
+ *  sample data — and the key is shown unlinked. */
 function jiraIssueUrl(key){
-    const base = state && 'jiraBrowseUrl' in state ? state.jiraBrowseUrl : JIRA_BASE_URL;
+    const base = state && state.jiraBrowseUrl;
     return base ? `${base}/${key}` : null;
 }
 

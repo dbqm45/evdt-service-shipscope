@@ -7,8 +7,8 @@
  * flipping it on releases every linked issue at once, including ones that aren't done yet.
  * Returns the not-done keys to call out, or null if there's nothing mixed to warn about.
  *
- * Reads `state.issueStatusIndex` (every PI's `statusCategory`, built server-side by sync-jira.js's
- * buildStatusIndex()) rather than `state.jiraIssues` (only the one PI currently loaded) — a flag's
+ * Reads `state.issueStatusIndex` (every PI's `statusCategory`, built server-side by
+ * buildJiraIndex()) rather than `state.jiraIssues` (only the one PI currently loaded) — a flag's
  * jiraKeys can easily span more than one PI, and the Technical view's Flags panel this feeds has no PI
  * selector of its own for a user to pick the "right" one.
  */

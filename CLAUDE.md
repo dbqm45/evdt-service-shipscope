@@ -20,14 +20,21 @@ issues per tenant, receives feature flags, and serves the static frontend in `do
 The original single-organization **file-based sync** (Node scripts run by GitHub Actions writing
 `docs/data/*.json` to a `live` branch served by GitHub Pages) lives only in the original repository,
 `circlek-global/evdt-service-shipscope`; it was removed from this one on 2026-10-17. Its deployment, version and
-drift rules were ported into `server/lib/`, which is now the only copy here. The frontend still has its file mode:
-opened outside the server it fetches `data/*.json` next to `index.html` and, when those are missing (as in this
-repository, or over `file://`), shows the built-in `FALLBACK` sample data.
+drift rules were ported into `server/lib/`, which is now the only copy here. Opened outside the server (`file://`,
+any static file server) the frontend shows the built-in `FALLBACK` sample data and fetches nothing.
+
+**Run it locally:** `npm run dev` (repo root or `server/`; `server/scripts/dev.js`, Node 20+ and Docker). It installs
+the server's dependencies, creates `server/.env`, starts Postgres in Docker (`shipscope-dev-pg`, port 54329) with a
+database owned by the non-superuser role `shipscope_app` (RLS applies, as on Render), creates a GitHub App on the
+first run through GitHub's manifest flow (one click on a local page; the keys go to `server/.env`), applies the
+migrations, starts `web.js` and `worker.js`, and prints `http://localhost:3000/`. A `DATABASE_URL` pointing elsewhere is
+used as is. Pure helpers are tested in `server/test/dev.test.js`.
 
 ## Layout and tooling
 
 - No linter, bundler or TypeScript. Root `package.json` has no dependencies and only exposes scripts:
-  `npm test` (`node --test "test/*.test.js"`), `npm run release`, `npm run lint:commit`, `npm run hooks:install`.
+  `npm run dev`, `npm test` (`node --test "test/*.test.js"`), `npm run release`, `npm run lint:commit`,
+  `npm run hooks:install`.
 - `scripts/` holds only tooling: the release scripts (`release.js`, `release-notes.js`, `check-commit-message.js`,
   `lib/conventional.js`, `lib/json-file.js`) and the module-boundary check.
 - `server/` is a separate dependency boundary: its own `package.json`, `node_modules/` (gitignored) and `test/`.
@@ -160,10 +167,9 @@ emptied. `sync_requests` (webhook queue) is the one non-RLS table; it holds no t
 
 ## Dashboard data (what `GET /api/tenants/:id/dashboard-data` returns)
 
-`lib/dashboard-data.js` keeps the shapes of the file-based `data/*.json`, so the frontend reads both alike:
+`lib/dashboard-data.js` keeps the shapes of the file-based `data/*.json` the frontend was written for:
 `deployments`, `flagsMeta`, `flagStates`, `flagStateHistory`, `jiraIndex`, `issueStatusIndex`, `issueDeployments`,
-`summary` (empty on the server: `currentVersion()` then scans `deployments`), `componentsOrder` (the tracked repos),
-`lastSyncedAt`, `jiraBrowseUrl`.
+`componentsOrder` (the tracked repos), `lastSyncedAt`, `jiraBrowseUrl`. The `FALLBACK` sample data has the same shape.
 
 - **Deployment record**: `component`, environment (`test`/`qa`/`prod`; `mapEnvironment()` maps by substring,
   `production` → `prod`, `dev` → `test`, `preprod` never `prod`, anything else is skipped), status, `deployedAt`,
@@ -212,10 +218,8 @@ returning `html`. Views compute data and call them; older view functions (`jiraS
 
 **Data loading.** Under `/t/<tenantId>/` `loadData()` reads the dashboard-data endpoint, then one increment's
 issues (`loadJiraIssuesForPi()`); never more than one increment in memory (`state.jiraIssues`, `state.selectedPi`).
-In file mode it fetches `data/deployments.json`, `flags-meta.json`, `flag-states.json`, `jira-issues/index.json`,
-`status-index.json`, `summary.json` and `components.json` (the last three best-effort; `<link rel="preload">` hints in
-`index.html`) and falls back to `FALLBACK`. Jira links: `jiraIssueUrl(key)` (`app-core.js`) uses the API's
-`jiraBrowseUrl`, and the constant `JIRA_BASE_URL` in file mode. Dates use `pl-PL`, except the Insights
+Anywhere else it returns `FALLBACK` (badge "Sample") without any request. Jira links: `jiraIssueUrl(key)`
+(`app-core.js`) uses `state.jiraBrowseUrl`; `null` (no Jira connected, or the sample data) shows keys unlinked. Dates use `pl-PL`, except the Insights
 rollbacks/drift chart axis (`en-US`).
 
 **Global controls.** One PI `<select>` (`initGlobalPiSelect()`) in the tabs row serves Product view, Release Notes

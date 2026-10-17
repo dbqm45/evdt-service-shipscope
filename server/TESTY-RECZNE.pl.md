@@ -43,17 +43,8 @@ Dotyczy wersji, którą już uruchamiałeś lokalnie (na `http://localhost:3000`
 
    Powinno być: lista zmienionych plików albo komunikat „Already up to date”.
 
-2. **Przygotuj bazę danych (migracje).** W tym samym terminalu:
-
-   ```
-   cd server
-   npm install
-   node --env-file=.env scripts/migrate.js
-   ```
-
-   Powinno być: `Applied: 011_jira_rhythms.sql, 012_jira_release_flow.sql, 013_webhooks.sql` (albo
-   `No pending migrations.`, jeśli robiłeś to już wcześniej). Jeśli pojawia się błąd połączenia, sprawdź, czy
-   działa baza danych (kontener Dockera `shipscope-pg`: w Docker Desktop powinien mieć status „Running”).
+2. **Baza danych i migracje** robią się same w kroku 4 (`npm run dev`). Jeśli Twój `server/.env` wskazuje starą
+   bazę (kontener `shipscope-pg`), musi on działać: w Docker Desktop powinien mieć status „Running”.
 
 3. **Dodaj nowe uprawnienie w aplikacji Atlassian.**
    1. Wejdź na https://developer.atlassian.com/console/myapps/ i zaloguj się.
@@ -67,11 +58,11 @@ Dotyczy wersji, którą już uruchamiałeś lokalnie (na `http://localhost:3000`
    Dlaczego: ShipScope prosi teraz Jirę o to uprawnienie. Bez niego każda próba połączenia z Jirą skończy się
    błędem.
 
-4. **Uruchom ShipScope ponownie.** Potrzebne są dwa okna terminala, oba w katalogu `server`:
-   - w pierwszym zatrzymaj stary serwer (`Ctrl+C`) i uruchom go ponownie: `npm run dev`;
-   - w drugim zatrzymaj stary worker (`Ctrl+C`) i uruchom go ponownie: `node --env-file=.env worker.js`.
+4. **Uruchom ShipScope ponownie.** Zatrzymaj stary serwer i worker (`Ctrl+C`), a potem w katalogu głównym
+   repozytorium wpisz `npm run dev`. Jedno polecenie instaluje zależności, stosuje migracje i uruchamia serwer razem
+   z workerem.
 
-   Powinno być: serwer pisze, że nasłuchuje na porcie 3000, a worker co 30 sekund pisze `heartbeat ok`.
+   Powinno być: na końcu link `http://localhost:3000/` do kliknięcia, a w logach linie `[worker] ... heartbeat ok`.
 
 5. **Znajdź identyfikator workspace'u (`<id>`).** Otwórz w przeglądarce `http://localhost:3000/` i zaloguj się.
    Trafisz na dashboard. Spójrz na pasek adresu: wygląda tak:

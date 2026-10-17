@@ -86,7 +86,7 @@ function loadApp() {
     const run = code => vm.runInContext(code, ctx);
     const setState = o => run(`state = ${JSON.stringify({
         selectedPi: 'PI-27.3', selectedSprint: '', jiraIssues: [], deployments: [], flagsMeta: {}, flagStates: {}, flagStateHistory: [],
-        issueDeployments: {}, issueStatusIndex: {}, componentsOrder: [], summary: null, jiraIndex: null, ...o,
+        issueDeployments: {}, issueStatusIndex: {}, componentsOrder: [], jiraBrowseUrl: 'https://jira.example/browse', jiraIndex: null, ...o,
     })}`);
 
     return { ctx, el, ev, run, setState, html: id => String(els[id].innerHTML) };
@@ -202,13 +202,12 @@ test('renderSummaryCards: behind prod, failed deploys today and diverging flags'
     assert.ok(out.includes('1 failed'));
 });
 
-test('renderSummaryCards: plural behind note and summary fast path', () => {
+test('renderSummaryCards: plural behind note', () => {
     const { run, setState, html } = loadApp();
     const behind = { behindEnv: 'qa', commitCount: 1 };
 
     setState({
-        deployments: [dep({ id: 1, component: 'a' }), dep({ id: 2, component: 'b' })],
-        summary: { components: { a: { prod: { current: dep({ component: 'a', driftBehind: behind }) } }, b: { prod: { current: dep({ component: 'b', driftBehind: behind }) } } } },
+        deployments: [dep({ id: 1, component: 'a', driftBehind: behind }), dep({ id: 2, component: 'b', driftBehind: behind })],
     });
     run('renderSummaryCards()');
     assert.ok(html('summaryGrid').includes('2 services differ'));
@@ -493,7 +492,9 @@ test('joinMeta drops falsy parts, separates the rest and escapes plain strings',
 });
 
 test('renderChipsRow renders issue links and flag badges, or nothing', () => {
-    const { run } = loadApp();
+    const { run, setState } = loadApp();
+
+    setState({});
 
     assert.equal(String(run('renderChipsRow([], {})')), '');
     assert.equal(String(run('renderChipsRow()')), '');

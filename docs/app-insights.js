@@ -171,7 +171,7 @@ function renderStaleFlagsChart(){
 }
 
 /** Earliest known successful prod deployment referencing this issue, across both the live
- *  `state.deployments` (may have aged out of RETENTION_DAYS) and the never-trimmed
+ *  `state.deployments` (may have aged out of retention) and the never-trimmed
  *  `state.issueDeployments` fallback — see issueDeployedOnComponent()'s own comment for why both are
  *  checked. An issue can ship via more than one component, so this takes the minimum across all of them,
  *  not just one. */
@@ -247,9 +247,9 @@ function renderLeadTimeChart(){
  *  counting how many carry `rollback` and how many carry a `driftBehind` that actually flags something
  *  (`commitCount` — this env fell behind an earlier one — or `untestedCommitCount` — this env has commits
  *  no earlier one ever saw, i.e. skipped the normal promotion path). Both fields are already computed by
- *  sync-github-deployments.js; this is a pure rollup, sorted chronologically (oldest first) since it's a
+ *  the server's deployment sync; this is a pure rollup, sorted chronologically (oldest first) since it's a
  *  trend, unlike the ranked snapshots in the other charts. The 12-month window is a display cap only — it
- *  doesn't touch `deployments.json` itself, just what this one chart renders. */
+ *  doesn't touch the stored deployments, just what this one chart renders. */
 function rollbackDriftByMonth(){
     const buckets = new Map();
     const cutoff = new Date();

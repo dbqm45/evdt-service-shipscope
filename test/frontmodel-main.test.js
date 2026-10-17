@@ -32,7 +32,7 @@ function stubElement(extra = {}) {
     return el;
 }
 
-function loadApp({ fetchImpl, search = '', patch = s => s, tabs = ['tech', 'product', 'notes', 'insights'] } = {}) {
+function loadApp({ fetchImpl, search = '', pathname = '/', patch = s => s, tabs = ['tech', 'product', 'notes', 'insights'] } = {}) {
     const boxes = {};
     const created = [];
     const tabEls = tabs.map(v => stubElement({ dataset: { view: v } }));
@@ -45,7 +45,7 @@ function loadApp({ fetchImpl, search = '', patch = s => s, tabs = ['tech', 'prod
         static now() { return NOW; }
     }
     const ctx = {
-        console, URLSearchParams, Math, Map, Set, Promise, Date: FakeDate, location: { search },
+        console, URLSearchParams, Math, Map, Set, Promise, Date: FakeDate, location: { search, pathname },
         CSS: { escape: s => s },
         localStorage: { getItem: () => null, setItem(k, v) { stored[k] = v; } },
         fetch: fetchImpl || (() => Promise.reject(new Error('offline'))),
@@ -72,20 +72,27 @@ function loadApp({ fetchImpl, search = '', patch = s => s, tabs = ['tech', 'prod
 
 const jsonRes = (body, ok = true) => Promise.resolve({ ok, json: () => Promise.resolve(body) });
 
-function liveRoutes(overrides = {}) {
+// A workspace's dashboard served by the ShipScope server: data from its API.
+const TENANT = '0b0e4c3e-1d2f-4a5b-8c9d-0e1f2a3b4c5d';
+const API_PATH = `/t/${TENANT}/`;
+const DATA_URL = `/api/tenants/${TENANT}/dashboard-data`;
+const issuesUrl = pi => `/api/tenants/${TENANT}/jira-issues?pi=${encodeURIComponent(pi)}`;
+
+function liveRoutes({ jiraIndex } = {}) {
     const sprints = [{ name: 'Sparks 2.0.1', startDate: '2026-09-01T00:00:00Z', endDate: '2026-09-20T00:00:00Z' },
         { name: 'Sparks 2.0.2', startDate: '2026-10-01T00:00:00Z', endDate: '2026-10-20T00:00:00Z' }];
     const issue = (key, pi, sprint) => ({ key, type: 'Story', title: key, pi, sprint, priority: 'Major' });
 
     return {
-        'data/deployments.json': [{ id: 1, component: 'zeta', environment: 'prod', status: 'success', version: 'v1', deployedAt: '2026-10-08T00:00:00Z', relatedIssues: [] },
-            { id: 2, component: 'alpha', environment: 'qa', status: 'success', version: 'v2', deployedAt: '2026-10-08T00:00:00Z', relatedIssues: [] },
-            { id: 3, component: 'alpha', environment: 'test', status: 'success', version: 'v3', deployedAt: '2026-10-08T00:00:00Z', relatedIssues: [] }],
-        'data/flags-meta.json': {}, 'data/flag-states.json': {},
-        'data/jira-issues/index.json': { currentPi: 'PI-2.0', pis: [{ pi: 'PI-2.0', file: 'pi2.json', sprints }, { pi: 'PI-1.0', file: 'pi1.json', sprints: [] }] },
-        'data/jira-issues/pi2.json': [issue('A-1', 'PI-2.0', 'Sparks 2.0.2')],
-        'data/jira-issues/pi1.json': [issue('B-1', 'PI-1.0', 'Sparks 1.0.1')],
-        ...overrides,
+        [DATA_URL]: {
+            deployments: [{ id: 1, component: 'zeta', environment: 'prod', status: 'success', version: 'v1', deployedAt: '2026-10-08T00:00:00Z', relatedIssues: [] },
+                { id: 2, component: 'alpha', environment: 'qa', status: 'success', version: 'v2', deployedAt: '2026-10-08T00:00:00Z', relatedIssues: [] },
+                { id: 3, component: 'alpha', environment: 'test', status: 'success', version: 'v3', deployedAt: '2026-10-08T00:00:00Z', relatedIssues: [] }],
+            flagsMeta: {}, flagStates: {},
+            jiraIndex: jiraIndex || { currentPi: 'PI-2.0', pis: [{ pi: 'PI-2.0', file: 'pi2.json', sprints }, { pi: 'PI-1.0', file: 'pi1.json', sprints: [] }] },
+        },
+        [issuesUrl('PI-2.0')]: [issue('A-1', 'PI-2.0', 'Sparks 2.0.2')],
+        [issuesUrl('PI-1.0')]: [issue('B-1', 'PI-1.0', 'Sparks 1.0.1')],
     };
 }
 
@@ -122,7 +129,7 @@ test('fallback boot: init renders everything from the built-in dataset and picks
     for (const id of ['summaryGrid', 'timeline', 'flags', 'pvSummary', 'issueBody', 'releaseNotesBody']) {
         assert.ok(String(boxes[id].innerHTML).length > 0, `${id} rendered`);
     }
-    assert.equal(boxes.statusBadgeLabel.textContent, 'Fallback');
+    assert.equal(boxes.statusBadgeLabel.textContent, 'Sample');
 });
 
 test('tabs: default view is tech; Insights tab removed without ?insights=1, shown with it', async () => {
@@ -177,7 +184,7 @@ test('tab clicks switch views and toggle the PI / sprint selectors', async () =>
 test('live boot: current PI chosen from the index, its shard loaded, options labelled', async () => {
     const calls = [];
     const routes = liveRoutes();
-    const app = loadApp({ fetchImpl: u => { calls.push(u); return fetchFrom(routes)(u); } });
+    const app = loadApp({ fetchImpl: u => { calls.push(u); return fetchFrom(routes)(u); }, pathname: API_PATH });
 
     await settle();
 
@@ -189,14 +196,14 @@ test('live boot: current PI chosen from the index, its shard loaded, options lab
     assert.equal(run('state.selectedSprint'), 'Sparks 2.0.2');
     assert.deepEqual(boxes.globalPiSelect.children.map(o => o.textContent), ['PI-2.0 (current)', 'PI-1.0']);
     assert.deepEqual(boxes.filterComponent.children.map(o => o.value), ['alpha', 'zeta']);
-    assert.ok(calls.includes('data/jira-issues/pi2.json'));
-    assert.ok(!calls.includes('data/jira-issues/pi1.json'), 'only one PI shard is loaded up front');
+    assert.ok(calls.includes(issuesUrl('PI-2.0')));
+    assert.ok(!calls.includes(issuesUrl('PI-1.0')), 'only one increment is loaded up front');
     assert.equal(boxes.statusBadgeLabel.textContent, 'Live');
 });
 
 test('live boot without currentPi falls back to the first PI; without any PI selects null', async () => {
-    const routes = liveRoutes({ 'data/jira-issues/index.json': { currentPi: null, pis: [{ pi: 'PI-1.0', file: 'pi1.json', sprints: [] }] } });
-    const a = loadApp({ fetchImpl: fetchFrom(routes) });
+    const routes = liveRoutes({ jiraIndex: { currentPi: null, pis: [{ pi: 'PI-1.0', file: 'pi1.json', sprints: [] }] } });
+    const a = loadApp({ fetchImpl: fetchFrom(routes), pathname: API_PATH });
 
     await settle();
     assert.equal(a.run('state.selectedPi'), 'PI-1.0');
@@ -205,7 +212,7 @@ test('live boot without currentPi falls back to the first PI; without any PI sel
     assert.equal(a.boxes.filterSprint.disabled, true);
     assert.deepEqual(a.boxes.globalPiSelect.children.map(o => o.textContent), ['PI-1.0']);
 
-    const b = loadApp({ fetchImpl: fetchFrom(liveRoutes({ 'data/jira-issues/index.json': { currentPi: null, pis: [] } })) });
+    const b = loadApp({ fetchImpl: fetchFrom(liveRoutes({ jiraIndex: { currentPi: null, pis: [] } })), pathname: API_PATH });
 
     await settle();
     assert.equal(b.run('state.selectedPi'), null);
@@ -214,7 +221,7 @@ test('live boot without currentPi falls back to the first PI; without any PI sel
 });
 
 test('refreshSprintSelect: current option first, hybrid option, remaining sprints newest first; past PI has no current/hybrid', async () => {
-    const app = loadApp({ fetchImpl: fetchFrom(liveRoutes()) });
+    const app = loadApp({ fetchImpl: fetchFrom(liveRoutes()), pathname: API_PATH });
 
     await settle();
 
@@ -229,7 +236,7 @@ test('refreshSprintSelect: current option first, hybrid option, remaining sprint
 });
 
 test('PI select change loads the shard, resets filters and refreshes sprint scope', async () => {
-    const app = loadApp({ fetchImpl: fetchFrom(liveRoutes()), search: '?insights=1' });
+    const app = loadApp({ fetchImpl: fetchFrom(liveRoutes()), search: '?insights=1', pathname: API_PATH });
 
     await settle();
 
@@ -256,16 +263,16 @@ test('PI select: latest request wins when responses arrive out of order', async 
     const pending = {};
     const routes = liveRoutes();
     const fetchImpl = u => {
-        if (u === 'data/jira-issues/pi1.json') {
+        if (u === issuesUrl('PI-1.0')) {
             return new Promise(resolve => { pending.pi1 = () => resolve({ ok: true, json: () => Promise.resolve(routes[u]) }); });
         }
-        if (u === 'data/jira-issues/pi2.json' && pending.hold) {
+        if (u === issuesUrl('PI-2.0') && pending.hold) {
             return new Promise(resolve => { pending.pi2 = () => resolve({ ok: true, json: () => Promise.resolve([{ key: 'LATE', pi: 'PI-2.0' }]) }); });
         }
 
         return fetchFrom(routes)(u);
     };
-    const app = loadApp({ fetchImpl });
+    const app = loadApp({ fetchImpl, pathname: API_PATH });
 
     await settle();
 
@@ -301,7 +308,7 @@ test('PI select: latest request wins when responses arrive out of order', async 
 });
 
 test('timeline infinite scroll and deploy filter reset wiring', async () => {
-    const app = loadApp({ fetchImpl: fetchFrom(liveRoutes()) });
+    const app = loadApp({ fetchImpl: fetchFrom(liveRoutes()), pathname: API_PATH });
 
     await settle();
 
@@ -339,7 +346,7 @@ test('timeline infinite scroll and deploy filter reset wiring', async () => {
 });
 
 test('sprint select change updates the scope and re-renders', async () => {
-    const app = loadApp({ fetchImpl: fetchFrom(liveRoutes()) });
+    const app = loadApp({ fetchImpl: fetchFrom(liveRoutes()), pathname: API_PATH });
 
     await settle();
     app.boxes.filterSprint.value = 'Sparks 2.0.1';

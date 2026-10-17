@@ -88,7 +88,7 @@ function loadApp() {
     const run = code => vm.runInContext(code, ctx);
     const setState = o => run(`state = ${JSON.stringify({
         selectedPi: 'PI-27.3', selectedSprint: '', jiraIssues: [], deployments: [], flagsMeta: {}, flagStates: {}, flagStateHistory: [],
-        issueDeployments: {}, issueStatusIndex: {}, componentsOrder: [], summary: null, jiraIndex: null, ...o,
+        issueDeployments: {}, issueStatusIndex: {}, componentsOrder: [], jiraBrowseUrl: 'https://jira.example/browse', jiraIndex: null, ...o,
     })}`);
 
     return { ctx, el, ev, run, setState, html: id => String(els[id].innerHTML) };

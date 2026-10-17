@@ -14,6 +14,16 @@ It runs as a hosted, multi-tenant service: each organization gets a workspace, c
 installation and Jira site, and sees the dashboard at its own address. The backend (`server/`, Node.js + Postgres)
 syncs the data; the dashboard is a plain HTML/JS page (`docs/`).
 
+## Run it locally
+
+```bash
+npm run dev
+```
+
+Needs Node.js 20+ and Docker. It starts the database, applies migrations, starts the server and the worker, and
+prints the link to open; on the first run it asks you to click once to create the GitHub App used for signing in.
+Details: [server/README.md](server/README.md#running-locally).
+
 ## What it shows
 
 Two views, both reading the same underlying data:

@@ -23,7 +23,7 @@ function componentNames(repos) {
     }));
 }
 
-/** One deployments row as a data/deployments.json record (the file-based sync's buildRecord()). */
+/** One deployments row in the dashboard's deployment-record shape (CLAUDE.md, "Dashboard data"). */
 function toLegacyRecord(row, component) {
     return {
         id: `gh-${row.deployment_id}`,
@@ -56,7 +56,7 @@ function shortRef(ref) {
  * @param {{ tenantId: string, actorUserId: string }} input
  * @returns {Promise<{ deployments: object[], flagsMeta: object, flagStates: object, jiraIndex: { currentPi: string|null, pis: object[] },
  *   flagStateHistory: [], componentsOrder: object[], issueStatusIndex: object, issueDeployments: object,
- *   summary: { components: object }, lastSyncedAt: string|null, jiraBrowseUrl: string|null }>}
+ *   lastSyncedAt: string|null, jiraBrowseUrl: string|null }>}
  * @throws {TenantNotFoundError} the user isn't a member
  */
 async function buildDashboardData(pool, { tenantId, actorUserId }) {
@@ -118,7 +118,6 @@ async function buildDashboardData(pool, { tenantId, actorUserId }) {
             jiraIndex,
             issueStatusIndex,
             issueDeployments,
-            summary: { components: {} },
             componentsOrder: repos.map((r) => ({
                 name: names.get(Number(r.repo_id)),
                 description: r.full_name,

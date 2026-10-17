@@ -1,6 +1,6 @@
 /**
  * Release Notes: real (non-fallback-stub) Jira issues released to prod, grouped by PI then sprint, narrowed by
- * the Service (application, via components.json) and Type filters. Purely derived from `state` — no data file
+ * the Service (application, via `state.componentsOrder`) and Type filters. Purely derived from `state` — no data file
  * or request of its own beyond what loadData() already fetches.
  */
 /** Release Notes summary row: always the *current* PI's released counts — deliberately ignoring

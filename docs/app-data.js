@@ -1,16 +1,14 @@
-/* ---------- Data loading: real files first, embedded fallback for standalone preview ----------
- * Opening docs/index.html directly (double-click, or drag into a browser — no server, no deploy)
- * makes every `fetch()` below fail (browsers block fetching relative files over file://), so
- * loadData()'s catch block returns this FALLBACK object instead. That's the built-in "preview
- * without a file server" path CLAUDE.md already documents — this dataset just exists to exercise
- * it: every visual state currently in the app (grouped consecutive deploys, a manual-partial group,
+/* ---------- Data loading: the tenant API, or embedded sample data for a standalone preview ----------
+ * Served by the ShipScope server at /t/<tenantId>/, loadData() reads that tenant's data from the API. Opened
+ * anywhere else (double-click docs/index.html, any static file server) it shows this built-in FALLBACK
+ * dataset, which exists to exercise every visual state currently in the app (grouped consecutive deploys, a manual-partial group,
  * drift-behind warnings, a rollback, a build/runtime-be diverging flag, a brand-new flag, a
  * dependency-blocked issue, an epic that's fully released vs. one that's partial vs. one that's
  * empty, an ungrouped issue, deployed_code_only vs. flag-hidden statuses) shows up somewhere,
  * without needing real synced data or a deploy to check a styling change.
  */
 /** Mock `driftBehind.diff` for the preview: a random handful of plausible changed paths (the real value comes
- *  from the tree comparison in sync-github-deployments.js). `more` extra files are counted but not listed. */
+ *  from the server's tree comparison, server/lib/env-drift.js). `more` extra files are counted but not listed. */
 function mockDiff(count, more = 0){
     const pool = ['src/app/app.component.ts', 'src/app/app.routes.ts', 'src/app/shared/utils/date.ts', 'src/app/charging/charger-list.component.html',
         'src/app/charging/charger-list.component.ts', 'src/app/charging/charger.service.ts', 'src/assets/i18n/en.json', 'src/assets/i18n/pl.json',
@@ -333,9 +331,9 @@ function buildFallbackData(){
         });
     });
 
-    // Mirrors sync-jira.js's own per-PI sharding (see CLAUDE.md's Jira issues section): group the flat
+    // Mirrors the server's per-increment split (server/lib/jira-model.js): group the flat
     // seed list above by `pi`, and build the same `{ currentPi, pis: [{ pi, sprints }] }` shape
-    // index.json carries, so the fallback path can be driven through the exact same loadJiraIssuesForPi()
+    // `jiraIndex` carries, so the fallback path can be driven through the exact same loadJiraIssuesForPi()
     // as the real data instead of a separate offline-only code path.
     const jiraIssuesByPi = new Map();
 
@@ -375,33 +373,27 @@ function buildFallbackData(){
     }));
     const jiraIndex = { currentPi: piEntries[0]?.pi || null, pis: piEntries };
 
-    // Mirrors sync-jira.js's buildStatusIndex() — same key -> { pi, statusCategory } shape, spanning
+    // Mirrors the server's buildJiraIndex() — same key -> { pi, statusCategory } shape, spanning
     // every PI in the seed data, so flagBlastRadius()/flagStaleWarning() behave the same in the fallback
     // preview as they do against real data.
     const issueStatusIndex = {};
 
     jiraIssues.forEach(issue => { issueStatusIndex[issue.key] = { pi: issue.pi, statusCategory: issue.statusCategory }; });
 
-    // Empty in the fallback/preview dataset — nothing is ever trimmed here (there's no real sync, no
-    // RETENTION_DAYS), so `state.deployments` alone already covers everything this would otherwise
-    // supplement; see loadData()'s own fetch for what this looks like against real data.
+    // Empty in the preview dataset: nothing is ever trimmed here, so `state.deployments` alone already covers
+    // what this would otherwise supplement.
     const issueDeployments = {};
 
-    // Empty for the same reason: the fallback dataset is small enough that currentVersion()'s plain scan
-    // over state.deployments is already instant, so there's nothing worth precomputing here. currentVersion()
-    // falls back to that same scan whenever a component/env is missing from state.summary.components.
-    const summary = { components: {} };
-
-    return { deployments, flagsMeta, flagStates, flagStateHistory, jiraIssuesByPi, jiraIndex, issueStatusIndex, componentsOrder, issueDeployments, summary };
+    // No Jira site behind the sample keys: they are shown unlinked.
+    return { deployments, flagsMeta, flagStates, flagStateHistory, jiraIssuesByPi, jiraIndex, issueStatusIndex, componentsOrder, issueDeployments, jiraBrowseUrl: null };
 }
 
 // FALLBACK itself is initialised in app-main.js (right before init()): buildFallbackData() calls helpers from
 // later scripts (e.g. compareVersionDesc in app-model.js), which don't exist yet while this file loads.
 
 /**
- * SaaS mode: when the ShipScope server serves this page at /t/<tenantId>/, the data comes from its API for that
- * tenant, in one request and in the same shapes as the data/*.json files loaded below. Null everywhere else
- * (GitHub Pages, a static file server, file://), where loadData() works exactly as it always has.
+ * When the ShipScope server serves this page at /t/<tenantId>/, the data comes from its API for that tenant, in
+ * one request. Null everywhere else (a static file server, file://), where loadData() shows the sample data.
  */
 const API_TENANT_ID = (() => {
     const pathname = (typeof location !== 'undefined' && location.pathname) || '';
@@ -411,12 +403,12 @@ const API_TENANT_ID = (() => {
 
 const emptyDashboardData = () => ({
     deployments: [], flagsMeta: {}, flagStates: {}, jiraIndex: { currentPi: null, pis: [] }, flagStateHistory: [],
-    componentsOrder: [], issueStatusIndex: {}, issueDeployments: {}, summary: { components: {} },
+    componentsOrder: [], issueStatusIndex: {}, issueDeployments: {},
 });
 
 /**
- * loadData() in SaaS mode. Unlike the file-based path it never falls back to the built-in sample data: on a
- * real tenant's page, sample deployments would read as that tenant's own. Signed out (401) it goes through
+ * loadData() on a tenant's page. It never falls back to the built-in sample data: there, sample deployments
+ * would read as that tenant's own. Signed out (401) it goes through
  * sign-in and back; any other failure shows an empty dashboard with an error badge.
  */
 async function loadApiData(tenantId){
@@ -463,83 +455,20 @@ async function loadApiData(tenantId){
         setupBanner.hidden = !nothingYet;
     }
 
-    // `jiraBrowseUrl: null` (no Jira connected) must not fall back to the file-based dashboard's Jira site.
+    // `jiraBrowseUrl: null` until Jira is connected: issue keys are then shown unlinked.
     return { ...emptyDashboardData(), jiraBrowseUrl: null, ...data, isFallback: false };
 }
 
 async function loadData(){
     if (API_TENANT_ID) return loadApiData(API_TENANT_ID);
 
-    try {
-        const [deployments, flagsMeta, flagStates, jiraIndex] = await Promise.all([
-            fetch('data/deployments.json').then(r=>{ if(!r.ok) throw new Error(); return r.json(); }),
-            fetch('data/flags-meta.json').then(r=>{ if(!r.ok) throw new Error(); return r.json(); }),
-            fetch('data/flag-states.json').then(r=>{ if(!r.ok) throw new Error(); return r.json(); }),
-            fetch('data/jira-issues/index.json').then(r=>{ if(!r.ok) throw new Error(); return r.json(); }),
-        ]);
-        document.getElementById('statusBadge').classList.remove('fallback');
-        document.getElementById('statusBadge').title = '';
-        document.getElementById('statusBadgeLabel').textContent = 'Live';
+    const badge = document.getElementById('statusBadge');
+    badge.classList.add('fallback');
+    badge.title = 'Sample data — open a workspace on the ShipScope server to see real data';
+    document.getElementById('statusBadgeLabel').textContent = 'Sample';
+    document.getElementById('statusBadgeTime').textContent = 'built-in preview data';
 
-        // Best-effort: losing the flag audit trail shouldn't take down the rest of the dashboard.
-        const flagStateHistory = await fetch('data/flag-state-history.json')
-            .then(r => r.ok ? r.json() : [])
-            .catch(() => []);
-
-        // Best-effort: only used to order the Technical view's component rows the way they were
-        // onboarded instead of alphabetically — missing/unreachable just falls back to alphabetical.
-        const componentsOrder = await fetch('components.json')
-            .then(r => r.ok ? r.json() : null)
-            .then(json => (json && json.components) || [])
-            .catch(() => []);
-
-        // Best-effort: a tiny key -> { pi, statusCategory } map spanning every PI (not just the one
-        // currently loaded into state.jiraIssues) — see sync-jira.js's buildStatusIndex() for why the
-        // Flags panel specifically needs this instead of just reading state.jiraIssues. Missing/unreachable
-        // just means flagBlastRadius()/flagStaleWarning() can't resolve any issue (same as not finding a
-        // key in state.jiraIssues today), not a hard failure.
-        const issueStatusIndex = await fetch('data/jira-issues/status-index.json')
-            .then(r => r.ok ? r.json() : {})
-            .catch(() => ({}));
-
-        // Best-effort: `{ [issueKey]: { [env]: { [component]: { deployedAt, commitUrl } } } }`, never
-        // trimmed by RETENTION_DAYS unlike `deployments.json` itself — see sync-github-deployments.js's
-        // ISSUE_DEPLOYMENTS_PATH for why. Missing/unreachable just means
-        // anyDeploymentForIssue()/issueDeployedOnComponent() have nothing to fall back to.
-        const issueDeployments = await fetch('data/issue-deployments.json')
-            .then(r => r.ok ? r.json() : {})
-            .catch(() => ({}));
-
-        // Best-effort: written only by the branch of orchestrate-full-sync.yml that syncs every tracked
-        // component (cron safety net, manual run, or an unknown/malformed dispatch), never by a
-        // single-component repository_dispatch — so this is "all data last confirmed against the real
-        // state," not just "something changed." Missing/unreachable just hides the line below the tag.
-        const syncMeta = await fetch('data/sync-meta.json')
-            .then(r => r.ok ? r.json() : null)
-            .catch(() => null);
-
-        // Best-effort: `{ components: { [component]: { [env]: { current, latestOverall } } } }`, a
-        // precomputed fast path for currentVersion()/componentDeployments() so the Technical view's
-        // summary cards and component×env matrix don't each have to rescan the full (potentially large)
-        // `deployments` array on first render — see sync-github-deployments.js's SUMMARY_PATH comment.
-        // Missing/unreachable just means those lookups fall back to scanning `state.deployments`.
-        const summary = await fetch('data/summary.json')
-            .then(r => r.ok ? r.json() : { components: {} })
-            .catch(() => ({ components: {} }));
-
-        document.getElementById('statusBadgeTime').textContent = syncMeta && syncMeta.lastFullSync
-            ? `synced ${fmtTime(syncMeta.lastFullSync)} · source: data/*.json`
-            : 'source: data/*.json';
-
-        return { deployments, flagsMeta, flagStates, jiraIndex, flagStateHistory, componentsOrder, issueStatusIndex, issueDeployments, summary, isFallback: false };
-    } catch(e) {
-        document.getElementById('statusBadge').classList.add('fallback');
-        document.getElementById('statusBadge').title = 'Built-in fallback data — preview without a file server';
-        document.getElementById('statusBadgeLabel').textContent = 'Fallback';
-        document.getElementById('statusBadgeTime').textContent = 'source: data/*.json (mock)';
-
-        return { ...FALLBACK, isFallback: true };
-    }
+    return { ...FALLBACK, isFallback: true };
 }
 
 /** Fetches one PI's Jira issues — the per-PI shard named in `state.jiraIndex.pis` (or, in fallback mode,
@@ -557,11 +486,7 @@ async function loadJiraIssuesForPi(pi){
 
     if (!entry) return [];
 
-    if (API_TENANT_ID) {
-        return fetch(`/api/tenants/${API_TENANT_ID}/jira-issues?pi=${encodeURIComponent(pi)}`, { credentials: 'same-origin' })
-            .then(r => r.ok ? r.json() : []).catch(() => []);
-    }
-
-    return fetch(`data/jira-issues/${entry.file}`).then(r => r.ok ? r.json() : []).catch(() => []);
+    return fetch(`/api/tenants/${API_TENANT_ID}/jira-issues?pi=${encodeURIComponent(pi)}`, { credentials: 'same-origin' })
+        .then(r => r.ok ? r.json() : []).catch(() => []);
 }
 
