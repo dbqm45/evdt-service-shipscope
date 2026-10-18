@@ -7,6 +7,12 @@ dashboard, not a published package), so entries are grouped by date instead. See
 ShipScope is, `CLAUDE.md` for the technical reference, and `FAQ.md` for how specific numbers/badges are
 calculated.
 
+## [0.2.5] - 2026-10-18
+
+### Added
+
+- **SHP:** publish the flag ingest JSON Schema and sender guide (#45)
+
 ## [0.2.4] - 2026-10-17
 
 ### Added

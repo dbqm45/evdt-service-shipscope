@@ -7,6 +7,12 @@ dashboard, nie publikowany pakiet), dlatego wpisy są pogrupowane według dat. I
 ShipScope, znajdują się w `README.pl.md`, pełne techniczne odniesienie w `CLAUDE.md` (po angielsku), a
 wyjaśnienie sposobu liczenia poszczególnych wartości/badge'y w `FAQ.pl.md`.
 
+## [0.2.5] - 2026-10-18
+
+### Nowe
+
+- **SHP:** publish the flag ingest JSON Schema and sender guide (#45)
+
 ## [0.2.4] - 2026-10-17
 
 ### Nowe
