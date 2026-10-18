@@ -7,6 +7,12 @@ dashboard, not a published package), so entries are grouped by date instead. See
 ShipScope is, `CLAUDE.md` for the technical reference, and `FAQ.md` for how specific numbers/badges are
 calculated.
 
+## [0.2.7] - 2026-10-18
+
+### Added
+
+- **SHP:** show each flag source's last message and error in Settings (#47)
+
 ## [0.2.6] - 2026-10-18
 
 ### Added
