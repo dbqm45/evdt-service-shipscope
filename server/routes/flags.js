@@ -2,6 +2,8 @@ const {
     createFlagSource, updateFlagSource, deleteFlagSource, listFlagSources, createIngestToken, revokeIngestToken, ingestFlags,
     listFlags, setFlagDetails,
 } = require('../lib/flags');
+// The ingest contract, published as is at GET /api/flags/ingest/schema so senders can check a message before sending it.
+const INGEST_SCHEMA = require('../schemas/flags-ingest.v2.schema.json');
 
 /**
  * Feature flags, pushed from outside (lib/flags.js, contract schemaVersion 2): admins name the tenant's
@@ -14,59 +16,17 @@ const {
 function registerFlagRoutes(app, ctx) {
     const { pool, requireUser, UUID_PARAM } = ctx;
     const tenantOnlyParams = { type: 'object', required: ['tenantId'], properties: { tenantId: UUID_PARAM } };
-    const FLAG_KEY = { type: 'string', pattern: '^[A-Za-z_][A-Za-z0-9_.:-]{0,127}$' };
-    const ENV = { type: 'string', enum: ['test', 'qa', 'prod'] };
+    const { flagKey: FLAG_KEY, jiraKey: JIRA_KEY } = INGEST_SCHEMA.definitions;
 
     app.post('/api/flags/ingest', {
         bodyLimit: 2 * 1024 * 1024,
-        schema: {
-            body: {
-                type: 'object',
-                required: ['schemaVersion', 'observations'],
-                additionalProperties: false,
-                properties: {
-                    schemaVersion: { const: 2 },
-                    // Full state (default): flags this source no longer lists in these environments are removed.
-                    complete: { type: 'boolean' },
-                    environments: { type: 'array', minItems: 1, uniqueItems: true, items: ENV },
-                    changedBy: { type: 'string', minLength: 1, maxLength: 100 },
-                    observations: {
-                        type: 'array',
-                        maxItems: 5000,
-                        items: {
-                            type: 'object',
-                            required: ['key', 'env', 'state'],
-                            additionalProperties: false,
-                            properties: {
-                                key: FLAG_KEY,
-                                env: ENV,
-                                state: { type: 'string', enum: ['off', 'on', 'partial'] },
-                                rollout: { type: 'number', minimum: 0, maximum: 100 },
-                                changedAt: { type: 'string', format: 'date-time' },
-                            },
-                        },
-                    },
-                    flags: {
-                        type: 'array',
-                        maxItems: 5000,
-                        items: {
-                            type: 'object',
-                            required: ['key'],
-                            additionalProperties: false,
-                            properties: {
-                                key: FLAG_KEY,
-                                description: { type: ['string', 'null'], maxLength: 500 },
-                                jiraKeys: { type: 'array', maxItems: 50, uniqueItems: true, items: { type: 'string', pattern: '^[A-Z][A-Z0-9_]{0,19}-[1-9][0-9]{0,9}$' } },
-                            },
-                        },
-                    },
-                },
-            },
-        },
+        schema: { body: INGEST_SCHEMA },
     }, async (request) => {
         const match = /^Bearer (\S+)$/.exec(request.headers.authorization || '');
         return ingestFlags(pool, { token: match ? match[1] : '', payload: request.body });
     });
+
+    app.get('/api/flags/ingest/schema', async (request, reply) => reply.type('application/schema+json').send(INGEST_SCHEMA));
 
     const sourceBody = (required) => ({
         type: 'object',
@@ -106,7 +66,7 @@ function registerFlagRoutes(app, ctx) {
                 additionalProperties: false,
                 properties: {
                     description: { anyOf: [{ type: 'null' }, { type: 'string', maxLength: 500 }] },
-                    jiraKeys: { type: 'array', maxItems: 50, uniqueItems: true, items: { type: 'string', pattern: '^[A-Z][A-Z0-9_]{0,19}-[1-9][0-9]{0,9}$' } },
+                    jiraKeys: { type: 'array', maxItems: 50, uniqueItems: true, items: JIRA_KEY },
                 },
             },
         },

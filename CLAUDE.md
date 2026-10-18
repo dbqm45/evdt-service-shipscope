@@ -132,6 +132,8 @@ emptied. `sync_requests` (webhook queue) is the one non-RLS table; it holds no t
   sources (kind `build`/`runtime`, priority, optional component); each sends the full state of its flags per
   environment with its own token to `POST /api/flags/ingest` (`schemaVersion: 2`: `off`/`on`/`partial` + rollout,
   the sender's `changedAt`, flags no longer listed are marked removed, an older message never undoes a newer one).
+  The body schema is `server/schemas/flags-ingest.v2.schema.json`, used by the route and served at
+  `GET /api/flags/ingest/schema`; the sender's guide (format, where flags live, `jq` recipes) is `ONBOARDING.md`.
   Sources of one kind fold into the dashboard's `build`/`runtime-be` slot by priority. Flags link to Jira issues
   from three origins merged in `readDashboardFlags()`: the sender's `jira_keys`, hand-set
   `manual_jira_keys`/`manual_description` (`PUT /tenants/:tenantId/flags/:key`, never overwritten by a sender), and

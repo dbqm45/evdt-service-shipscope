@@ -30,9 +30,129 @@ zaczyna się listą kontrolną **Getting started**, która pokazuje, na jakim et
    Sync now albo poczekaj na kolejną synchronizację.
 6. **Send feature flags** (opcjonalnie) — ShipScope sam nie czyta flag. Dodaj źródło dla każdego miejsca, w którym
    trzymasz flagi (krok budowania, serwis flag; rodzaj build albo runtime, priorytet, opcjonalnie komponent),
-   utwórz dla niego token i niech wysyła pełny stan swoich flag do `POST /api/flags/ingest`. W Jira → Feature flags
-   in Jira można też wskazać pole albo prefiks etykiety, które łączą zadania Jiry z flagami.
+   utwórz dla niego token i niech wysyła pełny stan swoich flag do `POST /api/flags/ingest` — zob.
+   [Wysyłanie feature flag](#wysyłanie-feature-flag). W Jira → Feature flags in Jira można też wskazać pole albo
+   prefiks etykiety, które łączą zadania Jiry z flagami.
 7. **Invite your team** — jeden link zaproszenia na osobę. Członkowie widzą wszystko; admini mogą zmieniać
    ustawienia.
 
 W sekcji Workspace admin ustawia też, ile dni historii deploymentów przechowywać (7–730), i może usunąć workspace.
+
+## Wysyłanie feature flag
+
+ShipScope nigdy nie czyta twoich flag: to, co je przechowuje, wysyła ich stan do ShipScope
+(`design-docs/ADR-001-flags-pushed-from-outside.md`). Dzięki temu nie ma znaczenia, gdzie flagi są — w pliku
+w repozytorium, pod adresem aplikacji, w AWS AppConfig czy w serwisie flag. Każde takie miejsce to jedno
+**źródło flag** (flag source):
+
+1. W Settings → Feature flags dodaj źródło: nazwę, rodzaj — **build** (wartość wbudowana przy budowaniu, np. plik
+   w repozytorium) albo **runtime** (przełączana na żywo, np. AppConfig albo serwis flag) — priorytet (gdy kilka źródeł
+   jednego rodzaju podaje tę samą flagę, wygrywa wyższy) i opcjonalnie komponent (śledzone repozytorium), do którego
+   należą jego flagi. Dashboard pokazuje wartość runtime, jeśli jest, inaczej build.
+2. Utwórz token dla źródła. Jest pokazany tylko raz: zapisz go jako sekret tam, gdzie działa nadawca (np. sekret
+   GitHub Actions `SHIPSCOPE_FLAGS_TOKEN`). Drugi token pozwala na rotację bez przerwy.
+3. Niech nadawca wysyła **pełny stan** flag źródła po każdej zmianie albo cyklicznie. Ponowne wysłanie tego samego
+   stanu niczego nie zmienia, więc harmonogram jest bezpieczny.
+
+### Wiadomość
+
+`POST /api/flags/ingest`, `Authorization: Bearer <token>`, `Content-Type: application/json`:
+
+```json
+{
+  "schemaVersion": 2,
+  "environments": ["test", "prod"],
+  "changedBy": "ci",
+  "observations": [
+    { "key": "newCheckout", "env": "test", "state": "on" },
+    { "key": "newCheckout", "env": "prod", "state": "partial", "rollout": 25 },
+    { "key": "darkMode", "env": "prod", "state": "off" }
+  ],
+  "flags": [
+    { "key": "newCheckout", "description": "Nowy proces zakupu", "jiraKeys": ["ABC-123"] }
+  ]
+}
+```
+
+- `observations` — jeden wpis na flagę i środowisko: `key` (wielkość liter ma znaczenie; litery, cyfry i `_ . : -`),
+  `env` (`test`, `qa` albo `prod`: swoje nazwy mapujesz sam, np. `staging` → `qa`, `production` → `prod`), `state`
+  (`on`, `off` albo `partial` — włączona dla części użytkowników, z opcjonalnym procentem `rollout`) i opcjonalny
+  `changedAt` (ISO 8601), gdy wysyłasz z opóźnieniem; musi mieścić się w ostatnich 7 dniach, a starsza wartość nigdy
+  nie zastąpi nowszej.
+- **Pełny stan:** flaga, której źródło już nie podaje w środowisku objętym wiadomością, zostaje oznaczona jako
+  usunięta i znika z dashboardu (wraca, gdy znów się pojawi). `environments` wskazuje objęte środowiska (domyślnie
+  te z `observations`); `"environments": ["prod"]` bez obserwacji znaczy „w prod nie ma już flag z tego źródła”.
+  Innych środowisk wiadomość nie rusza. Żeby wysłać tylko zmiany, dodaj `"complete": false` — wtedy nic nie jest
+  usuwane.
+- `flags` (opcjonalnie) — opis i zadania w Jirze stojące za flagą, tylko dla flag z tej samej wiadomości. Mogą też
+  pochodzić z samej Jiry albo zostać ustawione ręcznie w Settings; zob. FAQ, „Feature flags”.
+- `changedBy` (opcjonalnie) — pokazywane jako autor zmiany; domyślnie nazwa źródła.
+- Najwyżej 5000 obserwacji w jednej wiadomości.
+
+Odpowiedź to `{ source, flags, changed, removed, stale, created }`; błędna wiadomość dostaje 400 z powodem, nieznany
+albo unieważniony token — 401. Dokładny format to JSON Schema (draft-07), publikowany przez każdy serwer ShipScope pod
+`GET /api/flags/ingest/schema` (w repozytorium: `server/schemas/flags-ingest.v2.schema.json`); jeśli piszesz
+własnego nadawcę, sprawdzaj z nim wiadomość przed wysłaniem.
+
+### Gdzie są twoje flagi
+
+Każdy nadawca robi to samo: odczytuje flagi, zamienia je na jedną mapę `{ klucz: wartość }` na środowisko i ją
+wysyła. Tabela zbiera typowe miejsca; zamianę pokazują przepisy niżej.
+
+| Flagi są w | Rodzaj | Jak wysyłać |
+| --- | --- | --- |
+| Pliku w repozytorium (`flags.json`, YAML, `.properties`, `.env`) | build | Krok w potoku wdrożeniowym, po jobie wdrożenia każdego środowiska: odczytaj plik tego środowiska, zamień, wyślij. |
+| Endpoincie aplikacji (np. `/internal/flags`) | runtime | Zadanie cykliczne (np. co 15 minut) i/lub krok po każdym wdrożeniu: pobierz adres dla środowiska, zamień, wyślij. |
+| AWS AppConfig (profil feature flags) | runtime | Zadanie cykliczne czytające każde środowisko AppConfig przez `aws appconfigdata` (poświadczenia przez OIDC, nie klucze) albo rozszerzenie AppConfig na `ON_DEPLOYMENT_COMPLETE` wywołujące małą Lambdę, która wysyła stan. |
+| Azure App Configuration | runtime | Zadanie cykliczne czytające feature flagi dla każdej etykiety (`az appconfig feature list`); flaga `conditional` to `partial`. |
+| Serwisie flag (LaunchDarkly, Unleash, Flagsmith, ConfigCat, GrowthBook, Flipt, …) | runtime | Zadanie cykliczne czytające API serwisu dla każdego środowiska albo webhook serwisu wywołujący małą funkcję, która odczytuje i wysyła stan. |
+| ConfigMapie Kubernetesa albo zmiennych środowiskowych | build albo runtime | Krok po każdym wdrożeniu: `kubectl get configmap <nazwa> -o json`, weź `.data`, zamień, wyślij. |
+
+Jedno źródło na jedno miejsce. Gdy ta sama flaga jest i wbudowana w build, i przełączana na żywo, utwórz dwa źródła
+(build i runtime): dashboard pokaże wartość runtime i zachowa obie historie.
+
+### Przepisy
+
+Poniższy konwerter bierze mapę dla jednego środowiska i drukuje wiadomość. Wartość może być `true`/`false`,
+`"on"`/`"off"`, `"true"`/`"false"` albo liczbą 0–100 (także jako tekst) dla częściowego rolloutu; `jq` jest
+zainstalowany na runnerach GitHuba.
+
+```bash
+# to-shipscope.jq — wejście: { "newCheckout": true, "darkMode": "off", "search": 25 }
+def value: if type == "string" then ascii_downcase
+    | if . == "true" or . == "on" then true elif . == "false" or . == "off" then false else tonumber end
+  else . end;
+def state: if . == true or (type == "number" and . >= 100) then { state: "on" }
+  elif . == false or (type == "number" and . <= 0) then { state: "off" }
+  else { state: "partial", rollout: . } end;
+{ schemaVersion: 2, environments: [$env],
+  observations: [ to_entries[] | { key, env: $env } + (.value | value | state) ] }
+```
+
+Wysyłka:
+
+```bash
+send_flags() {  # użycie: <mapa flag na stdin> send_flags <środowisko>
+  jq --arg env "$1" -f to-shipscope.jq | curl -sS --fail-with-body -X POST "$SHIPSCOPE_URL/api/flags/ingest" \
+    -H "Authorization: Bearer $SHIPSCOPE_FLAGS_TOKEN" -H "Content-Type: application/json" --data-binary @-
+}
+```
+
+- **Plik JSON na środowisko:** `send_flags prod < config/flags.prod.json`. W GitHub Actions uruchom to jako ostatni
+  krok joba wdrażającego na `prod`, z `SHIPSCOPE_URL` jako zmienną i `SHIPSCOPE_FLAGS_TOKEN` jako sekretem.
+- **YAML:** `yq -o=json config/flags.yaml | jq .prod | send_flags prod`.
+- **`.properties` albo `.env`:** wybierz linie flag po prefiksie, np. `feature.newCheckout=true`:
+  `jq -Rn '[inputs | capture("^feature\\.(?<k>[^=]+)=(?<v>.*)$") | { (.k): .v }] | add // {}' application-prod.properties | send_flags prod`.
+- **Endpoint:** `curl -sSf https://app.example.com/internal/flags | send_flags prod`.
+- **AWS AppConfig:** profil feature flags zwraca `{ "<flaga>": { "enabled": true, ... } }`:
+
+  ```bash
+  TOKEN=$(aws appconfigdata start-configuration-session --application-identifier shop \
+    --environment-identifier production --configuration-profile-identifier flags \
+    --query InitialConfigurationToken --output text)
+  aws appconfigdata get-latest-configuration --configuration-token "$TOKEN" flags.json > /dev/null
+  jq 'map_values(.enabled)' flags.json | send_flags prod
+  ```
+
+Gdy coś się nie pokazuje, odpowiedź na wysyłkę mówi dlaczego (`400` ze wskazaniem pola, `401` przy tokenie), a
+Settings → Feature flags pokazuje, kiedy każdy token był ostatnio użyty.

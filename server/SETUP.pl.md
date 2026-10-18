@@ -142,6 +142,9 @@ lub komponentu: `PUT /tenants/<id>/flag-sources/<sourceId>`.
 Źródło wysyła **pełny stan** swoich flag dla środowisk, które zna — po każdej zmianie albo cyklicznie (wysłanie
 tego samego stanu niczego nie zmienia):
 
+(Przewodnik dla zespołów — skąd brać flagi, AWS AppConfig, serwisy flag, przepisy z `jq` — jest w `ONBOARDING.pl.md`,
+„Wysyłanie feature flag”; format jako JSON Schema: `GET /api/flags/ingest/schema`.)
+
 ```bash
 curl -sf -X POST "$SHIPSCOPE_URL/api/flags/ingest" \
   -H "Authorization: Bearer $SHIPSCOPE_FLAGS_TOKEN" \
