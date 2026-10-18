@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Checks that scripts/, server/, and docs/app-*.js stay on their own side of the module boundary
+// Checks that scripts/, server/, docs/app-*.js and adapters/ stay on their own side of the module boundary
 // described in CLAUDE.md (file-based sync vs. SaaS backend vs. classic-<script> frontend).
 //   node scripts/check-module-boundaries.js
 const path = require('path');
@@ -12,4 +12,4 @@ if (violations.length) {
     for (const v of violations) console.error(`  - ${v.file}:${v.line}: ${v.text}`);
     process.exit(1);
 }
-console.log('✓ No module boundary violations (scripts/ ↔ server/ ↔ docs/app-*.js)');
+console.log('✓ No module boundary violations (scripts/ ↔ server/ ↔ docs/app-*.js, adapters/)');

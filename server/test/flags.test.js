@@ -277,3 +277,26 @@ test('RLS: every table with a tenant_id forces row-level security, and flags are
     assert.deepStrictEqual(await withScope(pool, { tenantId: other }, async (c) => (await c.query('SELECT * FROM flag_values')).rows), []);
     assert.strictEqual((await withScope(pool, { tenantId }, async (c) => (await c.query('SELECT * FROM flag_values')).rows)).length, 1);
 });
+
+test('the flags adapter (adapters/flags/) end to end: its message is accepted and a second run changes nothing', async (t) => {
+    const { app, newSource, dashboard } = await setup(t);
+    const { run } = require('../../adapters/flags/lib');
+    const { token } = (await newSource({ name: 'AppConfig', kind: 'runtime' })).token;
+    // The adapter's fetch, answered by this app instead of the network.
+    const fetch = async (url, init) => {
+        const res = await app.inject({ method: init.method, url: new URL(url).pathname, headers: init.headers, payload: init.body });
+        return { ok: res.statusCode < 400, status: res.statusCode, text: async () => res.body };
+    };
+    const send = () => run({
+        env: 'prod', url: 'https://appconfig.example/flags', valuePath: 'enabled', shipscopeUrl: 'https://ship.example', token,
+    }, {
+        fetch: (url, init) => (url === 'https://appconfig.example/flags'
+            ? Promise.resolve({ ok: true, status: 200, text: async () => JSON.stringify({ newCheckout: { enabled: true }, search: { enabled: 25 } }) })
+            : fetch(url, init)),
+        log: () => {},
+    });
+    assert.deepStrictEqual((await send()).result, { source: 'AppConfig', flags: 2, changed: 2, removed: 0, stale: 0, created: ['newCheckout', 'search'] });
+    assert.strictEqual((await send()).result.changed, 0);
+    const states = (await dashboard()).flagStates;
+    assert.deepStrictEqual([states.newCheckout.prod['runtime-be'].state, states.search.prod['runtime-be'].rollout], ['on', 25]);
+});

@@ -64,6 +64,19 @@ test('findBoundaryViolations: require() in docs/app-*.js is always a violation, 
     assert.equal(violations[0].file, path.join('docs', 'app-main.js'));
 });
 
+test('findBoundaryViolations: adapters/ reaching into scripts/ or server/ is a violation', () => {
+    write('adapters/flags/lib.js', "const ok = require('./util');\n");
+    write('adapters/flags/util.js', 'module.exports = {};\n');
+    write('adapters/flags/bad.js', "const { db } = require('../../server/lib/db');\nconst { fail } = require('../../scripts/lib/cli');\n");
+    write('server/lib/db.js', 'module.exports = {};\n');
+    write('scripts/lib/cli.js', 'module.exports = {};\n');
+    write('docs/app-core.js', '// nothing here\n');
+
+    const violations = findBoundaryViolations(path.resolve(DIR));
+
+    assert.deepEqual(violations.map((v) => [v.file, v.line]), [[path.join('adapters', 'flags', 'bad.js'), 2], [path.join('adapters', 'flags', 'bad.js'), 1]]);
+});
+
 test('findBoundaryViolations: npm packages and Node builtins are never flagged', () => {
     write('scripts/ok.js', "const fs = require('fs');\nconst { createPool } = require('pg');\n");
     write('server/lib/ok.js', "const Fastify = require('fastify');\n");

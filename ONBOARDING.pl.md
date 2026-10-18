@@ -97,7 +97,8 @@ własnego nadawcę, sprawdzaj z nim wiadomość przed wysłaniem.
 ### Gdzie są twoje flagi
 
 Każdy nadawca robi to samo: odczytuje flagi, zamienia je na jedną mapę `{ klucz: wartość }` na środowisko i ją
-wysyła. Tabela zbiera typowe miejsca; zamianę pokazują przepisy niżej.
+wysyła. Tabela zbiera typowe miejsca; zamianę i wysyłkę robi [adapter flag](#adapter-flag), a bez niego to samo
+robią [przepisy z `jq`](#bez-adaptera-przepisy-z-jq).
 
 | Flagi są w | Rodzaj | Jak wysyłać |
 | --- | --- | --- |
@@ -111,7 +112,84 @@ wysyła. Tabela zbiera typowe miejsca; zamianę pokazują przepisy niżej.
 Jedno źródło na jedno miejsce. Gdy ta sama flaga jest i wbudowana w build, i przełączana na żywo, utwórz dwa źródła
 (build i runtime): dashboard pokaże wartość runtime i zachowa obie historie.
 
-### Przepisy
+### Adapter flag
+
+`adapters/flags/` w tym repozytorium odczytuje flagi z **plików** albo spod **adresu URL**, buduje wiadomość dla
+jednego środowiska i ją wysyła; `dry-run` tylko ją drukuje. Działa jako GitHub Action i z wiersza poleceń (Node 20+,
+bez zależności), z tymi samymi opcjami, opisanymi w [`adapters/flags/README.md`](adapters/flags/README.md). Wartość
+flagi może być `true`/`false`, `on`/`off`, `enabled`/`disabled` albo liczbą 0–100 dla częściowego rolloutu.
+
+**Pliki** — na końcu joba wdrażającego każde środowisko (jedno źródło rodzaju build):
+
+```yaml
+      - uses: dbqm45/evdt-service-shipscope/adapters/flags@vX.Y.Z   # tag wydania ShipScope
+        with:
+          shipscope-url: ${{ vars.SHIPSCOPE_URL }}
+          token: ${{ secrets.SHIPSCOPE_FLAGS_TOKEN }}
+          environment: prod
+          files: config/flags.prod.json      # po jednym w linii; działają wzorce, np. config/flags/*.json
+```
+
+Obsługiwane są też pliki `.properties` i `.env`; `prefix: feature.` zostawia tylko klucze `feature.*`. Kilka plików
+trafia do jednej wiadomości, a flaga z różnymi wartościami w dwóch plikach to błąd.
+
+**Adres URL** — cyklicznie (jedno źródło rodzaju runtime):
+
+```yaml
+on:
+  schedule: [{ cron: '*/15 * * * *' }]
+jobs:
+  flags:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: dbqm45/evdt-service-shipscope/adapters/flags@vX.Y.Z
+        with:
+          shipscope-url: ${{ vars.SHIPSCOPE_URL }}
+          token: ${{ secrets.SHIPSCOPE_FLAGS_TOKEN }}
+          environment: prod
+          url: https://app.example.com/internal/flags
+          url-headers: |
+            Authorization: Bearer ${{ secrets.APP_FLAGS_TOKEN }}
+          path: data.flags        # gdzie w odpowiedzi są flagi, jeśli nie na najwyższym poziomie
+```
+
+**AWS AppConfig:** najpierw odczytaj profil przez AWS CLI (poświadczenia przez OIDC), potem przekaż plik;
+`value-path: enabled` czyta format AppConfig `{ "<flaga>": { "enabled": true } }`:
+
+```yaml
+    permissions: { id-token: write, contents: read }
+    steps:
+      - uses: aws-actions/configure-aws-credentials@v4
+        with: { role-to-assume: '${{ vars.SHIPSCOPE_FLAGS_ROLE }}', aws-region: eu-west-1 }
+      - run: |
+          TOKEN=$(aws appconfigdata start-configuration-session --application-identifier shop \
+            --environment-identifier production --configuration-profile-identifier flags \
+            --query InitialConfigurationToken --output text)
+          aws appconfigdata get-latest-configuration --configuration-token "$TOKEN" flags.json > /dev/null
+      - uses: dbqm45/evdt-service-shipscope/adapters/flags@vX.Y.Z
+        with:
+          shipscope-url: ${{ vars.SHIPSCOPE_URL }}
+          token: ${{ secrets.SHIPSCOPE_FLAGS_TOKEN }}
+          environment: prod
+          files: flags.json
+          value-path: enabled
+```
+
+Tak samo obsłużysz ConfigMap Kubernetesa (`kubectl get configmap <nazwa> -o json > cm.json`, potem `files: cm.json`
+i `path: data`) i API serwisu flag (pobierz flagi jego CLI albo `curl`-em, potem `files:`).
+
+**Wiersz poleceń** — wszędzie indziej (GitLab, Jenkins, cron); skopiuj `adapters/flags/` albo sklonuj to repozytorium:
+
+```bash
+export SHIPSCOPE_URL=https://shipscope.example.com SHIPSCOPE_FLAGS_TOKEN=shpi_...
+node adapters/flags/shipscope-flags.js --env prod --file config/flags.prod.json
+node adapters/flags/shipscope-flags.js --env prod --url https://app.example.com/internal/flags --dry-run
+```
+
+Action jest używana prosto z tego repozytorium, więc gdy jest ono prywatne, trzeba pozwolić innym repozytoriom z niej
+korzystać (Settings → Actions → General → Access).
+
+### Bez adaptera: przepisy z `jq`
 
 Poniższy konwerter bierze mapę dla jednego środowiska i drukuje wiadomość. Wartość może być `true`/`false`,
 `"on"`/`"off"`, `"true"`/`"false"` albo liczbą 0–100 (także jako tekst) dla częściowego rolloutu; `jq` jest

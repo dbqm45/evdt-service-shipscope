@@ -44,7 +44,8 @@ function isInside(resolved, root) {
  * Finds `require()` calls that cross a module boundary this repo treats as a hard dependency edge:
  * root `scripts/` (file-based sync, zero npm dependencies) must never require from `server/` (the SaaS
  * backend, which has its own `package.json`/`node_modules`) and vice versa, and `docs/app-*.js` (classic
- * `<script>` tags, no CommonJS at all, loaded straight into a browser) must never call `require()`.
+ * `<script>` tags, no CommonJS at all, loaded straight into a browser) must never call `require()`. `adapters/`
+ * (the flags adapter, run from other teams' pipelines on its own) never requires from `scripts/` or `server/`.
  *
  * @param {string} repoRoot absolute path to the repository root
  * @returns {Array<{ file: string, line: number, text: string }>} relative-to-`repoRoot` violations, if any
@@ -54,6 +55,7 @@ function findBoundaryViolations(repoRoot) {
     const scriptsRoot = path.join(repoRoot, 'scripts');
     const serverRoot = path.join(repoRoot, 'server');
     const docsRoot = path.join(repoRoot, 'docs');
+    const adaptersRoot = path.join(repoRoot, 'adapters');
 
     const forbid = (files, forbiddenRoot) => {
         for (const file of files) {
@@ -67,6 +69,8 @@ function findBoundaryViolations(repoRoot) {
 
     forbid(listJsFiles(scriptsRoot), serverRoot);
     forbid(listJsFiles(serverRoot, ['node_modules']), scriptsRoot);
+    forbid(listJsFiles(adaptersRoot), scriptsRoot);
+    forbid(listJsFiles(adaptersRoot), serverRoot);
 
     for (const name of fs.readdirSync(docsRoot).filter((f) => /^app-.*\.js$/.test(f))) {
         const full = path.join(docsRoot, name);

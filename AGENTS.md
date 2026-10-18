@@ -5,7 +5,7 @@ ShipScope is a multi-tenant deployment / feature-flag / Jira dashboard: a backen
 ## Hard rules
 
 - Every query on a tenant table in `server/` goes through `withScope()` (`server/lib/scope.js`, `RLS_TABLES`); every new tenant table cascades from `tenants`.
-- `scripts/` (release tooling) and `server/` never require from each other; `docs/app-*.js` never call `require()` (`node scripts/check-module-boundaries.js`).
+- `scripts/` (release tooling) and `server/` never require from each other, and `adapters/` (the flags adapter) requires from neither; `docs/app-*.js` never call `require()` (`node scripts/check-module-boundaries.js`).
 - `docs/app-*.js` load as classic `<script>` tags in a fixed order (see `@docs/index.html`); `app-main.js` must stay last since it calls `init()`. Top-level statements can only use things from the same or an earlier file. Markup goes through the `html` tagged template (`docs/app-html.js`).
 - Zero dependencies at the root by design (`@package.json`); `server/` has its own (`pg`, `fastify`, `@fastify/cookie`) — don't add an npm package without discussing it first.
 
