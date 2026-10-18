@@ -1,0 +1,94 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "ShipScope feature-flag ingest, schemaVersion 2",
+    "description": "Body of POST /api/flags/ingest (Authorization: Bearer <ingest token>). One message carries the state of one flag source's flags in one or more environments. Also checked by the server, beyond what this schema can express: each key/env pair at most once with one value, rollout only with state \"partial\", changedAt between 7 days ago and 5 minutes ahead, every env of observations listed in environments (when given), every flags[].key observed in the same message and listed once, and no key named __proto__, constructor or prototype. The guide is in ONBOARDING.md, \"Sending feature flags\".",
+    "type": "object",
+    "required": ["schemaVersion", "observations"],
+    "additionalProperties": false,
+    "properties": {
+        "schemaVersion": { "const": 2 },
+        "complete": {
+            "description": "true (default): the message is the full state of this source in the covered environments, so flags it no longer lists there are marked removed. false: only changes, nothing is removed.",
+            "type": "boolean"
+        },
+        "environments": {
+            "description": "The environments this message covers (default: those named in observations). With complete and an empty observations list, says the source has no flags left there.",
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": { "$ref": "#/definitions/env" }
+        },
+        "changedBy": {
+            "description": "Who made the change, shown on the dashboard (default: the flag source's name).",
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+        },
+        "observations": {
+            "description": "One value per flag and environment.",
+            "type": "array",
+            "maxItems": 5000,
+            "items": {
+                "type": "object",
+                "required": ["key", "env", "state"],
+                "additionalProperties": false,
+                "properties": {
+                    "key": { "$ref": "#/definitions/flagKey" },
+                    "env": { "$ref": "#/definitions/env" },
+                    "state": {
+                        "description": "off, on, or partial (on for some users).",
+                        "type": "string",
+                        "enum": ["off", "on", "partial"]
+                    },
+                    "rollout": {
+                        "description": "Percentage of users, only with state partial.",
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 100
+                    },
+                    "changedAt": {
+                        "description": "When the value really changed (default: when ShipScope received it). An older value never replaces a newer one.",
+                        "type": "string",
+                        "format": "date-time"
+                    }
+                }
+            }
+        },
+        "flags": {
+            "description": "Optional description and linked Jira issues of flags observed in this message.",
+            "type": "array",
+            "maxItems": 5000,
+            "items": {
+                "type": "object",
+                "required": ["key"],
+                "additionalProperties": false,
+                "properties": {
+                    "key": { "$ref": "#/definitions/flagKey" },
+                    "description": { "type": ["string", "null"], "maxLength": 500 },
+                    "jiraKeys": {
+                        "type": "array",
+                        "maxItems": 50,
+                        "uniqueItems": true,
+                        "items": { "$ref": "#/definitions/jiraKey" }
+                    }
+                }
+            }
+        }
+    },
+    "definitions": {
+        "flagKey": {
+            "description": "Case-sensitive; must match the key used in Jira when flags are linked there.",
+            "type": "string",
+            "pattern": "^[A-Za-z_][A-Za-z0-9_.:-]{0,127}$"
+        },
+        "env": {
+            "description": "ShipScope's environments; the sender maps its own names (staging, production, ...) onto these.",
+            "type": "string",
+            "enum": ["test", "qa", "prod"]
+        },
+        "jiraKey": {
+            "type": "string",
+            "pattern": "^[A-Z][A-Z0-9_]{0,19}-[1-9][0-9]{0,9}$"
+        }
+    }
+}
