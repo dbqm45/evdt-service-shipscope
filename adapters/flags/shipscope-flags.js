@@ -18,9 +18,11 @@ const USAGE = `Usage: shipscope-flags (--env <test|qa|prod> | {env} in --file) (
                      (default test, qa, prod as themselves; other names are skipped)
   --url <url>        fetch the flags from this URL instead (JSON unless --format)
   --header <h>       request header for --url, "Name: value" (repeatable)
-  --format <f>       json, properties, env or ts (default: by file name; json for --url)
+  --format <f>       json, yaml, properties, env or ts (default: by file name; json for --url)
   --path <a.b>       the object of flags inside the document (in a .ts file: starting with its const name)
   --value-path <a>   the value inside each flag's object (e.g. enabled)
+  --key-field <f>    in a list of flag objects, the field with each flag's key (default: key, name, id or flag)
+  --rollout-path <a> a percentage beside each flag's value (e.g. rollout)
   --prefix <p>       only keys starting with this, without it in the flag key
   --changed-by <s>   shown as who changed the flags (default: the source's name)
   --changes-only     send only these flags, remove none (default: full state)
@@ -43,7 +45,8 @@ function optionsFromArgs(argv, env) {
                 env: { type: 'string' }, file: { type: 'string', multiple: true }, url: { type: 'string' },
                 'env-map': { type: 'string', multiple: true },
                 header: { type: 'string', multiple: true }, format: { type: 'string' }, path: { type: 'string' },
-                'value-path': { type: 'string' }, prefix: { type: 'string' }, 'changed-by': { type: 'string' },
+                'value-path': { type: 'string' }, 'key-field': { type: 'string' }, 'rollout-path': { type: 'string' },
+                prefix: { type: 'string' }, 'changed-by': { type: 'string' },
                 'changes-only': { type: 'boolean' }, 'dry-run': { type: 'boolean' },
                 'shipscope-url': { type: 'string' }, token: { type: 'string' }, help: { type: 'boolean', short: 'h' },
             },
@@ -54,7 +57,8 @@ function optionsFromArgs(argv, env) {
     if (values.help) return null;
     return {
         env: values.env, files: values.file || [], envMap: parseEnvMap(values['env-map'] || []), url: values.url, headers: parseHeaders(values.header || []),
-        format: values.format, path: values.path, valuePath: values['value-path'], prefix: values.prefix,
+        format: values.format, path: values.path, valuePath: values['value-path'], keyField: values['key-field'],
+        rolloutPath: values['rollout-path'], prefix: values.prefix,
         changedBy: values['changed-by'], complete: !values['changes-only'], dryRun: Boolean(values['dry-run']),
         shipscopeUrl: values['shipscope-url'] || env.SHIPSCOPE_URL, token: values.token || env.SHIPSCOPE_FLAGS_TOKEN,
     };

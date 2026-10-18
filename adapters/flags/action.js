@@ -22,6 +22,7 @@ function optionsFromInputs(env) {
         env: input('environment') || undefined, files: lines('files'), envMap: parseEnvMap(lines('env-map')), url: input('url') || undefined,
         headers: parseHeaders(lines('url-headers')),
         format: input('format') || undefined, path: input('path') || undefined, valuePath: input('value-path') || undefined,
+        keyField: input('key-field') || undefined, rolloutPath: input('rollout-path') || undefined,
         prefix: input('prefix') || undefined, changedBy: input('changed-by') || undefined, complete: flag('complete', true),
         dryRun: flag('dry-run', false), shipscopeUrl: input('shipscope-url'), token: input('token'),
     };

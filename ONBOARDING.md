@@ -97,7 +97,7 @@ and the [`jq` recipes](#without-the-adapter-jq-recipes) do the same without it.
 
 | Flags live in | Kind | How to send |
 | --- | --- | --- |
-| A file in the repository (`flags.json`, a TypeScript/JavaScript config, YAML, `.properties`, `.env`) | build | A step in the deploy pipeline, after each environment's deploy job: read the file for that environment, convert, post. |
+| A file in the repository (`flags.json`, YAML, a TypeScript/JavaScript config, `.properties`, `.env`) | build | A step in the deploy pipeline, after each environment's deploy job: read the file for that environment, convert, post. |
 | An endpoint of the application (e.g. `/internal/flags`) | runtime | A scheduled job (e.g. every 15 minutes) and/or a step after each deploy: fetch the URL per environment, convert, post. |
 | AWS AppConfig (feature flags profile) | runtime | A scheduled job reading each AppConfig environment with `aws appconfigdata` (credentials through OIDC, not keys), or an AppConfig extension on `ON_DEPLOYMENT_COMPLETE` calling a small Lambda that posts. |
 | Azure App Configuration | runtime | A scheduled job reading the feature flags per label (`az appconfig feature list`); a `conditional` flag is `partial`. |
@@ -109,8 +109,8 @@ Use one source per place. When the same flag is both baked into the build and sw
 
 ### The flags adapter
 
-`adapters/flags/` in this repository reads flags from **files** (JSON, TypeScript/JavaScript, `.properties`, `.env`)
-or a **URL**, builds the message and posts it; `dry-run` only prints it. It is a GitHub Action and a command line (Node 20+, no dependencies) with the
+`adapters/flags/` in this repository reads flags from **files** (JSON, YAML, TypeScript/JavaScript, `.properties`,
+`.env`) or a **URL**, builds the message and posts it; `dry-run` only prints it. It is a GitHub Action and a command line (Node 20+, no dependencies) with the
 same options, listed in [`adapters/flags/README.md`](adapters/flags/README.md). A flag value may be `true`/`false`,
 `on`/`off`, `enabled`/`disabled`, or a number 0–100 for a percentage rollout.
 
@@ -125,8 +125,12 @@ same options, listed in [`adapters/flags/README.md`](adapters/flags/README.md). 
           files: config/flags.prod.json      # one per line; patterns like config/flags/*.json work
 ```
 
-`.properties` and `.env` files work too; `prefix: feature.` keeps only `feature.*` keys. Several files are merged
-into one message, and a flag with different values in two of them is an error.
+YAML, `.properties` and `.env` files work too; `prefix: feature.` keeps only `feature.*` keys. Several files are merged
+into one message, and a flag with different values in two of them is an error. Flags may be an object
+(`{ newCheckout: true }`, or `{ newCheckout: { enabled: true } }` with `value-path: enabled`) or a list
+(`[{ name: newCheckout, enabled: true }]`, the key and value fields found by their usual names or set with `key-field`
+and `value-path`; `[newCheckout, darkMode]` lists the flags that are on). `rollout-path: rollout` reads a percentage
+beside the value. The table of shapes is in [`adapters/flags/README.md`](adapters/flags/README.md).
 
 **A file per environment, e.g. an Nx monorepo** with `domains/<domain>/config/flags/{local,dev,test,qa,prod}.ts`,
 each holding `export const flags = { newCheckout: true, ... }`. `{env}` in the pattern stands for the file's
@@ -194,8 +198,8 @@ The same pattern covers a Kubernetes ConfigMap (`kubectl get configmap <name> -o
 `files: cm.json` and `path: data`) and a flag service's API (download with its CLI or `curl`, then `files:`).
 
 **Any other layout.** The options describe most layouts: patterns with `*`, `**` and `{env}`, `env-map`, `path` (where
-the flags are in a file), `value-path` (the value inside each flag's object) and `prefix`. When they cannot — flags
-computed in code, imported from another file, YAML, a format of your own — print them as JSON in a step before the
+the flags are in a file), `value-path`, `key-field`, `rollout-path` and `prefix`. When they cannot — flags computed in
+code or imported from another file, XML, TOML, a format of your own — print them as JSON in a step before the
 adapter, one file per environment, and point `files` at those. For TypeScript that imports its flags, a small
 script in the project does it (run with `tsx`, which needs no build):
 

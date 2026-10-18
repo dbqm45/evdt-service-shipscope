@@ -8,13 +8,17 @@
 const fs = require('fs');
 const path = require('path');
 const { readScriptObjects, ScriptParseError, Unreadable } = require('./script-objects');
+const { parseYaml, YamlError } = require('./yaml');
 
 const ENVIRONMENTS = ['test', 'qa', 'prod'];
 // The same rules as the server's schema; checked here so a wrong key fails before anything is sent.
 const FLAG_KEY = /^[A-Za-z_][A-Za-z0-9_.:-]{0,127}$/;
 const DANGEROUS_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
 const MAX_OBSERVATIONS = 5000;
-const FORMATS = ['json', 'properties', 'env', 'ts', 'js'];
+const FORMATS = ['json', 'yaml', 'properties', 'env', 'ts', 'js'];
+// In a list of flag objects, the fields tried for the flag's key and for its value when none is named.
+const KEY_FIELDS = ['key', 'name', 'id', 'flag'];
+const VALUE_FIELDS = ['enabled', 'value', 'state', 'on', 'status', 'active'];
 // File names that become ShipScope environments with {env} in a pattern, unless env-map says otherwise.
 const DEFAULT_ENV_MAP = { test: 'test', qa: 'qa', prod: 'prod' };
 
@@ -78,16 +82,17 @@ function pick(value, dotPath, where) {
 }
 
 /**
- * The format of a flags file from its name: .json, .properties, .env (also `.env.prod`, `prod.env`), or a
- * TypeScript/JavaScript module (.ts, .mts, .cts, .js, .mjs, .cjs).
+ * The format of a flags file from its name: .json, .yaml/.yml, .properties, .env (also `.env.prod`, `prod.env`),
+ * or a TypeScript/JavaScript module (.ts, .mts, .cts, .js, .mjs, .cjs).
  *
  * @param {string} file
- * @returns {'json'|'properties'|'env'|'ts'}
+ * @returns {'json'|'yaml'|'properties'|'env'|'ts'}
  * @throws {AdapterError}
  */
 function formatOf(file) {
     const base = path.basename(file).toLowerCase();
     if (base.endsWith('.json')) return 'json';
+    if (base.endsWith('.yaml') || base.endsWith('.yml')) return 'yaml';
     if (base.endsWith('.properties')) return 'properties';
     if (/\.[mc]?[tj]s$/.test(base)) return 'ts';
     if (base === '.env' || base.startsWith('.env.') || base.endsWith('.env')) return 'env';
@@ -95,12 +100,12 @@ function formatOf(file) {
 }
 
 /**
- * Parses a flags document: JSON; `key=value` lines (Java .properties also take `key: value`; .env lines may
+ * Parses a flags document: JSON; YAML (yaml.js); `key=value` lines (Java .properties also take `key: value`; .env lines may
  * start with `export`; `#` and `!` lines are comments; matching quotes around a value are removed); or a
  * TypeScript/JavaScript module, read without running it (script-objects.js): its object literals by name.
  *
  * @param {string} text
- * @param {'json'|'properties'|'env'|'ts'|'js'} format
+ * @param {'json'|'yaml'|'properties'|'env'|'ts'|'js'} format
  * @param {string} where for the error message
  * @returns {unknown}
  * @throws {AdapterError}
@@ -114,6 +119,14 @@ function parseDocument(text, format, where) {
         }
     }
     if (!FORMATS.includes(format)) throw new AdapterError(`unknown format "${format}" (${FORMATS.join(', ')})`);
+    if (format === 'yaml') {
+        try {
+            return parseYaml(text, where);
+        } catch (err) {
+            if (err instanceof YamlError) throw new AdapterError(err.message);
+            throw err;
+        }
+    }
     if (format === 'ts' || format === 'js') {
         let read;
         try {
@@ -141,17 +154,52 @@ function parseDocument(text, format, where) {
 }
 
 /**
- * The `{ key: value }` flag map inside a parsed document: the object at `path`, each value read at `valuePath`
- * (e.g. `enabled` for AWS AppConfig's `{ "flag": { "enabled": true } }`), only keys starting with `prefix`
- * (removed from the key).
+ * The field of every item in a list of flag objects that `candidates` names first, or null.
+ *
+ * @param {object[]} items
+ * @param {string[]} candidates
+ * @returns {string|null}
+ */
+function commonField(items, candidates) {
+    return candidates.find((f) => items.every((item) => Object.hasOwn(item, f))) ?? null;
+}
+
+/**
+ * One flag's value from its entry: the entry itself, or the value at `valuePath` in it. With `rolloutPath`, an
+ * entry that is on and names a percentage there below 100 becomes that rollout.
+ */
+function entryValue(entry, { valuePath, rolloutPath }, where) {
+    const value = valuePath ? pick(entry, valuePath, where) : entry;
+    if (!rolloutPath || entry === null || typeof entry !== 'object') return value;
+    let rollout;
+    try {
+        rollout = pick(entry, rolloutPath, where);
+    } catch {
+        return value; // no percentage on this flag: its value alone
+    }
+    if (rollout === null || rollout === undefined) return value;
+    if (toState(value, where).state === 'off') return false;
+    const r = toState(rollout, `${where}, ${rolloutPath}`);
+    return r.state === 'partial' ? r.rollout : r.state === 'on';
+}
+
+/**
+ * The `{ key: value }` flag map inside a parsed document, from the object or list at `path`:
+ * - an object: each key a flag, its value read at `valuePath` (e.g. `enabled` for AWS AppConfig's
+ *   `{ "flag": { "enabled": true } }`);
+ * - a list of names (`[newCheckout, darkMode]`): each listed flag on;
+ * - a list of objects (`[{ name: newCheckout, enabled: true }]`): the key in `keyField` (else the first of key,
+ *   name, id, flag that every item has), the value at `valuePath` (else the first of enabled, value, state, on,
+ *   status, active that every item has).
+ * `rolloutPath` names a percentage beside the value; `prefix` keeps only keys starting with it (removed from the key).
  *
  * @param {unknown} doc
- * @param {{ path?: string, valuePath?: string, prefix?: string }} options
+ * @param {{ path?: string, valuePath?: string, keyField?: string, rolloutPath?: string, prefix?: string }} options
  * @param {string} where for the error message
  * @returns {Record<string, unknown>}
  * @throws {AdapterError}
  */
-function flagMap(doc, { path: dotPath, valuePath, prefix }, where) {
+function flagMap(doc, { path: dotPath, valuePath, keyField, rolloutPath, prefix }, where) {
     let source = doc;
     if (doc && doc[SCRIPT] && !dotPath) {
         // A module: the object of flags is its only exported object (else its only object), or the one `path` names.
@@ -164,15 +212,38 @@ function flagMap(doc, { path: dotPath, valuePath, prefix }, where) {
         }
         source = doc[names[0]];
     }
-    const map = pick(source, dotPath, where);
-    if (map === null || typeof map !== 'object' || Array.isArray(map)) {
-        throw new AdapterError(`${where}: expected an object of flags${dotPath ? ` at "${dotPath}"` : ''}`);
+    const found = pick(source, dotPath, where);
+    const at = dotPath ? ` at "${dotPath}"` : '';
+    let entries;
+    if (Array.isArray(found)) {
+        if (found.every((item) => typeof item === 'string')) {
+            entries = found.map((name) => [name, true]);
+        } else {
+            if (!found.every((item) => item !== null && typeof item === 'object' && !Array.isArray(item))) {
+                throw new AdapterError(`${where}: the list${at} must hold flag names or flag objects`);
+            }
+            const field = keyField || commonField(found, KEY_FIELDS);
+            if (!field) throw new AdapterError(`${where}: name the field with each flag's key in key-field (none of ${KEY_FIELDS.join(', ')} is in every item)`);
+            const valueField = valuePath || commonField(found, VALUE_FIELDS);
+            if (!valueField) throw new AdapterError(`${where}: name the field with each flag's value in value-path (none of ${VALUE_FIELDS.join(', ')} is in every item)`);
+            entries = found.map((item, i) => {
+                const key = pick(item, field, `${where}, item ${i + 1}`);
+                if (typeof key !== 'string' && typeof key !== 'number') throw new AdapterError(`${where}, item ${i + 1}: ${field} is not a name`);
+                return [String(key), entryValue(item, { valuePath: valueField, rolloutPath }, `${where}, flag ${key}`)];
+            });
+        }
+    } else if (found !== null && typeof found === 'object') {
+        if (keyField) throw new AdapterError(`${where}: key-field is for a list of flags, but${at || ' here'} is an object`);
+        entries = Object.entries(found).map(([key, value]) => [key, entryValue(value, { valuePath, rolloutPath }, `${where}, flag ${key}`)]);
+    } else {
+        throw new AdapterError(`${where}: expected an object or a list of flags${at}`);
     }
     const out = {};
-    for (const [rawKey, value] of Object.entries(map)) {
+    for (const [rawKey, value] of entries) {
         if (prefix && !rawKey.startsWith(prefix)) continue;
         const key = prefix ? rawKey.slice(prefix.length) : rawKey;
-        out[key] = valuePath ? pick(value, valuePath, `${where}, flag ${key}`) : value;
+        if (Object.hasOwn(out, key)) throw new AdapterError(`${where}: flag ${key} is listed twice`);
+        out[key] = value;
     }
     return out;
 }
@@ -321,9 +392,11 @@ function parseHeaders(lines) {
  *   prod as themselves); other names are skipped
  * @property {string} [url] URL mode: where to fetch the flags (JSON, or another format with `format`)
  * @property {Record<string, string>} [headers] request headers for `url`
- * @property {string} [format] json, properties or env; by file name, or json for a URL, when not given
+ * @property {string} [format] json, yaml, properties, env or ts; by file name, or json for a URL, when not given
  * @property {string} [path] dot path to the object of flags
  * @property {string} [valuePath] dot path to the value inside each flag's object
+ * @property {string} [keyField] in a list of flag objects, the field with each flag's key
+ * @property {string} [rolloutPath] dot path to a percentage beside each flag's value
  * @property {string} [prefix] only keys starting with this, removed from the key
  * @property {string} [changedBy] shown as who changed the flags
  * @property {boolean} [complete] false: send only changes, remove nothing (default true)
@@ -341,14 +414,14 @@ function parseHeaders(lines) {
  * @throws {AdapterError}
  */
 async function run(options, { fetch: doFetch = globalThis.fetch, cwd = process.cwd(), log = console.log } = {}) {
-    const { env, files = [], url, headers = {}, format, path: dotPath, valuePath, prefix, changedBy, complete = true, dryRun = false } = options;
+    const { env, files = [], url, headers = {}, format, path: dotPath, valuePath, keyField, rolloutPath, prefix, changedBy, complete = true, dryRun = false } = options;
     const envMap = options.envMap || DEFAULT_ENV_MAP;
     if (Boolean(files.length) === Boolean(url)) throw new AdapterError('give either files or a url to read the flags from');
     const withEnv = files.filter((f) => f.includes('{env}'));
     if (withEnv.length && withEnv.length !== files.length) throw new AdapterError('use {env} in every file pattern or in none');
     if (withEnv.length && env) throw new AdapterError('give either an environment or {env} in the file patterns, not both');
     if (!withEnv.length && !env) throw new AdapterError('the environment is missing (or put {env} in the file patterns)');
-    const shape = { path: dotPath, valuePath, prefix };
+    const shape = { path: dotPath, valuePath, keyField, rolloutPath, prefix };
 
     const mapsByEnv = {};
     const add = (target, where, flags) => (mapsByEnv[target] ||= []).push({ where, flags });

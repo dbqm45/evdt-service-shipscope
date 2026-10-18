@@ -57,7 +57,9 @@ test('parseDocument: JSON; .properties with = or :, comments and quotes; .env wi
     assert.throws(() => parseDocument('{', 'json', 'f.json'), /f\.json: not valid JSON/);
     assert.deepEqual(parseDocument('# c\n! c\nfeature.a=true\nfeature.b : 25\n\nbroken\n', 'properties', 'f'), { 'feature.a': 'true', 'feature.b': '25' });
     assert.deepEqual(parseDocument('export FLAG_A="on"\r\nFLAG_B=\'off\'\nURL=http://x:1\n', 'env', 'f'), { FLAG_A: 'on', FLAG_B: 'off', URL: 'http://x:1' });
-    assert.throws(() => parseDocument('a=1', 'yaml', 'f'), /unknown format "yaml"/);
+    assert.throws(() => parseDocument('a=1', 'toml', 'f'), /unknown format "toml"/);
+    assert.deepEqual(parseDocument('flags:\n  a: true\n', 'yaml', 'f'), { flags: { a: true } });
+    assert.throws(() => parseDocument('a: [1', 'yaml', 'f.yaml'), /f\.yaml:1: unclosed flow collection/);
 });
 
 test('formatOf: by file name', () => {
@@ -65,14 +67,16 @@ test('formatOf: by file name', () => {
     assert.equal(formatOf('application-prod.properties'), 'properties');
     for (const name of ['.env', '.env.prod', 'prod.env']) assert.equal(formatOf(name), 'env');
     for (const name of ['prod.ts', 'flags.mts', 'flags.cts', 'flags.js', 'flags.mjs', 'flags.cjs']) assert.equal(formatOf(name), 'ts');
-    assert.throws(() => formatOf('flags.yaml'), /unknown format, name it with --format/);
+    for (const name of ['flags.yaml', 'flags.yml']) assert.equal(formatOf(name), 'yaml');
+    assert.throws(() => formatOf('flags.toml'), /unknown format, name it with --format/);
 });
 
 test('flagMap: path, value path and prefix', () => {
     const doc = { data: { flags: { 'feature.a': { enabled: true }, 'feature.b': { enabled: false }, other: { enabled: true } } } };
     assert.deepEqual(flagMap(doc, { path: 'data.flags', valuePath: 'enabled', prefix: 'feature.' }, 'f'), { a: true, b: false });
     assert.throws(() => flagMap(doc, { path: 'data.missing' }, 'f'), /f: no "data\.missing" in it/);
-    assert.throws(() => flagMap({ list: [1] }, { path: 'list' }, 'f'), /expected an object of flags at "list"/);
+    assert.throws(() => flagMap({ list: [1] }, { path: 'list' }, 'f'), /the list at "list" must hold flag names or flag objects/);
+    assert.throws(() => flagMap({ n: 1 }, { path: 'n' }, 'f'), /expected an object or a list of flags at "n"/);
     assert.throws(() => flagMap({ a: { on: true } }, { valuePath: 'enabled' }, 'f'), /f, flag a: no "enabled" in it/);
 });
 
@@ -178,7 +182,7 @@ test('command line: options from arguments and environment; --help; exit code 1 
     assert.deepEqual(optionsFromArgs(['--env', 'prod', '--file', 'a.json', '--file', 'b/*.json', '--header', 'X-A: 1', '--changes-only', '--value-path', 'enabled'],
         { SHIPSCOPE_URL: 'https://s', SHIPSCOPE_FLAGS_TOKEN: 'shpi_t' }), {
         env: 'prod', files: ['a.json', 'b/*.json'], envMap: undefined, url: undefined, headers: { 'X-A': '1' }, format: undefined, path: undefined,
-        valuePath: 'enabled', prefix: undefined, changedBy: undefined, complete: false, dryRun: false, shipscopeUrl: 'https://s', token: 'shpi_t',
+        valuePath: 'enabled', keyField: undefined, rolloutPath: undefined, prefix: undefined, changedBy: undefined, complete: false, dryRun: false, shipscopeUrl: 'https://s', token: 'shpi_t',
     });
     assert.deepEqual(optionsFromArgs(['--file', 'f/{env}.ts', '--env-map', 'dev=test,prod=prod', '--env-map', 'uat=qa'], {}).envMap, { dev: 'test', prod: 'prod', uat: 'qa' });
     assert.equal(optionsFromArgs(['--help'], {}), null);
@@ -199,7 +203,7 @@ test('GitHub Action: inputs as INPUT_* variables, outputs appended to GITHUB_OUT
     });
     assert.deepEqual(options, {
         env: 'prod', files: ['config/a.json', 'config/b.json'], envMap: undefined, url: undefined, headers: {}, format: undefined, path: undefined,
-        valuePath: 'enabled', prefix: undefined, changedBy: undefined, complete: true, dryRun: true, shipscopeUrl: 'https://s', token: 'shpi_t',
+        valuePath: 'enabled', keyField: undefined, rolloutPath: undefined, prefix: undefined, changedBy: undefined, complete: true, dryRun: true, shipscopeUrl: 'https://s', token: 'shpi_t',
     });
     assert.throws(() => optionsFromInputs({ 'INPUT_DRY-RUN': 'yes' }), /input dry-run must be true or false/);
     assert.deepEqual(optionsFromInputs({ 'INPUT_FILES': 'f/{env}.ts', 'INPUT_ENV-MAP': 'dev=test\nprod=prod' }).envMap, { dev: 'test', prod: 'prod' });
@@ -272,4 +276,40 @@ test('run, {env} misuse and computed values are errors with the reason', async (
     await assert.rejects(run({ files: ['h/{env}.json'], envMap: { dev: 'test' }, dryRun: true }, io), /no file is for a mapped environment/);
     write('h/qa.json', '{"a":false}');
     await assert.rejects(run({ files: ['h/{env}.json'], envMap: { qa: 'prod', prod: 'prod' }, dryRun: true }, io), /flag a differs between h\/prod\.json and h\/qa\.json/);
+});
+
+test('flagMap: lists of names and of flag objects, key and value fields found or named, rollout beside the value', () => {
+    assert.deepEqual(flagMap({ enabledFeatures: ['newCheckout', 'darkMode'] }, { path: 'enabledFeatures' }, 'f'), { newCheckout: true, darkMode: true });
+    assert.deepEqual(flagMap([{ name: 'a', enabled: true }, { name: 'b', enabled: false }], {}, 'f'), { a: true, b: false }, 'name/enabled found');
+    assert.deepEqual(flagMap([{ id: 'a', state: 'on', key: 'x' }], {}, 'f'), { x: 'on' }, 'key comes first');
+    assert.deepEqual(flagMap([{ flagName: 'a', config: { on: true } }], { keyField: 'flagName', valuePath: 'config.on' }, 'f'), { a: true });
+    assert.throws(() => flagMap([{ title: 'a', enabled: true }], {}, 'f'), /name the field with each flag's key in key-field/);
+    assert.throws(() => flagMap([{ name: 'a', toggled: true }], {}, 'f'), /name the field with each flag's value in value-path/);
+    assert.throws(() => flagMap([{ name: 'a', enabled: true }, { name: 'a', enabled: false }], {}, 'f'), /flag a is listed twice/);
+    assert.throws(() => flagMap({ a: true }, { keyField: 'name' }, 'f'), /key-field is for a list of flags/);
+
+    const listed = [{ key: 'a', enabled: true, rollout: 25 }, { key: 'b', enabled: true, rollout: 100 }, { key: 'c', enabled: false, rollout: 50 }, { key: 'd', enabled: true }];
+    assert.deepEqual(flagMap(listed, { rolloutPath: 'rollout' }, 'f'), { a: 25, b: true, c: false, d: true });
+    assert.deepEqual(mergeStates([{ where: 'f', flags: flagMap(listed, { rolloutPath: 'rollout' }, 'f') }]).a, { state: 'partial', rollout: 25 });
+    assert.deepEqual(flagMap({ a: { enabled: true, percentage: 10 } }, { valuePath: 'enabled', rolloutPath: 'percentage' }, 'f'), { a: 10 });
+    assert.throws(() => flagMap({ a: { enabled: true, percentage: 'lots' } }, { valuePath: 'enabled', rolloutPath: 'percentage' }, 'f'), /flag a, percentage: cannot read "lots"/);
+});
+
+test('run, YAML files per environment with a list of flags', async () => {
+    write('config/flags/prod.yaml', `# production flags
+features:
+  - name: newCheckout
+    enabled: true
+  - name: search
+    enabled: true
+    rollout: 25
+  - name: darkMode
+    enabled: off
+`);
+    write('config/flags/qa.yml', 'features: [{ name: newCheckout, enabled: true }, { name: search, enabled: true }, { name: darkMode, enabled: true }]\n');
+    const { payload } = await run({ files: ['config/flags/{env}.y*ml'], path: 'features', rolloutPath: 'rollout', dryRun: true }, { cwd: DIR, log: quiet });
+    assert.deepEqual(payload.environments, ['qa', 'prod']);
+    assert.deepEqual(payload.observations.filter((o) => o.env === 'prod'), [
+        { key: 'darkMode', env: 'prod', state: 'off' }, { key: 'newCheckout', env: 'prod', state: 'on' }, { key: 'search', env: 'prod', state: 'partial', rollout: 25 },
+    ]);
 });

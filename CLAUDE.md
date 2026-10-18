@@ -40,9 +40,9 @@ localhost.
   `npm run dev`, `npm run dev:mock`, `npm test` (`node --test "test/*.test.js"`), `npm run release`, `npm run lint:commit`,
   `npm run hooks:install`.
 - `adapters/flags/` is the flags adapter teams run in their own pipelines (GitHub Action `action.yml` and CLI
-  `shipscope-flags.js` over `lib.js`, Node 20+, no dependencies): reads flags from files (JSON, `.properties`, `.env`,
-  TypeScript/JavaScript read without running them by `script-objects.js`; `{env}` in a pattern + `env-map` for one
-  file per environment) or a URL and posts their state to `POST /api/flags/ingest`. Tested in
+  `shipscope-flags.js` over `lib.js`, Node 20+, no dependencies): reads flags from files (JSON, YAML via `yaml.js`, `.properties`,
+  `.env`, TypeScript/JavaScript read without running them by `script-objects.js`; objects or lists of flags;
+  `{env}` in a pattern + `env-map` for one file per environment) or a URL and posts their state to `POST /api/flags/ingest`. Tested in
   `test/flags-adapter*.test.js` and end to end in `server/test/flags.test.js`.
 - `scripts/` holds only tooling: the release scripts (`release.js`, `release-notes.js`, `check-commit-message.js`,
   `lib/conventional.js`, `lib/json-file.js`) and the module-boundary check.

@@ -102,7 +102,7 @@ robią [przepisy z `jq`](#bez-adaptera-przepisy-z-jq).
 
 | Flagi są w | Rodzaj | Jak wysyłać |
 | --- | --- | --- |
-| Pliku w repozytorium (`flags.json`, konfiguracja w TypeScript/JavaScript, YAML, `.properties`, `.env`) | build | Krok w potoku wdrożeniowym, po jobie wdrożenia każdego środowiska: odczytaj plik tego środowiska, zamień, wyślij. |
+| Pliku w repozytorium (`flags.json`, YAML, konfiguracja w TypeScript/JavaScript, `.properties`, `.env`) | build | Krok w potoku wdrożeniowym, po jobie wdrożenia każdego środowiska: odczytaj plik tego środowiska, zamień, wyślij. |
 | Endpoincie aplikacji (np. `/internal/flags`) | runtime | Zadanie cykliczne (np. co 15 minut) i/lub krok po każdym wdrożeniu: pobierz adres dla środowiska, zamień, wyślij. |
 | AWS AppConfig (profil feature flags) | runtime | Zadanie cykliczne czytające każde środowisko AppConfig przez `aws appconfigdata` (poświadczenia przez OIDC, nie klucze) albo rozszerzenie AppConfig na `ON_DEPLOYMENT_COMPLETE` wywołujące małą Lambdę, która wysyła stan. |
 | Azure App Configuration | runtime | Zadanie cykliczne czytające feature flagi dla każdej etykiety (`az appconfig feature list`); flaga `conditional` to `partial`. |
@@ -114,8 +114,8 @@ Jedno źródło na jedno miejsce. Gdy ta sama flaga jest i wbudowana w build, i 
 
 ### Adapter flag
 
-`adapters/flags/` w tym repozytorium odczytuje flagi z **plików** (JSON, TypeScript/JavaScript, `.properties`, `.env`)
-albo spod **adresu URL**, buduje wiadomość i ją wysyła; `dry-run` tylko ją drukuje. Działa jako GitHub Action i z wiersza poleceń (Node 20+,
+`adapters/flags/` w tym repozytorium odczytuje flagi z **plików** (JSON, YAML, TypeScript/JavaScript, `.properties`,
+`.env`) albo spod **adresu URL**, buduje wiadomość i ją wysyła; `dry-run` tylko ją drukuje. Działa jako GitHub Action i z wiersza poleceń (Node 20+,
 bez zależności), z tymi samymi opcjami, opisanymi w [`adapters/flags/README.md`](adapters/flags/README.md). Wartość
 flagi może być `true`/`false`, `on`/`off`, `enabled`/`disabled` albo liczbą 0–100 dla częściowego rolloutu.
 
@@ -130,8 +130,12 @@ flagi może być `true`/`false`, `on`/`off`, `enabled`/`disabled` albo liczbą 0
           files: config/flags.prod.json      # po jednym w linii; działają wzorce, np. config/flags/*.json
 ```
 
-Obsługiwane są też pliki `.properties` i `.env`; `prefix: feature.` zostawia tylko klucze `feature.*`. Kilka plików
-trafia do jednej wiadomości, a flaga z różnymi wartościami w dwóch plikach to błąd.
+Obsługiwane są też pliki YAML, `.properties` i `.env`; `prefix: feature.` zostawia tylko klucze `feature.*`. Kilka
+plików trafia do jednej wiadomości, a flaga z różnymi wartościami w dwóch plikach to błąd. Flagi mogą być obiektem
+(`{ newCheckout: true }` albo `{ newCheckout: { enabled: true } }` z `value-path: enabled`) albo listą
+(`[{ name: newCheckout, enabled: true }]` — pola klucza i wartości adapter znajduje po typowych nazwach albo podajesz
+je w `key-field` i `value-path`; `[newCheckout, darkMode]` to lista włączonych flag). `rollout-path: rollout` czyta
+procent obok wartości. Tabela kształtów jest w [`adapters/flags/README.md`](adapters/flags/README.md).
 
 **Plik na środowisko, np. monorepo Nx** z `domains/<domena>/config/flags/{local,dev,test,qa,prod}.ts`, w każdym
 `export const flags = { newCheckout: true, ... }`. `{env}` we wzorcu oznacza środowisko pliku, więc jeden krok
@@ -200,8 +204,8 @@ Tak samo obsłużysz ConfigMap Kubernetesa (`kubectl get configmap <nazwa> -o js
 i `path: data`) i API serwisu flag (pobierz flagi jego CLI albo `curl`-em, potem `files:`).
 
 **Każdy inny układ.** Opcje opisują większość układów: wzorce z `*`, `**` i `{env}`, `env-map`, `path` (gdzie w pliku
-są flagi), `value-path` (wartość w obiekcie flagi) i `prefix`. Gdy nie wystarczą — flagi liczone w kodzie,
-importowane z innego pliku, YAML, własny format — wypisz je jako JSON w kroku przed adapterem, jeden plik na
+są flagi), `value-path`, `key-field`, `rollout-path` i `prefix`. Gdy nie wystarczą — flagi liczone w kodzie albo
+importowane z innego pliku, XML, TOML, własny format — wypisz je jako JSON w kroku przed adapterem, jeden plik na
 środowisko, i wskaż je w `files`. Dla TypeScriptu, który importuje flagi, zrobi to mały skrypt w projekcie
 (uruchamiany przez `tsx`, bez budowania):
 
