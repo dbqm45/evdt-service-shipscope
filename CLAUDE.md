@@ -39,21 +39,25 @@ localhost.
 - No linter, bundler or TypeScript. Root `package.json` has no dependencies and only exposes scripts:
   `npm run dev`, `npm run dev:mock`, `npm test` (`node --test "test/*.test.js"`), `npm run release`, `npm run lint:commit`,
   `npm run hooks:install`.
+- `adapters/flags/` is the flags adapter teams run in their own pipelines (GitHub Action `action.yml` and CLI
+  `shipscope-flags.js` over `lib.js`, Node 20+, no dependencies): reads flags from files or a URL and posts one
+  environment's state to `POST /api/flags/ingest`. Tested in `test/flags-adapter.test.js` and end to end in
+  `server/test/flags.test.js`.
 - `scripts/` holds only tooling: the release scripts (`release.js`, `release-notes.js`, `check-commit-message.js`,
   `lib/conventional.js`, `lib/json-file.js`) and the module-boundary check.
 - `server/` is a separate dependency boundary: its own `package.json`, `node_modules/` (gitignored) and `test/`.
   Root `npm test` never runs `server/test/`. Run `npm install && npm test` inside `server/` (real-Postgres tests need
   `TEST_DATABASE_URL`, see `server/README.md`).
 - **Module boundaries** (`scripts/lib/module-boundaries.js`, `node scripts/check-module-boundaries.js`, tested in
-  `test/module-boundaries.test.js`): `scripts/` never requires from `server/` and vice versa; `docs/app-*.js`
-  never calls `require()`.
+  `test/module-boundaries.test.js`): `scripts/` never requires from `server/` and vice versa; `adapters/` requires
+  from neither; `docs/app-*.js` never calls `require()`.
 - Workflows: `test.yml` and `server-test.yml` on every PR and push to `main`, `pr-title.yml`, `release.yml`.
 
 ## Tests — `node:test`, not Jest
 
 - `node:test` + `node:assert` only. No `jest.fn()`/`jest.mock()`/`expect(...)`; use `t.mock.fn()`/`t.mock.method()`
   and `assert.strictEqual`/`deepStrictEqual`/`rejects`. Copy the pattern from an existing test file.
-- Root (~220 cases): every `docs/app-*.js`, the release scripts and the boundary check. Files that touch disk use a
+- Root (~230 cases): every `docs/app-*.js`, the flags adapter, the release scripts and the boundary check. Files that touch disk use a
   gitignored `test/.tmp-*` path removed in `after()`.
 - Frontend tests load `docs/app-*.js` into a `vm` context with a stub DOM, fixed clock and mocked `fetch`. The stub
   does not parse HTML, so tests assert on generated HTML strings; real layout (row-height equalization, scroll sync)
@@ -133,7 +137,8 @@ emptied. `sync_requests` (webhook queue) is the one non-RLS table; it holds no t
   environment with its own token to `POST /api/flags/ingest` (`schemaVersion: 2`: `off`/`on`/`partial` + rollout,
   the sender's `changedAt`, flags no longer listed are marked removed, an older message never undoes a newer one).
   The body schema is `server/schemas/flags-ingest.v2.schema.json`, used by the route and served at
-  `GET /api/flags/ingest/schema`; the sender's guide (format, where flags live, `jq` recipes) is `ONBOARDING.md`.
+  `GET /api/flags/ingest/schema`; the sender's guide (format, where flags live, the adapter, `jq` recipes) is
+  `ONBOARDING.md`.
   Sources of one kind fold into the dashboard's `build`/`runtime-be` slot by priority. Flags link to Jira issues
   from three origins merged in `readDashboardFlags()`: the sender's `jira_keys`, hand-set
   `manual_jira_keys`/`manual_description` (`PUT /tenants/:tenantId/flags/:key`, never overwritten by a sender), and

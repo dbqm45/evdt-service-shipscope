@@ -4,10 +4,15 @@ on:
   pull_request:
     paths:
       - 'server/**'
+      # Server tests also post the flags adapter's messages and the onboarding guide's examples through the route.
+      - 'adapters/**'
+      - 'ONBOARDING*.md'
   push:
     branches: [main]
     paths:
       - 'server/**'
+      - 'adapters/**'
+      - 'ONBOARDING*.md'
 
 jobs:
   test:

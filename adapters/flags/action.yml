@@ -1,0 +1,54 @@
+name: ShipScope feature flags
+description: Read feature flags from files or a URL and send their state for one environment to ShipScope.
+inputs:
+  shipscope-url:
+    description: The ShipScope server, e.g. https://shipscope.example.com (not needed with dry-run).
+    required: false
+  token:
+    description: The flag source's ingest token (shpi_...), from a secret (not needed with dry-run).
+    required: false
+  environment:
+    description: The ShipScope environment these flags are for, test, qa or prod.
+    required: true
+  files:
+    description: File mode. Flags files or patterns, one per line (.json, .properties, .env), relative to the workspace.
+    required: false
+  url:
+    description: URL mode. Where to fetch the flags (JSON unless format is given).
+    required: false
+  url-headers:
+    description: Request headers for url, one "Name: value" per line.
+    required: false
+  format:
+    description: json, properties or env (default by file name; json for url).
+    required: false
+  path:
+    description: Dot path to the object of flags inside the document, e.g. features.
+    required: false
+  value-path:
+    description: Dot path to the value inside each flag's object, e.g. enabled.
+    required: false
+  prefix:
+    description: Only keys starting with this, without it in the flag key, e.g. feature.
+    required: false
+  changed-by:
+    description: Shown as who changed the flags (default the source's name).
+    required: false
+  complete:
+    description: true sends the full state (flags not listed are removed); false only these flags.
+    required: false
+    default: 'true'
+  dry-run:
+    description: true prints the message and sends nothing.
+    required: false
+    default: 'false'
+outputs:
+  flags:
+    description: Number of flags in the message.
+  changed:
+    description: Values ShipScope changed (0 on a dry run).
+  removed:
+    description: Values ShipScope marked removed (0 on a dry run).
+runs:
+  using: node24
+  main: action.js
