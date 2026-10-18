@@ -170,7 +170,7 @@ Feature flags:
 | Route | Auth | What it does |
 |---|---|---|
 | `POST /tenants/:tenantId/flag-sources` | session + admin | Body `{ "name": "LaunchDarkly", "kind": "build" \| "runtime", "priority"?: 0..1000, "repoId"?: 123 \| null }` (priority defaults to 0 for build, 100 for runtime). Returns `{ source, token: { id, token } }`; the token (`shpi_...`) is shown only here, only its SHA-256 is stored. 201; 409 for a taken name, 404 for an untracked repo. |
-| `GET /tenants/:tenantId/flag-sources` | session + admin | `{ sources: [{ id, name, kind, priority, repoId, createdAt, tokens: [{ id, createdAt, lastUsedAt }] }] }`, never the tokens. |
+| `GET /tenants/:tenantId/flag-sources` | session + admin | `{ sources: [{ id, name, kind, priority, repoId, createdAt, lastIngestAt, lastIngest: { flags, changed, removed, stale } \| null, lastError: { at, message } \| null, tokens: [{ id, createdAt, lastUsedAt }] }] }`, never the tokens. `lastError` is the latest refused message of that source (400, with the reason); it is current while newer than `lastIngestAt`. |
 | `PUT /tenants/:tenantId/flag-sources/:sourceId` | session + admin | Body `{ name, kind, priority, repoId }`: rename, change the kind, the precedence or the component. |
 | `DELETE /tenants/:tenantId/flag-sources/:sourceId` | session + admin | Deletes the source with its tokens, values and history. 204, or 404. |
 | `POST /tenants/:tenantId/flag-sources/:sourceId/tokens` | session + admin | Another token for the source (rotation without downtime). Returns `{ id, token }`. 201. |

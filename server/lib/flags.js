@@ -39,17 +39,25 @@ async function assertTrackedRepo(client, tenantId, repoId) {
 }
 
 function toSource(row) {
-    return { id: row.id, name: row.name, kind: row.kind, priority: row.priority, repoId: row.repo_id === null ? null : Number(row.repo_id), createdAt: row.created_at };
+    return {
+        id: row.id, name: row.name, kind: row.kind, priority: row.priority, repoId: row.repo_id === null ? null : Number(row.repo_id), createdAt: row.created_at,
+        lastIngestAt: row.last_ingest_at, lastIngest: row.last_ingest,
+        lastError: row.last_error_at ? { at: row.last_error_at, message: row.last_error } : null,
+    };
 }
 
-const SOURCE_COLUMNS = 'id, name, kind, priority, repo_id, created_at';
+const SOURCE_COLUMNS = 'id, name, kind, priority, repo_id, created_at, last_ingest_at, last_ingest, last_error, last_error_at';
+// A refused message's reason is kept for Settings up to this length.
+const MAX_ERROR_LENGTH = 500;
+
+/** @typedef {{ id: string, name: string, kind: string, priority: number, repoId: number|null, createdAt: Date, lastIngestAt: Date|null, lastIngest: { flags: number, changed: number, removed: number, stale: number }|null, lastError: { at: Date, message: string }|null }} FlagSource */
 
 /**
  * Creates a flag source with its first token. Admins only. The token is returned once and never stored.
  *
  * @param {import('pg').Pool} pool
  * @param {{ tenantId: string, actorUserId: string, name: string, kind: 'build'|'runtime', priority?: number, repoId?: number|null }} input
- * @returns {Promise<{ source: { id: string, name: string, kind: string, priority: number, repoId: number|null, createdAt: Date }, token: { id: string, token: string } }>}
+ * @returns {Promise<{ source: FlagSource, token: { id: string, token: string } }>}
  * @throws {FlagSourceNotFoundError} repoId isn't tracked
  * @throws {FlagSourceConflictError} the name is taken
  */
@@ -86,7 +94,7 @@ async function saveSource(client, query) {
  *
  * @param {import('pg').Pool} pool
  * @param {{ tenantId: string, actorUserId: string, sourceId: string, name: string, kind: 'build'|'runtime', priority: number, repoId: number|null }} input
- * @returns {Promise<{ id: string, name: string, kind: string, priority: number, repoId: number|null, createdAt: Date }>}
+ * @returns {Promise<FlagSource>}
  * @throws {FlagSourceNotFoundError|FlagSourceConflictError}
  */
 async function updateFlagSource(pool, { tenantId, actorUserId, sourceId, name, kind, priority, repoId }) {
@@ -118,11 +126,12 @@ async function deleteFlagSource(pool, { tenantId, actorUserId, sourceId }) {
 }
 
 /**
- * The tenant's flag sources with their tokens (never the tokens themselves). Admins only.
+ * The tenant's flag sources with their status (last accepted message, last refused one) and their tokens (never the
+ * tokens themselves). Admins only.
  *
  * @param {import('pg').Pool} pool
  * @param {{ tenantId: string, actorUserId: string }} input
- * @returns {Promise<Array<{ id: string, name: string, kind: string, priority: number, repoId: number|null, createdAt: Date, tokens: Array<{ id: string, createdAt: Date, lastUsedAt: Date|null }> }>>}
+ * @returns {Promise<Array<FlagSource & { tokens: Array<{ id: string, createdAt: Date, lastUsedAt: Date|null }> }>>}
  */
 async function listFlagSources(pool, { tenantId, actorUserId }) {
     return withScope(pool, { tenantId }, async (client) => {
@@ -189,13 +198,57 @@ async function revokeIngestToken(pool, { tenantId, actorUserId, tokenId }) {
  * @throws {IngestTokenError|IngestPayloadError}
  */
 async function ingestFlags(pool, { token, payload, now = new Date() }) {
+    try {
+        return await applyIngest(pool, { token, payload, now });
+    } catch (err) {
+        // Best effort: the sender gets its 400 either way.
+        if (err instanceof IngestPayloadError) await recordIngestError(pool, { token, message: err.message, now }).catch(() => {});
+        throw err;
+    }
+}
+
+/**
+ * Inside withScope: the token's row, found through the token's own RLS policy, after which the transaction works
+ * under the token's tenant.
+ *
+ * @param {import('pg').PoolClient} client
+ * @param {string} token
+ * @returns {Promise<{ tokenId: string, tenantId: string, sourceId: string }|null>} null for an unknown token
+ */
+async function resolveToken(client, token) {
+    const { rows: found } = await client.query('SELECT id, tenant_id, source_id FROM ingest_tokens WHERE token_hash = $1', [hashToken(token)]);
+    if (!found.length) return null;
+    const { id: tokenId, tenant_id: tenantId, source_id: sourceId } = found[0];
+    await setScope(client, { tenantId, ingestTokenHash: '' });
+    return { tokenId, tenantId, sourceId };
+}
+
+/**
+ * Notes a refused message on its source, for Settings: the reason and when. Called after the ingest's own
+ * transaction rolled back. An unknown token is nobody's: nothing is recorded.
+ *
+ * @param {import('pg').Pool} pool
+ * @param {{ token: string, message: string, now?: Date }} input
+ * @returns {Promise<void>}
+ */
+async function recordIngestError(pool, { token, message, now = new Date() }) {
+    if (!TOKEN_PATTERN.test(token || '')) return;
+    await withScope(pool, { ingestTokenHash: hashToken(token) }, async (client) => {
+        const found = await resolveToken(client, token);
+        if (!found) return;
+        await client.query(
+            'UPDATE flag_sources SET last_error = $3, last_error_at = $4 WHERE tenant_id = $1 AND id = $2',
+            [found.tenantId, found.sourceId, String(message).slice(0, MAX_ERROR_LENGTH), now]
+        );
+    });
+}
+
+async function applyIngest(pool, { token, payload, now }) {
     if (!TOKEN_PATTERN.test(token || '')) throw new IngestTokenError('Invalid ingest token');
-    const tokenHash = hashToken(token);
-    return withScope(pool, { ingestTokenHash: tokenHash }, async (client) => {
-        const { rows: found } = await client.query('SELECT id, tenant_id, source_id FROM ingest_tokens WHERE token_hash = $1', [tokenHash]);
-        if (!found.length) throw new IngestTokenError('Invalid ingest token');
-        const { id: tokenId, tenant_id: tenantId, source_id: sourceId } = found[0];
-        await setScope(client, { tenantId, ingestTokenHash: '' });
+    return withScope(pool, { ingestTokenHash: hashToken(token) }, async (client) => {
+        const found = await resolveToken(client, token);
+        if (!found) throw new IngestTokenError('Invalid ingest token');
+        const { tokenId, tenantId, sourceId } = found;
         // One ingest per tenant at a time, so two messages from one source can't interleave their full-state diffs.
         await client.query("SELECT pg_advisory_xact_lock(hashtextextended('flags:' || $1, 0))", [tenantId]);
 
@@ -254,8 +307,10 @@ async function ingestFlags(pool, { token, payload, now = new Date() }) {
             );
         }
         await client.query('UPDATE ingest_tokens SET last_used_at = $3 WHERE tenant_id = $1 AND id = $2', [tenantId, tokenId, now]);
+        const summary = { flags: keys.length, changed: writes.length, removed: removals.length, stale };
+        await client.query('UPDATE flag_sources SET last_ingest_at = $3, last_ingest = $4 WHERE tenant_id = $1 AND id = $2', [tenantId, sourceId, now, summary]);
 
-        return { source: source.name, flags: keys.length, changed: writes.length, removed: removals.length, stale, created: inserted.map((r) => r.key).sort() };
+        return { source: source.name, ...summary, created: inserted.map((r) => r.key).sort() };
     });
 }
 
@@ -372,6 +427,7 @@ module.exports = {
     TOKEN_PATTERN,
     IngestTokenError,
     IngestPayloadError,
+    recordIngestError,
     FlagSourceNotFoundError,
     FlagSourceConflictError,
     createFlagSource,

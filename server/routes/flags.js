@@ -1,6 +1,6 @@
 const {
     createFlagSource, updateFlagSource, deleteFlagSource, listFlagSources, createIngestToken, revokeIngestToken, ingestFlags,
-    listFlags, setFlagDetails,
+    recordIngestError, listFlags, setFlagDetails,
 } = require('../lib/flags');
 // The ingest contract, published as is at GET /api/flags/ingest/schema so senders can check a message before sending it.
 const INGEST_SCHEMA = require('../schemas/flags-ingest.v2.schema.json');
@@ -21,9 +21,17 @@ function registerFlagRoutes(app, ctx) {
     app.post('/api/flags/ingest', {
         bodyLimit: 2 * 1024 * 1024,
         schema: { body: INGEST_SCHEMA },
+        // A body the schema refuses is still a 400, but noted on the sender's source first (Settings shows why).
+        attachValidation: true,
     }, async (request) => {
         const match = /^Bearer (\S+)$/.exec(request.headers.authorization || '');
-        return ingestFlags(pool, { token: match ? match[1] : '', payload: request.body });
+        const token = match ? match[1] : '';
+        if (request.validationError) {
+            await recordIngestError(pool, { token, message: request.validationError.message })
+                .catch((err) => request.log.warn({ err: err.message }, 'could not record a refused flag message'));
+            throw request.validationError;
+        }
+        return ingestFlags(pool, { token, payload: request.body });
     });
 
     app.get('/api/flags/ingest/schema', async (request, reply) => reply.type('application/schema+json').send(INGEST_SCHEMA));
