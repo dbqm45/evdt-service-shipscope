@@ -97,7 +97,7 @@ własnego nadawcę, sprawdzaj z nim wiadomość przed wysłaniem.
 ### Gdzie są twoje flagi
 
 Każdy nadawca robi to samo: odczytuje flagi, zamienia je na jedną mapę `{ klucz: wartość }` na środowisko i ją
-wysyła. Tabela zbiera typowe miejsca; zamianę i wysyłkę robi [adapter flag](#adapter-flag), a bez niego to samo
+wysyła. Tabela zbiera typowe miejsca; zamianę i wysyłkę robi [adapter flag](#kiedy-użyć-adaptera), a bez niego to samo
 robią [przepisy z `jq`](#bez-adaptera-przepisy-z-jq).
 
 | Flagi są w | Rodzaj | Jak wysyłać |
@@ -112,7 +112,70 @@ robią [przepisy z `jq`](#bez-adaptera-przepisy-z-jq).
 Jedno źródło na jedno miejsce. Gdy ta sama flaga jest i wbudowana w build, i przełączana na żywo, utwórz dwa źródła
 (build i runtime): dashboard pokaże wartość runtime i zachowa obie historie.
 
-### Adapter flag
+### Kiedy użyć adaptera
+
+| Twoje flagi | Czego użyć |
+| --- | --- |
+| W plikach w repozytorium: JSON, YAML, TypeScript/JavaScript, `.properties`, `.env` | **Adapter**, tryb plików |
+| Pod adresem URL, który zwraca JSON albo YAML (endpoint aplikacji, API serwisu flag) | **Adapter**, tryb URL |
+| W AWS AppConfig, Azure App Configuration, ConfigMapie Kubernetesa, serwisie flag z własnym CLI | Pobierz je tym narzędziem w kroku wcześniej, potem **adapter**, tryb plików |
+| Liczone w kodzie, importowane z innego pliku, XML, TOML, własny format | Mały krok, który zapisze je jako JSON, potem **adapter** ([każdy inny układ](#adapter-flag-przykłady)) |
+| Usługa albo skrypt, który sam umie wysłać żądanie HTTP (np. webhook serwisu flag) | **Bez adaptera**: wyślij [wiadomość](#wiadomość) prosto do ShipScope |
+
+Adapter działa tam, gdzie twój potok: jako GitHub Action w GitHub Actions, z wiersza poleceń (`node` 20 lub nowszy)
+w GitLabie, Jenkinsie, Azure DevOps albo cronie.
+
+**Kiedy go uruchamiać.** Flagi build (w plikach, które jadą z kodem): na końcu joba wdrażającego każde środowisko,
+żeby ShipScope poznał flagi razem z wdrożeniem, albo raz po każdym merge'u do gałęzi głównej, gdy pliki opisują
+wszystkie środowiska. Flagi runtime (przełączane na żywo): cyklicznie, np. co 15 minut, i po zmianie, jeśli twoje
+narzędzie umie uruchomić potok. Ponowne wysłanie tego samego stanu niczego nie zmienia.
+
+### Adapter krok po kroku
+
+1. **Przyjrzyj się flagom.** Gdzie są, jeden plik na środowisko czy jeden na wszystkie, i jaki mają kształt (obiekt
+   `{ klucz: wartość }`, obiekt na flagę, lista)? Czy flaga bywa przełączana bez wdrożenia? Wtedy to źródło runtime,
+   inaczej build.
+2. **Utwórz źródło.** Settings → Feature flags → dodaj źródło (nazwa, rodzaj, opcjonalnie komponent) i skopiuj token.
+   Jedno źródło na jedno miejsce, w którym są flagi.
+3. **Zapisz dane dostępu** tam, gdzie działa potok: token jako sekret (`SHIPSCOPE_FLAGS_TOKEN`), adres ShipScope jako
+   zmienną (`SHIPSCOPE_URL`).
+4. **Napisz krok** z opcjami dla swojego układu (tabela niżej i przykłady dalej).
+5. **Wypróbuj z `dry-run: true`** (`--dry-run` w wierszu poleceń). Nic nie jest wysyłane; log pokazuje wiadomość ze
+   wszystkimi flagami i środowiskami oraz pominięte pliki. Sprawdź klucze, wartości i środowiska.
+6. **Wyślij naprawdę:** usuń `dry-run`, dodaj `shipscope-url` i `token`. Log kończy się tym, co zrobił ShipScope
+   (`3 flags for prod, 3 changed, 0 removed`).
+7. **Sprawdź w ShipScope:** przy źródle widać „received” z liczbami, flagi są w Settings → Feature flags i na
+   dashboardzie. Od teraz odrzucona wiadomość też jest tam widoczna, z powodem.
+
+**Dobór opcji** — decyduje o nich wygląd twoich plików:
+
+| Twoje pliki | Opcje |
+| --- | --- |
+| Jeden plik dla jednego środowiska | `environment: prod`, `files: config/flags.prod.json` |
+| Plik na środowisko, nazwa w ścieżce | `files: config/flags/{env}.yaml`; nazwy inne niż test, qa, prod: `env-map: dev=test, staging=qa, production=prod` |
+| Kilka plików (domeny, aplikacje) dla tych samych środowisk | wzorzec: `files: domains/*/config/flags/{env}.ts` (klucze muszą być między nimi unikalne albo źródło na domenę) |
+| Flagi wewnątrz większej konfiguracji (`{ apiUrl: …, features: { … } }`) | `path: features` |
+| Każda flaga to obiekt (`{ newCheckout: { enabled: true } }`) | `value-path: enabled` |
+| Lista flag (`[{ name: newCheckout, enabled: true }]`) | nic, jeśli pola nazywają się key/name/id/flag i enabled/value/state/on/status/active; inaczej `key-field` i `value-path` |
+| Lista włączonych flag (`[newCheckout, darkMode]`) | `path` do listy |
+| Procent obok wartości (`rollout: 25`) | `rollout-path: rollout` |
+| Flagi wśród innych ustawień (`feature.newCheckout=true`) | `prefix: feature.` |
+| Plik TypeScript z kilkoma eksportowanymi obiektami | `path: <nazwa const>` |
+
+**Gdy coś nie działa**, krok kończy się jedną linią z nazwą pliku i flagi:
+
+| Komunikat | Co zrobić |
+| --- | --- |
+| `no file matches …` | Wzorzec jest względem katalogu głównego repozytorium; sprawdź go `ls` w tym samym kroku. |
+| `Skipped …: "local" is not in env-map` | Normalne dla środowisk, których ShipScope nie pokazuje; dopisz nazwę do `env-map`, jeśli ma się liczyć. |
+| `cannot read … as on, off or a rollout percentage` | Ta wartość nie jest flagą (inne ustawienie): zawęź `path` albo `prefix`; dla obiektów na flagę ustaw `value-path`. |
+| `… is not written out as a value` | Wartość wyliczana albo importowana w pliku `.ts`: wpisz ją wprost albo wypisz flagi jako JSON w kroku wcześniej. |
+| `several objects (…); name the one with the flags in path` | Ustaw `path` na nazwę const. |
+| `flag x differs between a and b` | Dwa pliki dają jednej fladze różne wartości w jednym środowisku: użyj osobnego źródła dla każdej grupy plików. |
+| `ShipScope answered 401` | Zły albo unieważniony token albo sekret nie trafia do kroku. |
+| `ShipScope answered 400: …` | Wiadomość łamie regułę (np. klucz ze spacją); powód jest w tej linii i przy źródle w Settings. |
+
+### Adapter flag: przykłady
 
 `adapters/flags/` w tym repozytorium odczytuje flagi z **plików** (JSON, YAML, TypeScript/JavaScript, `.properties`,
 `.env`) albo spod **adresu URL**, buduje wiadomość i ją wysyła; `dry-run` tylko ją drukuje. Działa jako GitHub Action i z wiersza poleceń (Node 20+,

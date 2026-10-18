@@ -171,7 +171,8 @@ Start with a dry run: it needs no ShipScope, no token, and shows the exact messa
 
 Your flags in another layout (one `.ts` file per environment and domain, as in an Nx monorepo): in step 2 use
 `files: domains/*/config/flags/{env}.ts` and `env-map: dev=test, qa=qa, prod=prod` instead of `environment` and the
-JSON file; the log lists the files it skipped (e.g. `local.ts`). More layouts: `ONBOARDING.md`, "The flags adapter".
+JSON file; the log lists the files it skipped (e.g. `local.ts`). When and how to use the adapter, with every option and error: `ONBOARDING.md`, "When to use the adapter" and "The flags
+adapter, step by step".
 
 Against a local server (`npm run dev`), use the command line instead of the Action, from a checkout of this
 repository: `SHIPSCOPE_URL=http://localhost:3000 SHIPSCOPE_FLAGS_TOKEN=shpi_... node adapters/flags/shipscope-flags.js

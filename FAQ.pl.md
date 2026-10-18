@@ -177,7 +177,8 @@ adapter by wysłał.
 
 Flagi w innym układzie (jeden plik `.ts` na środowisko i domenę, jak w monorepo Nx): w kroku 2 zamiast `environment`
 i pliku JSON użyj `files: domains/*/config/flags/{env}.ts` i `env-map: dev=test, qa=qa, prod=prod`; log wymienia pliki,
-które pominął (np. `local.ts`). Inne układy: `ONBOARDING.pl.md`, „Adapter flag”.
+które pominął (np. `local.ts`). Kiedy i jak użyć adaptera, ze wszystkimi opcjami i błędami: `ONBOARDING.pl.md`, „Kiedy użyć adaptera”
+i „Adapter krok po kroku”.
 
 Na lokalnym serwerze (`npm run dev`) użyj wiersza poleceń zamiast Action, z kopii tego repozytorium:
 `SHIPSCOPE_URL=http://localhost:3000 SHIPSCOPE_FLAGS_TOKEN=shpi_... node adapters/flags/shipscope-flags.js --env prod
