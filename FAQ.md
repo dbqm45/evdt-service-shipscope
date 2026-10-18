@@ -125,6 +125,55 @@ runtime override is removed. (`renderFlags`, `docs/app-technical-flags.js`.)
 Every value change a source reports is kept in the flag's history (`flag_value_history`), with the sender's own
 change time and the name it gives (else the source's name).
 
+### How do I try the flags adapter in another repository?
+
+Start with a dry run: it needs no ShipScope, no token, and shows the exact message the adapter would send.
+
+1. **Let the other repository use the Action.** When this repository is private, open its Settings → Actions →
+   General → Access and allow repositories of the same owner. A public one needs nothing.
+2. **Dry run.** In the other repository add a flags file, e.g. `config/flags.prod.json` with
+   `{ "newCheckout": true, "darkMode": "off", "search": 25 }`, and a workflow you start by hand:
+
+   ```yaml
+   # .github/workflows/shipscope-flags.yml
+   name: ShipScope flags
+   on: workflow_dispatch
+   jobs:
+     flags:
+       runs-on: ubuntu-latest
+       steps:
+         - uses: actions/checkout@v7
+         - uses: dbqm45/evdt-service-shipscope/adapters/flags@v0.2.7   # or a newer release tag
+           with:
+             environment: prod
+             files: config/flags.prod.json
+             dry-run: true
+   ```
+
+   Run it from the Actions tab. The log shows the message (`newCheckout` on, `darkMode` off, `search` partial 25) and
+   "Dry run: 3 flags for prod, nothing sent."; a value it cannot read fails the step and names the flag and the file.
+3. **Send for real.** In ShipScope, Settings → Feature flags: add a source (kind build) and copy its token. In the
+   other repository add the secret `SHIPSCOPE_FLAGS_TOKEN` (the token) and the variable `SHIPSCOPE_URL` (the
+   ShipScope address, e.g. the Render one; GitHub's runners cannot reach `localhost`). Replace `dry-run: true` with:
+
+   ```yaml
+             shipscope-url: ${{ vars.SHIPSCOPE_URL }}
+             token: ${{ secrets.SHIPSCOPE_FLAGS_TOKEN }}
+   ```
+
+   The log ends with "ShipScope (<source>): 3 flags for prod, 3 changed, 0 removed, new: …".
+4. **Check in ShipScope.** The source shows "received" with the counts, the flags are in Settings → Feature flags
+   and on the dashboard (Technical view → flags). Running the workflow again changes nothing (0 changed); removing a
+   flag from the file and running it marks that flag removed.
+5. **See a refusal.** Set the token to a wrong value: the step fails with 401. Give a flag a value like `"maybe"`:
+   the adapter stops before sending. A message ShipScope itself refuses shows under the source as "last message
+   refused" with the reason.
+
+Against a local server (`npm run dev`), use the command line instead of the Action, from a checkout of this
+repository: `SHIPSCOPE_URL=http://localhost:3000 SHIPSCOPE_FLAGS_TOKEN=shpi_... node adapters/flags/shipscope-flags.js
+--env prod --file <path to the other repository>/config/flags.prod.json`. Options: `adapters/flags/README.md`;
+more examples: `ONBOARDING.md`, "Sending feature flags".
+
 ## Jira
 
 ### Which issues does ShipScope show?
