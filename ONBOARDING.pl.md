@@ -232,5 +232,7 @@ send_flags() {  # użycie: <mapa flag na stdin> send_flags <środowisko>
   jq 'map_values(.enabled)' flags.json | send_flags prod
   ```
 
-Gdy coś się nie pokazuje, odpowiedź na wysyłkę mówi dlaczego (`400` ze wskazaniem pola, `401` przy tokenie), a
-Settings → Feature flags pokazuje, kiedy każdy token był ostatnio użyty.
+Gdy coś się nie pokazuje, odpowiedź na wysyłkę mówi dlaczego (`400` ze wskazaniem pola, `401` przy tokenie).
+Settings → Feature flags pokazuje to samo przy każdym źródle: kiedy przyszła jego ostatnia wiadomość i co zmieniła albo
+że została odrzucona i dlaczego, oraz kiedy każdy token był ostatnio użyty. Wiadomość z nieznanym tokenem nie należy
+do żadnego źródła i dostaje tylko swoje 401.

@@ -181,6 +181,10 @@ function onboardingSteps({ features, github, jira, boards, sources, flagList, wo
         steps.push(step('flags', 'Send feature flags', true, 'problem', sources.error || flagList.error, '#flags'));
     } else if (flagList.length) {
         steps.push(step('flags', 'Send feature flags', true, 'done', `${flagList.length} flag(s) received.`, '#flags'));
+    } else if (sources.some(sourceRefused)) {
+        const refused = sources.filter(sourceRefused);
+        steps.push(step('flags', 'Send feature flags', true, 'problem',
+            `Message refused: ${refused.map((src) => `${src.name} — ${src.lastError.message}`).join('; ')}`, '#flags'));
     } else if (sources.some((src) => src.tokens.length)) {
         steps.push(step('flags', 'Send feature flags', true, 'waiting',
             `Waiting for the first message from ${sources.filter((src) => src.tokens.length).map((src) => src.name).join(', ')} (POST /api/flags/ingest with its token).`, '#flags'));
@@ -453,6 +457,25 @@ function renderJira({ enabled, webhooks, jira, boards, admin, flagFields = null 
         <div class="settings-actions">${connect}<button type="button" class="btn btn-danger" data-action="disconnect-jira">Disconnect</button></div>`);
 }
 
+/** True when a source's latest message was refused (nothing accepted since). */
+function sourceRefused(source){
+    return Boolean(source.lastError) && (!source.lastIngestAt || new Date(source.lastError.at) >= new Date(source.lastIngestAt));
+}
+
+/** A source's status: its latest message, accepted (with what it did) or refused (with why), or none yet. */
+function SourceStatus(source){
+    if (sourceRefused(source)) {
+        return html`<span class="state-tag fail">last message refused ${fmtDateTime(source.lastError.at)}</span>
+            <span class="settings-error-inline">${source.lastError.message}</span>`;
+    }
+    if (!source.lastIngestAt) {
+        return html`<span class="state-tag warn">no message yet</span>`;
+    }
+    const n = source.lastIngest || { flags: 0, changed: 0, removed: 0, stale: 0 };
+    return html`<span class="state-tag ok">received ${fmtDateTime(source.lastIngestAt)}</span>
+        <span class="settings-row-meta">${n.flags} flag(s), ${n.changed} changed, ${n.removed} removed${n.stale ? `, ${n.stale} older than stored` : ''}</span>`;
+}
+
 /** @param {{ flags: object[]|null|{ error: string }, repos: object[], admin: boolean, once: object, origin: string }} props */
 function renderSources({ flags, repos, once, origin }){
     if (flags === null) {
@@ -471,6 +494,7 @@ function renderSources({ flags, repos, once, origin }){
             <label>Component <select name="repoId">${repoOptions(s.repoId)}</select></label>
             <button type="submit" class="btn">Save</button>
         </form>
+        <div class="settings-source-status">${SourceStatus(s)}</div>
         <div class="settings-row-meta">Tokens: ${s.tokens.length ? s.tokens.map((t) => html`<span class="settings-token">created ${fmtDateTime(t.createdAt)}, last used ${fmtDateTime(t.lastUsedAt)}
             <button type="button" class="btn-link btn" data-action="revoke-token" data-token-id="${t.id}">revoke</button></span>`) : 'none — the source can\'t send anything'}</div>
         </td><td class="actions"><button type="button" class="btn" data-action="new-token" data-source-id="${s.id}">New token</button>
@@ -911,7 +935,7 @@ async function initSettings(){
 }
 
 if (typeof module !== 'undefined') {
-    module.exports = { onboardingSteps, renderGettingStarted, renderWorkspace, renderGitHub, renderJira, renderFlags, FlagRow, formValues, actions, settingsState, runAction, load, api, ApiError };
+    module.exports = { onboardingSteps, SourceStatus, renderGettingStarted, renderWorkspace, renderGitHub, renderJira, renderFlags, FlagRow, formValues, actions, settingsState, runAction, load, api, ApiError };
 } else if (SETTINGS_TENANT_ID) {
     initSettings();
 }

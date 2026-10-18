@@ -197,6 +197,46 @@ test('ingest: tokens are checked and payloads validated; nothing is written by a
     assert.ok(!stored.token_hash.includes(token.slice(5)), 'only a hash is stored');
 });
 
+test('source status: the last accepted message and the last refused one, with its reason, for Settings', async (t) => {
+    const { app, alice, tenantId, newSource, ingest } = await setup(t);
+    const { token } = (await newSource({ name: 'CI', kind: 'build' })).token;
+    await newSource({ name: 'Idle', kind: 'runtime' });
+    const status = async () => {
+        const res = await app.inject({ method: 'GET', url: `/tenants/${tenantId}/flag-sources`, cookies: { sid: alice } });
+        return Object.fromEntries(res.json().sources.map((s) => [s.name, s]));
+    };
+
+    let sources = await status();
+    assert.deepStrictEqual([sources.CI.lastIngestAt, sources.CI.lastIngest, sources.CI.lastError], [null, null, null], 'nothing received yet');
+
+    assert.strictEqual((await ingest(token, { observations: [obs('a', 'prod', 'on'), obs('b', 'prod', 'off')] })).statusCode, 200);
+    sources = await status();
+    assert.deepStrictEqual(sources.CI.lastIngest, { flags: 2, changed: 2, removed: 0, stale: 0 });
+    assert.ok(sources.CI.lastIngestAt);
+    assert.strictEqual(sources.CI.lastError, null);
+
+    // Refused by the schema (before the handler) and by the server's own checks: both noted, nothing else changes.
+    assert.strictEqual((await ingest(token, { observations: [obs('a', 'staging', 'on')] })).statusCode, 400);
+    sources = await status();
+    assert.match(sources.CI.lastError.message, /^body\/observations\/0\/env must be equal to one of the allowed values/);
+    assert.deepStrictEqual(sources.CI.lastIngest, { flags: 2, changed: 2, removed: 0, stale: 0 }, 'the last accepted message stays');
+    assert.strictEqual((await ingest(token, { observations: [obs('a', 'prod', 'on'), obs('a', 'prod', 'off')] })).statusCode, 400);
+    sources = await status();
+    assert.strictEqual(sources.CI.lastError.message, 'conflicting values for a.prod');
+    assert.ok(new Date(sources.CI.lastError.at) >= new Date(sources.CI.lastIngestAt));
+
+    // A later accepted message: the error stays on record, older than the success (Settings shows it as past).
+    assert.strictEqual((await ingest(token, { observations: [obs('a', 'prod', 'on')] })).statusCode, 200);
+    sources = await status();
+    assert.deepStrictEqual(sources.CI.lastIngest, { flags: 1, changed: 0, removed: 1, stale: 0 });
+    assert.ok(new Date(sources.CI.lastIngestAt) >= new Date(sources.CI.lastError.at));
+
+    // An unknown token belongs to no source; the other source was never touched.
+    assert.strictEqual((await ingest(`shpi_${'A'.repeat(43)}`, { observations: [obs('a', 'qa', 'on')], extra: 1 })).statusCode, 400);
+    assert.deepStrictEqual([sources.Idle.lastIngestAt, sources.Idle.lastError], [null, null]);
+    assert.strictEqual((await status()).CI.lastError.message, 'conflicting values for a.prod');
+});
+
 test('flag sources: admins create, list (never the tokens), rename, rotate tokens and delete; members and outsiders cannot', async (t) => {
     const { app, alice, bob, tenantId, newSource, ingest, rows } = await setup(t);
     const created = await newSource({ name: 'Frontend CI', kind: 'build', repoId: 1 });

@@ -201,6 +201,20 @@ test('settings page: the Jira section offers the flag convention -- none, prefix
     assert.ok(!/save-flag-link/.test(str(ui.renderJira({ enabled: true, jira, boards: null, admin: false }))), 'members don\'t');
 });
 
+test('flag source status: none yet, accepted with what it did, refused with why (until a later message is accepted)', () => {
+    const src = (extra) => ({ lastIngestAt: null, lastIngest: null, lastError: null, ...extra });
+    assert.match(str(ui.SourceStatus(src())), /state-tag warn">no message yet/);
+    const ok = str(ui.SourceStatus(src({ lastIngestAt: '2026-10-16T10:00:00Z', lastIngest: { flags: 3, changed: 1, removed: 2, stale: 1 } })));
+    assert.match(ok, /state-tag ok">received /);
+    assert.match(ok, /3 flag\(s\), 1 changed, 2 removed, 1 older than stored/);
+    const error = { at: '2026-10-16T11:00:00Z', message: 'body/observations/0/env must be <one of>' };
+    const refused = str(ui.SourceStatus(src({ lastIngestAt: '2026-10-16T10:00:00Z', lastIngest: { flags: 3, changed: 0, removed: 0, stale: 0 }, lastError: error })));
+    assert.match(refused, /state-tag fail">last message refused /);
+    assert.match(refused, /must be &lt;one of&gt;/, 'the reason is escaped');
+    assert.match(str(ui.SourceStatus(src({ lastIngestAt: '2026-10-16T12:00:00Z', lastIngest: { flags: 3, changed: 0, removed: 0, stale: 0 }, lastError: error }))),
+        /received /, 'an older refusal is history');
+});
+
 test('getting started: each step read off the loaded sections -- todo, waiting, problem, done, or off on this server', () => {
     ui.settingsState.tenantId = TENANT;
     const features = { githubApp: true, jira: true };
@@ -241,6 +255,9 @@ test('getting started: each step read off the loaded sections -- todo, waiting, 
     assert.strictEqual(flags({ sources: [{ name: 'LD', tokens: [] }] }).state, 'todo', 'a source without a token can\'t send anything');
     assert.strictEqual(flags({ sources: [{ name: 'LD', tokens: [{}] }], flagList: [{ key: 'a' }] }).state, 'done');
     assert.strictEqual(flags({ sources: { error: 'nope' } }).state, 'problem');
+    const refused = { name: 'LD', tokens: [{}], lastIngestAt: null, lastError: { at: '2026-10-16T10:00:00Z', message: 'conflicting values for a.prod' } };
+    assert.deepStrictEqual([flags({ sources: [refused] }).state, flags({ sources: [refused] }).hint], ['problem', 'Message refused: LD — conflicting values for a.prod']);
+    assert.strictEqual(flags({ sources: [{ ...refused, lastIngestAt: '2026-10-16T11:00:00Z' }] }).state, 'waiting', 'accepted since: no longer a problem');
     assert.strictEqual(byId({ ...empty, workspace: { members: [{}], invitations: [{}] } }).team.state, 'waiting');
     assert.strictEqual(byId({ ...empty, workspace: { members: [{}, {}], invitations: null } }).team.state, 'done');
 });

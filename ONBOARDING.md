@@ -227,5 +227,7 @@ send_flags() {  # usage: <flag map on stdin> send_flags <env>
   jq 'map_values(.enabled)' flags.json | send_flags prod
   ```
 
-When something does not show up, the answer of the post says why (`400` with the field, `401` for the token), and
-Settings → Feature flags shows when each token was last used.
+When something does not show up, the answer of the post says why (`400` with the field, `401` for the token).
+Settings → Feature flags shows the same per source: when its last message was received and what it changed, or that
+it was refused and why, and when each token was last used. A message with an unknown token belongs to no source and
+only gets its 401.

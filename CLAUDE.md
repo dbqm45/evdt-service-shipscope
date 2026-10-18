@@ -87,7 +87,7 @@ changelog entry by hand outside a `chore(release)` PR.
 
 Deployed to Render per `context/foundation/infrastructure.md`: `render.yaml` builds both the Web Service and the
 Background Worker from the repo root (`npm ci --prefix server`, `node server/web.js`), not `rootDir: server`, which
-would hide `docs/` from the Web Service. Migrations (`server/migrations/001`–`015`, applied by the hand-rolled
+would hide `docs/` from the Web Service. Migrations (`server/migrations/001`–`016`, applied by the hand-rolled
 `lib/migrate.js`) run as each service's `preDeployCommand` under an advisory lock (`test/render-blueprint.test.js`).
 Dependencies, all in `server/package.json`: `pg`, `fastify`, `@fastify/cookie`. Fastify runs with
 `removeAdditional: false, coerceTypes: false`: unknown fields and wrong types are a 400, never silently fixed.
@@ -138,7 +138,10 @@ emptied. `sync_requests` (webhook queue) is the one non-RLS table; it holds no t
   the sender's `changedAt`, flags no longer listed are marked removed, an older message never undoes a newer one).
   The body schema is `server/schemas/flags-ingest.v2.schema.json`, used by the route and served at
   `GET /api/flags/ingest/schema`; the sender's guide (format, where flags live, the adapter, `jq` recipes) is
-  `ONBOARDING.md`.
+  `ONBOARDING.md`. Each source keeps its status (migration `016`): the last accepted message's summary
+  (`last_ingest_at`/`last_ingest`) and the last refused one's reason (`last_error`/`last_error_at`, recorded by
+  `recordIngestError()` after the rollback, schema refusals included via `attachValidation`), shown in Settings and
+  the Getting started checklist.
   Sources of one kind fold into the dashboard's `build`/`runtime-be` slot by priority. Flags link to Jira issues
   from three origins merged in `readDashboardFlags()`: the sender's `jira_keys`, hand-set
   `manual_jira_keys`/`manual_description` (`PUT /tenants/:tenantId/flags/:key`, never overwritten by a sender), and

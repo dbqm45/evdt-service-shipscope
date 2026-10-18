@@ -20,6 +20,8 @@
 .settings-table tr:last-child td { border-bottom: none; }
 .settings-table .actions { text-align: right; white-space: nowrap; }
 .settings-row-meta { color: var(--muted); font-size: 11px; margin-top: 2px; }
+.settings-source-status { margin-top: 4px; font-size: 12px; }
+.settings-error-inline { color: var(--fail); font-size: 12px; overflow-wrap: anywhere; }
 .settings-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 .btn { display: inline-flex; align-items: center; gap: 6px; background: var(--panel-2); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 5px 10px; font-size: 12px; cursor: pointer; text-decoration: none; font-family: inherit; }
 .btn:hover { border-color: var(--muted); }
