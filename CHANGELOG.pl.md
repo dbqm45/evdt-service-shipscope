@@ -7,6 +7,12 @@ dashboard, nie publikowany pakiet), dlatego wpisy są pogrupowane według dat. I
 ShipScope, znajdują się w `README.pl.md`, pełne techniczne odniesienie w `CLAUDE.md` (po angielsku), a
 wyjaśnienie sposobu liczenia poszczególnych wartości/badge'y w `FAQ.pl.md`.
 
+## [0.2.8] - 2026-10-18
+
+### Nowe
+
+- **SHP:** read TS and YAML flag files, flag lists and one file per env (#49)
+
 ## [0.2.7] - 2026-10-18
 
 ### Nowe
