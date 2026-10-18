@@ -102,7 +102,7 @@ robią [przepisy z `jq`](#bez-adaptera-przepisy-z-jq).
 
 | Flagi są w | Rodzaj | Jak wysyłać |
 | --- | --- | --- |
-| Pliku w repozytorium (`flags.json`, YAML, `.properties`, `.env`) | build | Krok w potoku wdrożeniowym, po jobie wdrożenia każdego środowiska: odczytaj plik tego środowiska, zamień, wyślij. |
+| Pliku w repozytorium (`flags.json`, konfiguracja w TypeScript/JavaScript, YAML, `.properties`, `.env`) | build | Krok w potoku wdrożeniowym, po jobie wdrożenia każdego środowiska: odczytaj plik tego środowiska, zamień, wyślij. |
 | Endpoincie aplikacji (np. `/internal/flags`) | runtime | Zadanie cykliczne (np. co 15 minut) i/lub krok po każdym wdrożeniu: pobierz adres dla środowiska, zamień, wyślij. |
 | AWS AppConfig (profil feature flags) | runtime | Zadanie cykliczne czytające każde środowisko AppConfig przez `aws appconfigdata` (poświadczenia przez OIDC, nie klucze) albo rozszerzenie AppConfig na `ON_DEPLOYMENT_COMPLETE` wywołujące małą Lambdę, która wysyła stan. |
 | Azure App Configuration | runtime | Zadanie cykliczne czytające feature flagi dla każdej etykiety (`az appconfig feature list`); flaga `conditional` to `partial`. |
@@ -114,8 +114,8 @@ Jedno źródło na jedno miejsce. Gdy ta sama flaga jest i wbudowana w build, i 
 
 ### Adapter flag
 
-`adapters/flags/` w tym repozytorium odczytuje flagi z **plików** albo spod **adresu URL**, buduje wiadomość dla
-jednego środowiska i ją wysyła; `dry-run` tylko ją drukuje. Działa jako GitHub Action i z wiersza poleceń (Node 20+,
+`adapters/flags/` w tym repozytorium odczytuje flagi z **plików** (JSON, TypeScript/JavaScript, `.properties`, `.env`)
+albo spod **adresu URL**, buduje wiadomość i ją wysyła; `dry-run` tylko ją drukuje. Działa jako GitHub Action i z wiersza poleceń (Node 20+,
 bez zależności), z tymi samymi opcjami, opisanymi w [`adapters/flags/README.md`](adapters/flags/README.md). Wartość
 flagi może być `true`/`false`, `on`/`off`, `enabled`/`disabled` albo liczbą 0–100 dla częściowego rolloutu.
 
@@ -132,6 +132,27 @@ flagi może być `true`/`false`, `on`/`off`, `enabled`/`disabled` albo liczbą 0
 
 Obsługiwane są też pliki `.properties` i `.env`; `prefix: feature.` zostawia tylko klucze `feature.*`. Kilka plików
 trafia do jednej wiadomości, a flaga z różnymi wartościami w dwóch plikach to błąd.
+
+**Plik na środowisko, np. monorepo Nx** z `domains/<domena>/config/flags/{local,dev,test,qa,prod}.ts`, w każdym
+`export const flags = { newCheckout: true, ... }`. `{env}` we wzorcu oznacza środowisko pliku, więc jeden krok
+wysyła wszystkie; `env-map` mówi, która nazwa jest którym środowiskiem ShipScope, a nazwy spoza mapy (`local`) są
+pomijane:
+
+```yaml
+      - uses: dbqm45/evdt-service-shipscope/adapters/flags@vX.Y.Z
+        with:
+          shipscope-url: ${{ vars.SHIPSCOPE_URL }}
+          token: ${{ secrets.SHIPSCOPE_FLAGS_TOKEN }}
+          files: domains/*/config/flags/{env}.ts
+          env-map: dev=test, qa=qa, prod=prod
+```
+
+Uruchamiaj to po merge'u do gałęzi głównej (pliki opisują wszystkie środowiska) albo w jobie wdrożenia każdego
+środowiska z jednym plikiem tego środowiska (`environment: prod` i `files: domains/*/config/flags/prod.ts`). Pliki
+`.ts` są czytane, nie uruchamiane: wartości muszą być wpisane wprost (`true`, `25`, `'off'`), a plik z kilkoma
+eksportowanymi obiektami potrzebuje `path: <nazwa const>`. Wszystkie domeny trafiają do jednej wiadomości, więc klucz
+użyty w dwóch domenach musi mieć w nich tę samą wartość; gdy domeny powtarzają klucze, każda dostaje własne źródło
+i krok (`files: domains/charger/config/flags/{env}.ts`).
 
 **Adres URL** — cyklicznie (jedno źródło rodzaju runtime):
 
@@ -178,11 +199,38 @@ jobs:
 Tak samo obsłużysz ConfigMap Kubernetesa (`kubectl get configmap <nazwa> -o json > cm.json`, potem `files: cm.json`
 i `path: data`) i API serwisu flag (pobierz flagi jego CLI albo `curl`-em, potem `files:`).
 
+**Każdy inny układ.** Opcje opisują większość układów: wzorce z `*`, `**` i `{env}`, `env-map`, `path` (gdzie w pliku
+są flagi), `value-path` (wartość w obiekcie flagi) i `prefix`. Gdy nie wystarczą — flagi liczone w kodzie,
+importowane z innego pliku, YAML, własny format — wypisz je jako JSON w kroku przed adapterem, jeden plik na
+środowisko, i wskaż je w `files`. Dla TypeScriptu, który importuje flagi, zrobi to mały skrypt w projekcie
+(uruchamiany przez `tsx`, bez budowania):
+
+```ts
+// tools/shipscope-flags.ts
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { flags as test } from '../apps/web/src/flags.test';
+import { flags as qa } from '../apps/web/src/flags.qa';
+import { flags as prod } from '../apps/web/src/flags.prod';
+
+mkdirSync('.shipscope', { recursive: true });
+for (const [env, flags] of Object.entries({ test, qa, prod })) writeFileSync(`.shipscope/${env}.json`, JSON.stringify(flags));
+```
+
+```yaml
+      - run: npx tsx tools/shipscope-flags.ts
+      - uses: dbqm45/evdt-service-shipscope/adapters/flags@vX.Y.Z
+        with:
+          shipscope-url: ${{ vars.SHIPSCOPE_URL }}
+          token: ${{ secrets.SHIPSCOPE_FLAGS_TOKEN }}
+          files: .shipscope/{env}.json
+```
+
 **Wiersz poleceń** — wszędzie indziej (GitLab, Jenkins, cron); skopiuj `adapters/flags/` albo sklonuj to repozytorium:
 
 ```bash
 export SHIPSCOPE_URL=https://shipscope.example.com SHIPSCOPE_FLAGS_TOKEN=shpi_...
 node adapters/flags/shipscope-flags.js --env prod --file config/flags.prod.json
+node adapters/flags/shipscope-flags.js --file 'domains/*/config/flags/{env}.ts' --env-map dev=test,qa=qa,prod=prod --dry-run
 node adapters/flags/shipscope-flags.js --env prod --url https://app.example.com/internal/flags --dry-run
 ```
 

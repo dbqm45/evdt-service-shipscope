@@ -175,6 +175,10 @@ adapter by wysłał.
    zatrzyma się przed wysłaniem. Wiadomość odrzuconą przez sam ShipScope widać przy źródle jako „last message refused”
    z powodem.
 
+Flagi w innym układzie (jeden plik `.ts` na środowisko i domenę, jak w monorepo Nx): w kroku 2 zamiast `environment`
+i pliku JSON użyj `files: domains/*/config/flags/{env}.ts` i `env-map: dev=test, qa=qa, prod=prod`; log wymienia pliki,
+które pominął (np. `local.ts`). Inne układy: `ONBOARDING.pl.md`, „Adapter flag”.
+
 Na lokalnym serwerze (`npm run dev`) użyj wiersza poleceń zamiast Action, z kopii tego repozytorium:
 `SHIPSCOPE_URL=http://localhost:3000 SHIPSCOPE_FLAGS_TOKEN=shpi_... node adapters/flags/shipscope-flags.js --env prod
 --file <ścieżka do innego repozytorium>/config/flags.prod.json`. Opcje: `adapters/flags/README.md`; więcej przykładów:

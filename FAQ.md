@@ -169,6 +169,10 @@ Start with a dry run: it needs no ShipScope, no token, and shows the exact messa
    the adapter stops before sending. A message ShipScope itself refuses shows under the source as "last message
    refused" with the reason.
 
+Your flags in another layout (one `.ts` file per environment and domain, as in an Nx monorepo): in step 2 use
+`files: domains/*/config/flags/{env}.ts` and `env-map: dev=test, qa=qa, prod=prod` instead of `environment` and the
+JSON file; the log lists the files it skipped (e.g. `local.ts`). More layouts: `ONBOARDING.md`, "The flags adapter".
+
 Against a local server (`npm run dev`), use the command line instead of the Action, from a checkout of this
 repository: `SHIPSCOPE_URL=http://localhost:3000 SHIPSCOPE_FLAGS_TOKEN=shpi_... node adapters/flags/shipscope-flags.js
 --env prod --file <path to the other repository>/config/flags.prod.json`. Options: `adapters/flags/README.md`;

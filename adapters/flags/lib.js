@@ -7,15 +7,21 @@
  */
 const fs = require('fs');
 const path = require('path');
+const { readScriptObjects, ScriptParseError, Unreadable } = require('./script-objects');
 
 const ENVIRONMENTS = ['test', 'qa', 'prod'];
 // The same rules as the server's schema; checked here so a wrong key fails before anything is sent.
 const FLAG_KEY = /^[A-Za-z_][A-Za-z0-9_.:-]{0,127}$/;
 const DANGEROUS_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
 const MAX_OBSERVATIONS = 5000;
-const FORMATS = ['json', 'properties', 'env'];
+const FORMATS = ['json', 'properties', 'env', 'ts', 'js'];
+// File names that become ShipScope environments with {env} in a pattern, unless env-map says otherwise.
+const DEFAULT_ENV_MAP = { test: 'test', qa: 'qa', prod: 'prod' };
 
 class AdapterError extends Error {}
+
+// Marks a parsed TypeScript/JavaScript module (its value: the exported names); its top-level objects by name follow.
+const SCRIPT = Symbol('script');
 
 /**
  * A flag value as teams write it, read as a ShipScope state: true/false, "on"/"off", "true"/"false",
@@ -29,6 +35,9 @@ class AdapterError extends Error {}
  */
 function toState(value, where) {
     let v = value;
+    if (v instanceof Unreadable) {
+        throw new AdapterError(`${where}: "${v.text}" is not written out as a value (the adapter reads the file, it does not run it)`);
+    }
     if (typeof v === 'string') {
         const text = v.trim().toLowerCase();
         if (['true', 'on', 'enabled', 'yes'].includes(text)) v = true;
@@ -69,26 +78,29 @@ function pick(value, dotPath, where) {
 }
 
 /**
- * The format of a flags file from its name: .json, .properties, or .env (also `.env.prod`, `prod.env`).
+ * The format of a flags file from its name: .json, .properties, .env (also `.env.prod`, `prod.env`), or a
+ * TypeScript/JavaScript module (.ts, .mts, .cts, .js, .mjs, .cjs).
  *
  * @param {string} file
- * @returns {'json'|'properties'|'env'}
+ * @returns {'json'|'properties'|'env'|'ts'}
  * @throws {AdapterError}
  */
 function formatOf(file) {
     const base = path.basename(file).toLowerCase();
     if (base.endsWith('.json')) return 'json';
     if (base.endsWith('.properties')) return 'properties';
+    if (/\.[mc]?[tj]s$/.test(base)) return 'ts';
     if (base === '.env' || base.startsWith('.env.') || base.endsWith('.env')) return 'env';
     throw new AdapterError(`${file}: unknown format, name it with --format (${FORMATS.join(', ')})`);
 }
 
 /**
- * Parses a flags document: JSON, or `key=value` lines (Java .properties also take `key: value`; .env lines may
- * start with `export`; `#` and `!` lines are comments; matching quotes around a value are removed).
+ * Parses a flags document: JSON; `key=value` lines (Java .properties also take `key: value`; .env lines may
+ * start with `export`; `#` and `!` lines are comments; matching quotes around a value are removed); or a
+ * TypeScript/JavaScript module, read without running it (script-objects.js): its object literals by name.
  *
  * @param {string} text
- * @param {'json'|'properties'|'env'} format
+ * @param {'json'|'properties'|'env'|'ts'|'js'} format
  * @param {string} where for the error message
  * @returns {unknown}
  * @throws {AdapterError}
@@ -102,6 +114,16 @@ function parseDocument(text, format, where) {
         }
     }
     if (!FORMATS.includes(format)) throw new AdapterError(`unknown format "${format}" (${FORMATS.join(', ')})`);
+    if (format === 'ts' || format === 'js') {
+        let read;
+        try {
+            read = readScriptObjects(text, where);
+        } catch (err) {
+            if (err instanceof ScriptParseError) throw new AdapterError(err.message);
+            throw err;
+        }
+        return { [SCRIPT]: read.exported, ...read.objects };
+    }
     const separator = format === 'properties' ? /[=:]/ : /=/;
     const out = {};
     for (const raw of text.split(/\r?\n/)) {
@@ -130,7 +152,19 @@ function parseDocument(text, format, where) {
  * @throws {AdapterError}
  */
 function flagMap(doc, { path: dotPath, valuePath, prefix }, where) {
-    const map = pick(doc, dotPath, where);
+    let source = doc;
+    if (doc && doc[SCRIPT] && !dotPath) {
+        // A module: the object of flags is its only exported object (else its only object), or the one `path` names.
+        const all = Object.keys(doc);
+        const names = doc[SCRIPT].length ? doc[SCRIPT] : all;
+        if (names.length !== 1) {
+            throw new AdapterError(names.length
+                ? `${where}: several objects (${names.join(', ')}); name the one with the flags in path`
+                : `${where}: no object literal found (const NAME = { ... } or export default { ... })`);
+        }
+        source = doc[names[0]];
+    }
+    const map = pick(source, dotPath, where);
     if (map === null || typeof map !== 'object' || Array.isArray(map)) {
         throw new AdapterError(`${where}: expected an object of flags${dotPath ? ` at "${dotPath}"` : ''}`);
     }
@@ -167,43 +201,99 @@ function mergeStates(maps) {
 }
 
 /**
- * The ingest message for one environment's full state.
+ * The ingest message: the full state of each environment given (environments not given are left alone).
  *
- * @param {{ env: string, states: Record<string, { state: string, rollout?: number }>, changedBy?: string, complete?: boolean }} input
+ * @param {{ byEnv: Record<string, Record<string, { state: string, rollout?: number }>>, changedBy?: string, complete?: boolean }} input
  * @returns {{ schemaVersion: 2, environments: string[], complete: boolean, changedBy?: string, observations: object[] }}
  * @throws {AdapterError}
  */
-function buildPayload({ env, states, changedBy, complete = true }) {
-    if (!ENVIRONMENTS.includes(env)) throw new AdapterError(`environment "${env}" must be one of ${ENVIRONMENTS.join(', ')}`);
-    const keys = Object.keys(states).sort();
-    if (keys.length > MAX_OBSERVATIONS) throw new AdapterError(`${keys.length} flags, at most ${MAX_OBSERVATIONS} per message`);
-    const bad = keys.find((k) => !FLAG_KEY.test(k) || DANGEROUS_KEYS.has(k));
-    if (bad !== undefined) throw new AdapterError(`"${bad}" is not a valid flag key (letters, digits and _ . : -, starting with a letter or _)`);
-    const payload = { schemaVersion: 2, environments: [env], complete };
+function buildPayload({ byEnv, changedBy, complete = true }) {
+    const envs = Object.keys(byEnv);
+    const wrong = envs.find((env) => !ENVIRONMENTS.includes(env));
+    if (wrong !== undefined) throw new AdapterError(`environment "${wrong}" must be one of ${ENVIRONMENTS.join(', ')}`);
+    if (!envs.length) throw new AdapterError('no environment to send');
+    const observations = [];
+    for (const env of ENVIRONMENTS.filter((e) => envs.includes(e))) {
+        for (const key of Object.keys(byEnv[env]).sort()) {
+            if (!FLAG_KEY.test(key) || DANGEROUS_KEYS.has(key)) {
+                throw new AdapterError(`"${key}" is not a valid flag key (letters, digits and _ . : -, starting with a letter or _)`);
+            }
+            observations.push({ key, env, ...byEnv[env][key] });
+        }
+    }
+    if (observations.length > MAX_OBSERVATIONS) throw new AdapterError(`${observations.length} values, at most ${MAX_OBSERVATIONS} per message`);
+    const payload = { schemaVersion: 2, environments: ENVIRONMENTS.filter((e) => envs.includes(e)), complete };
     if (changedBy) payload.changedBy = changedBy.slice(0, 100);
-    payload.observations = keys.map((key) => ({ key, env, ...states[key] }));
+    payload.observations = observations;
     return payload;
 }
 
 /**
- * Expands file patterns (`*`, `**`, `?` need Node 22+); a pattern matching nothing is an error.
+ * The regular expression a pattern with `{env}` matches paths with, capturing the environment's name.
+ *
+ * @param {string} pattern
+ * @returns {RegExp}
+ */
+function envPatternRegExp(pattern) {
+    let re = '';
+    for (const part of pattern.split(/(\{env\}|\*\*\/|\*\*|\*|\?)/)) {
+        if (part === '{env}') re += '([^/]+?)';
+        else if (part === '**/') re += '(?:.*/)?';
+        else if (part === '**') re += '.*';
+        else if (part === '*') re += '[^/]*';
+        else if (part === '?') re += '[^/]';
+        else re += part.replace(/[.+^$()|[\]{}\\]/g, '\\$&');
+    }
+    return new RegExp(`^${re}$`);
+}
+
+/**
+ * Expands file patterns (`*`, `**`, `?` need Node 22+); a pattern matching nothing is an error. In a pattern,
+ * `{env}` stands for the environment's name and is captured from each file's path.
  *
  * @param {string[]} patterns
  * @param {string} cwd
- * @returns {string[]} sorted, without duplicates
+ * @returns {Array<{ file: string, env: string|null }>} sorted by file, without duplicates
  * @throws {AdapterError}
  */
 function expandFiles(patterns, cwd) {
-    const files = new Set();
+    const files = new Map();
     for (const pattern of patterns) {
+        const glob = pattern.split('{env}').join('*');
         let matches;
-        if (!/[*?[\]{}]/.test(pattern)) matches = fs.existsSync(path.resolve(cwd, pattern)) ? [pattern] : [];
-        else if (typeof fs.globSync === 'function') matches = fs.globSync(pattern, { cwd });
+        if (!/[*?[\]{}]/.test(glob)) matches = fs.existsSync(path.resolve(cwd, glob)) ? [glob] : [];
+        else if (typeof fs.globSync === 'function') matches = fs.globSync(glob, { cwd });
         else throw new AdapterError(`file patterns need Node 22 or later: ${pattern}`);
         if (!matches.length) throw new AdapterError(`no file matches ${pattern}`);
-        for (const m of matches) files.add(m);
+        const envRe = pattern.includes('{env}') ? envPatternRegExp(pattern) : null;
+        for (const m of matches) {
+            const posix = m.split(path.sep).join('/');
+            const env = envRe ? (envRe.exec(posix) || [])[1] ?? null : null;
+            if (envRe && env === null) continue;
+            files.set(m, { file: m, env });
+        }
     }
-    return [...files].sort();
+    return [...files.values()].sort((a, b) => (a.file < b.file ? -1 : a.file > b.file ? 1 : 0));
+}
+
+/**
+ * `name=env` pairs (comma- or newline-separated): which file names become which ShipScope environment.
+ *
+ * @param {string[]} items
+ * @returns {Record<string, string>|undefined} undefined when none are given (the default map applies)
+ * @throws {AdapterError}
+ */
+function parseEnvMap(items) {
+    const pairs = items.flatMap((i) => i.split(/[,\n]/)).map((p) => p.trim()).filter(Boolean);
+    if (!pairs.length) return undefined;
+    const map = {};
+    for (const pair of pairs) {
+        const [name, env, extra] = pair.split('=').map((x) => x.trim());
+        if (!name || !env || extra !== undefined) throw new AdapterError(`env-map entry "${pair}" must look like name=env`);
+        if (!ENVIRONMENTS.includes(env)) throw new AdapterError(`env-map entry "${pair}": ${env} must be one of ${ENVIRONMENTS.join(', ')}`);
+        map[name] = env;
+    }
+    return map;
 }
 
 /**
@@ -225,8 +315,10 @@ function parseHeaders(lines) {
 
 /**
  * @typedef {object} AdapterOptions
- * @property {string} env ShipScope environment: test, qa or prod
- * @property {string[]} [files] file mode: paths or patterns
+ * @property {string} [env] ShipScope environment: test, qa or prod; not with {env} in the file patterns
+ * @property {string[]} [files] file mode: paths or patterns, optionally with {env} for the environment's name
+ * @property {Record<string, string>} [envMap] with {env}: file name -> ShipScope environment (default test, qa,
+ *   prod as themselves); other names are skipped
  * @property {string} [url] URL mode: where to fetch the flags (JSON, or another format with `format`)
  * @property {Record<string, string>} [headers] request headers for `url`
  * @property {string} [format] json, properties or env; by file name, or json for a URL, when not given
@@ -250,25 +342,40 @@ function parseHeaders(lines) {
  */
 async function run(options, { fetch: doFetch = globalThis.fetch, cwd = process.cwd(), log = console.log } = {}) {
     const { env, files = [], url, headers = {}, format, path: dotPath, valuePath, prefix, changedBy, complete = true, dryRun = false } = options;
+    const envMap = options.envMap || DEFAULT_ENV_MAP;
     if (Boolean(files.length) === Boolean(url)) throw new AdapterError('give either files or a url to read the flags from');
+    const withEnv = files.filter((f) => f.includes('{env}'));
+    if (withEnv.length && withEnv.length !== files.length) throw new AdapterError('use {env} in every file pattern or in none');
+    if (withEnv.length && env) throw new AdapterError('give either an environment or {env} in the file patterns, not both');
+    if (!withEnv.length && !env) throw new AdapterError('the environment is missing (or put {env} in the file patterns)');
     const shape = { path: dotPath, valuePath, prefix };
 
-    const maps = [];
+    const mapsByEnv = {};
+    const add = (target, where, flags) => (mapsByEnv[target] ||= []).push({ where, flags });
     if (url) {
         const res = await doFetch(url, { headers });
         if (!res.ok) throw new AdapterError(`${url} answered ${res.status}`);
-        maps.push({ where: url, flags: flagMap(parseDocument(await res.text(), format || 'json', url), shape, url) });
+        add(env, url, flagMap(parseDocument(await res.text(), format || 'json', url), shape, url));
     } else {
-        for (const file of expandFiles(files, cwd)) {
+        for (const { file, env: name } of expandFiles(files, cwd)) {
+            const target = name === null ? env : (Object.hasOwn(envMap, name) ? envMap[name] : null);
+            if (!target) {
+                log(`Skipped ${file}: "${name}" is not in env-map (${Object.entries(envMap).map(([k, v]) => `${k}=${v}`).join(', ')}).`);
+                continue;
+            }
             const text = fs.readFileSync(path.resolve(cwd, file), 'utf8');
-            maps.push({ where: file, flags: flagMap(parseDocument(text, format || formatOf(file), file), shape, file) });
+            add(target, file, flagMap(parseDocument(text, format || formatOf(file), file), shape, file));
         }
+        if (!Object.keys(mapsByEnv).length) throw new AdapterError('no file is for a mapped environment');
     }
-    const payload = buildPayload({ env, states: mergeStates(maps), changedBy, complete });
+    const byEnv = Object.fromEntries(Object.entries(mapsByEnv).map(([target, maps]) => [target, mergeStates(maps)]));
+    const payload = buildPayload({ byEnv, changedBy, complete });
+    const flagCount = new Set(payload.observations.map((o) => o.key)).size;
+    const envList = payload.environments.join(', ');
 
     if (dryRun) {
         log(JSON.stringify(payload, null, 2));
-        log(`Dry run: ${payload.observations.length} flags for ${env}, nothing sent.`);
+        log(`Dry run: ${flagCount} flags for ${envList}, nothing sent.`);
         return { payload, result: null };
     }
     const { shipscopeUrl, token } = options;
@@ -282,11 +389,12 @@ async function run(options, { fetch: doFetch = globalThis.fetch, cwd = process.c
     const body = await res.text();
     if (!res.ok) throw new AdapterError(`ShipScope answered ${res.status}: ${body.slice(0, 500)}`);
     const result = JSON.parse(body);
-    log(`ShipScope (${result.source}): ${result.flags} flags for ${env}, ${result.changed} changed, ${result.removed} removed`
+    log(`ShipScope (${result.source}): ${result.flags} flags for ${envList}, ${result.changed} changed, ${result.removed} removed`
         + `${result.stale ? `, ${result.stale} older than what it has` : ''}${result.created.length ? `, new: ${result.created.join(', ')}` : ''}.`);
     return { payload, result };
 }
 
 module.exports = {
-    AdapterError, ENVIRONMENTS, toState, pick, formatOf, parseDocument, flagMap, mergeStates, buildPayload, expandFiles, parseHeaders, run,
+    AdapterError, ENVIRONMENTS, toState, pick, formatOf, parseDocument, flagMap, mergeStates, buildPayload, expandFiles, envPatternRegExp,
+    parseEnvMap, parseHeaders, run,
 };

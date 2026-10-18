@@ -8,10 +8,13 @@ inputs:
     description: The flag source's ingest token (shpi_...), from a secret (not needed with dry-run).
     required: false
   environment:
-    description: The ShipScope environment these flags are for, test, qa or prod.
-    required: true
+    description: The ShipScope environment these flags are for, test, qa or prod. Not with {env} in files.
+    required: false
   files:
-    description: File mode. Flags files or patterns, one per line (.json, .properties, .env), relative to the workspace.
+    description: File mode. Flags files or patterns, one per line (.json, .properties, .env, .ts, .js), relative to the workspace; {env} in a pattern stands for the environment's name, e.g. domains/*/config/flags/{env}.ts.
+    required: false
+  env-map:
+    description: With {env} in files, which names are which ShipScope environment, e.g. dev=test, qa=qa, prod=prod (default test, qa and prod as themselves; other names are skipped).
     required: false
   url:
     description: URL mode. Where to fetch the flags (JSON unless format is given).
@@ -20,10 +23,10 @@ inputs:
     description: Request headers for url, one "Name: value" per line.
     required: false
   format:
-    description: json, properties or env (default by file name; json for url).
+    description: json, properties, env or ts (default by file name; json for url).
     required: false
   path:
-    description: Dot path to the object of flags inside the document, e.g. features.
+    description: Dot path to the object of flags inside the document, e.g. features (in a .ts file starting with its const name, when it has several).
     required: false
   value-path:
     description: Dot path to the value inside each flag's object, e.g. enabled.

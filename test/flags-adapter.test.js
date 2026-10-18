@@ -7,7 +7,7 @@ const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
 const {
-    AdapterError, toState, parseDocument, flagMap, mergeStates, buildPayload, expandFiles, parseHeaders, formatOf, run,
+    AdapterError, toState, parseDocument, flagMap, mergeStates, buildPayload, expandFiles, envPatternRegExp, parseEnvMap, parseHeaders, formatOf, run,
 } = require('../adapters/flags/lib');
 const { optionsFromArgs } = require('../adapters/flags/shipscope-flags');
 const { optionsFromInputs, setOutputs } = require('../adapters/flags/action');
@@ -64,6 +64,7 @@ test('formatOf: by file name', () => {
     assert.equal(formatOf('config/flags.prod.json'), 'json');
     assert.equal(formatOf('application-prod.properties'), 'properties');
     for (const name of ['.env', '.env.prod', 'prod.env']) assert.equal(formatOf(name), 'env');
+    for (const name of ['prod.ts', 'flags.mts', 'flags.cts', 'flags.js', 'flags.mjs', 'flags.cjs']) assert.equal(formatOf(name), 'ts');
     assert.throws(() => formatOf('flags.yaml'), /unknown format, name it with --format/);
 });
 
@@ -81,24 +82,30 @@ test('mergeStates: files merge; the same flag with two values is an error naming
     assert.throws(() => mergeStates([{ where: 'a.json', flags: { x: true } }, { where: 'b.json', flags: { x: false } }]), /flag x differs between a\.json and b\.json/);
 });
 
-test('buildPayload: full state of one environment, keys sorted; bad env or key is an error', () => {
-    assert.deepEqual(buildPayload({ env: 'prod', states: { b: { state: 'off' }, a: { state: 'partial', rollout: 5 } }, changedBy: 'ci' }), {
+test('buildPayload: full state of each environment given, in env then key order; bad env or key is an error', () => {
+    assert.deepEqual(buildPayload({ byEnv: { prod: { b: { state: 'off' }, a: { state: 'partial', rollout: 5 } } }, changedBy: 'ci' }), {
         schemaVersion: 2, environments: ['prod'], complete: true, changedBy: 'ci',
         observations: [{ key: 'a', env: 'prod', state: 'partial', rollout: 5 }, { key: 'b', env: 'prod', state: 'off' }],
     });
-    assert.equal(buildPayload({ env: 'qa', states: {}, complete: false }).complete, false);
-    assert.throws(() => buildPayload({ env: 'staging', states: {} }), /environment "staging" must be one of test, qa, prod/);
-    for (const key of ['1a', 'a b', '__proto__', '']) assert.throws(() => buildPayload({ env: 'qa', states: { [key]: { state: 'on' } } }), /is not a valid flag key/);
+    assert.deepEqual(buildPayload({ byEnv: { prod: { a: { state: 'on' } }, test: { a: { state: 'off' } }, qa: {} } }), {
+        schemaVersion: 2, environments: ['test', 'qa', 'prod'], complete: true,
+        observations: [{ key: 'a', env: 'test', state: 'off' }, { key: 'a', env: 'prod', state: 'on' }],
+    });
+    assert.equal(buildPayload({ byEnv: { qa: {} }, complete: false }).complete, false);
+    assert.throws(() => buildPayload({ byEnv: { staging: {} } }), /environment "staging" must be one of test, qa, prod/);
+    assert.throws(() => buildPayload({ byEnv: {} }), /no environment to send/);
+    for (const key of ['1a', 'a b', '__proto__', '']) assert.throws(() => buildPayload({ byEnv: { qa: { [key]: { state: 'on' } } } }), /is not a valid flag key/);
 });
 
 test('expandFiles: plain paths and patterns, sorted; a pattern matching nothing is an error', () => {
     write('config/flags.qa.json', '{}');
     write('config/flags.prod.json', '{}');
     write('config/nested/more.json', '{}');
-    assert.deepEqual(expandFiles(['config/flags.prod.json'], DIR), ['config/flags.prod.json']);
+    assert.deepEqual(expandFiles(['config/flags.prod.json'], DIR), [{ file: 'config/flags.prod.json', env: null }]);
     if (typeof fs.globSync === 'function') {
-        assert.deepEqual(expandFiles(['config/**/*.json', 'config/flags.qa.json'], DIR),
+        assert.deepEqual(expandFiles(['config/**/*.json', 'config/flags.qa.json'], DIR).map((f) => f.file),
             ['config/flags.prod.json', 'config/flags.qa.json', 'config/nested/more.json'].map((p) => p.split('/').join(path.sep)));
+        assert.deepEqual(expandFiles(['config/flags.{env}.json'], DIR).map((f) => f.env), ['prod', 'qa'], '{env} is taken from each path');
     }
     assert.throws(() => expandFiles(['config/missing.json'], DIR), /no file matches config\/missing\.json/);
 });
@@ -170,11 +177,11 @@ test('run: errors are AdapterErrors with the reason', async () => {
 test('command line: options from arguments and environment; --help; exit code 1 with the reason', () => {
     assert.deepEqual(optionsFromArgs(['--env', 'prod', '--file', 'a.json', '--file', 'b/*.json', '--header', 'X-A: 1', '--changes-only', '--value-path', 'enabled'],
         { SHIPSCOPE_URL: 'https://s', SHIPSCOPE_FLAGS_TOKEN: 'shpi_t' }), {
-        env: 'prod', files: ['a.json', 'b/*.json'], url: undefined, headers: { 'X-A': '1' }, format: undefined, path: undefined,
+        env: 'prod', files: ['a.json', 'b/*.json'], envMap: undefined, url: undefined, headers: { 'X-A': '1' }, format: undefined, path: undefined,
         valuePath: 'enabled', prefix: undefined, changedBy: undefined, complete: false, dryRun: false, shipscopeUrl: 'https://s', token: 'shpi_t',
     });
+    assert.deepEqual(optionsFromArgs(['--file', 'f/{env}.ts', '--env-map', 'dev=test,prod=prod', '--env-map', 'uat=qa'], {}).envMap, { dev: 'test', prod: 'prod', uat: 'qa' });
     assert.equal(optionsFromArgs(['--help'], {}), null);
-    assert.throws(() => optionsFromArgs(['--file', 'a.json'], {}), /--env is required/);
     assert.throws(() => optionsFromArgs(['--env', 'qa', '--nope'], {}), AdapterError);
 
     write('flags.json', '{"a":25}');
@@ -191,10 +198,12 @@ test('GitHub Action: inputs as INPUT_* variables, outputs appended to GITHUB_OUT
         'INPUT_COMPLETE': 'true', 'INPUT_DRY-RUN': 'TRUE', 'INPUT_SHIPSCOPE-URL': 'https://s', 'INPUT_TOKEN': 'shpi_t',
     });
     assert.deepEqual(options, {
-        env: 'prod', files: ['config/a.json', 'config/b.json'], url: undefined, headers: {}, format: undefined, path: undefined,
+        env: 'prod', files: ['config/a.json', 'config/b.json'], envMap: undefined, url: undefined, headers: {}, format: undefined, path: undefined,
         valuePath: 'enabled', prefix: undefined, changedBy: undefined, complete: true, dryRun: true, shipscopeUrl: 'https://s', token: 'shpi_t',
     });
     assert.throws(() => optionsFromInputs({ 'INPUT_DRY-RUN': 'yes' }), /input dry-run must be true or false/);
+    assert.deepEqual(optionsFromInputs({ 'INPUT_FILES': 'f/{env}.ts', 'INPUT_ENV-MAP': 'dev=test\nprod=prod' }).envMap, { dev: 'test', prod: 'prod' });
+    assert.equal(optionsFromInputs({ 'INPUT_FILES': 'f/{env}.ts' }).env, undefined);
 
     write('out.txt', '');
     setOutputs({ GITHUB_OUTPUT: path.join(DIR, 'out.txt') }, { flags: 2, changed: 1, removed: 0 });
@@ -207,4 +216,60 @@ test('action.yml declares every input action.js reads and runs action.js', () =>
     const read = [...fs.readFileSync('adapters/flags/action.js', 'utf8').matchAll(/(?:input|lines|flag)\('([a-z-]+)'/g)].map((m) => m[1]);
     for (const name of read) assert.ok(declared.includes(name), `action.yml declares ${name}`);
     assert.match(yml, /using: node24\n {2}main: action\.js/);
+});
+
+test('{env} patterns and env-map: the environment from the path, names outside the map skipped', () => {
+    const re = envPatternRegExp('domains/*/config/flags/{env}.ts');
+    assert.deepEqual(re.exec('domains/charger/config/flags/prod.ts').slice(1), ['prod']);
+    assert.equal(re.exec('domains/charger/nested/config/flags/prod.ts'), null, '* is one directory');
+    assert.deepEqual(envPatternRegExp('**/flags.{env}.json').exec('flags.qa.json').slice(1), ['qa']);
+    assert.deepEqual(parseEnvMap(['dev=test, qa=qa', 'prod = prod']), { dev: 'test', qa: 'qa', prod: 'prod' });
+    assert.equal(parseEnvMap([]), undefined);
+    assert.throws(() => parseEnvMap(['dev']), /"dev" must look like name=env/);
+    assert.throws(() => parseEnvMap(['dev=staging']), /staging must be one of test, qa, prod/);
+});
+
+test('run, an Nx monorepo: domains/*/config/flags/{env}.ts, one message for every mapped environment', async () => {
+    write('domains/charger/config/flags/prod.ts', `import { FeatureFlags } from '@shared/flags';
+// Production
+export const flags: FeatureFlags = {
+  newCheckout: true,
+  'charger-map': false, // map view
+  rolloutSearch: 25,
+} as const;
+`);
+    write('domains/charger/config/flags/dev.ts', 'export default { newCheckout: true, rolloutSearch: 100 };\n');
+    write('domains/charger/config/flags/local.ts', 'export const flags = { newCheckout: false };\n');
+    write('domains/billing/config/flags/prod.ts', 'const base = { invoicesV2: false };\nexport const billingFlags = { ...base, paypal: true };\n');
+    const lines = [];
+    const { payload } = await run({
+        files: ['domains/*/config/flags/{env}.ts'], envMap: { dev: 'test', qa: 'qa', prod: 'prod' }, dryRun: true,
+    }, { cwd: DIR, log: (l) => lines.push(l) });
+    assert.deepEqual(payload.environments, ['test', 'prod'], 'qa has no file: not covered, left alone');
+    assert.deepEqual(payload.observations.map((o) => `${o.env}:${o.key}=${o.state}${o.rollout ? o.rollout : ''}`), [
+        'test:newCheckout=on', 'test:rolloutSearch=on',
+        'prod:charger-map=off', 'prod:invoicesV2=off', 'prod:newCheckout=on', 'prod:paypal=on', 'prod:rolloutSearch=partial25',
+    ]);
+    assert.match(lines[0], /Skipped domains\/charger\/config\/flags\/local\.ts: "local" is not in env-map/);
+    assert.match(lines.at(-1), /Dry run: 5 flags for test, prod, nothing sent\./);
+
+    // Default map: test, qa and prod only, so dev.ts and local.ts are skipped.
+    const { payload: byDefault } = await run({ files: ['domains/*/config/flags/{env}.ts'], dryRun: true }, { cwd: DIR, log: quiet });
+    assert.deepEqual(byDefault.environments, ['prod']);
+});
+
+test('run, {env} misuse and computed values are errors with the reason', async () => {
+    write('f/prod.ts', 'export const flags = { a: true, b: process.env.B === "1" };\n');
+    write('g/prod.ts', 'export const a = { x: true };\nexport const b = { y: true };\n');
+    write('h/prod.json', '{"a":true}');
+    const io = { cwd: DIR, log: quiet };
+    await assert.rejects(run({ files: ['f/{env}.ts'], dryRun: true }, io), /f\/prod\.ts, flag b: "process\.env\.B === "1"" is not written out as a value/);
+    await assert.rejects(run({ files: ['g/{env}.ts'], dryRun: true }, io), /several objects \(a, b\); name the one with the flags in path/);
+    assert.deepEqual((await run({ files: ['g/{env}.ts'], path: 'b', dryRun: true }, io)).payload.observations, [{ key: 'y', env: 'prod', state: 'on' }]);
+    await assert.rejects(run({ env: 'prod', files: ['h/{env}.json'], dryRun: true }, io), /either an environment or \{env\}/);
+    await assert.rejects(run({ files: ['h/{env}.json', 'h/prod.json'], dryRun: true }, io), /\{env\} in every file pattern or in none/);
+    await assert.rejects(run({ files: ['h/prod.json'], dryRun: true }, io), /environment is missing/);
+    await assert.rejects(run({ files: ['h/{env}.json'], envMap: { dev: 'test' }, dryRun: true }, io), /no file is for a mapped environment/);
+    write('h/qa.json', '{"a":false}');
+    await assert.rejects(run({ files: ['h/{env}.json'], envMap: { qa: 'prod', prod: 'prod' }, dryRun: true }, io), /flag a differs between h\/prod\.json and h\/qa\.json/);
 });

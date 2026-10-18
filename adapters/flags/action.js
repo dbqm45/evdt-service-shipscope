@@ -3,7 +3,7 @@
  * lib.js's run(), the same as the command line.
  */
 const fs = require('fs');
-const { AdapterError, parseHeaders, run } = require('./lib');
+const { AdapterError, parseEnvMap, parseHeaders, run } = require('./lib');
 
 /**
  * @param {NodeJS.ProcessEnv} env
@@ -19,7 +19,8 @@ function optionsFromInputs(env) {
         return v === 'true';
     };
     return {
-        env: input('environment'), files: lines('files'), url: input('url') || undefined, headers: parseHeaders(lines('url-headers')),
+        env: input('environment') || undefined, files: lines('files'), envMap: parseEnvMap(lines('env-map')), url: input('url') || undefined,
+        headers: parseHeaders(lines('url-headers')),
         format: input('format') || undefined, path: input('path') || undefined, valuePath: input('value-path') || undefined,
         prefix: input('prefix') || undefined, changedBy: input('changed-by') || undefined, complete: flag('complete', true),
         dryRun: flag('dry-run', false), shipscopeUrl: input('shipscope-url'), token: input('token'),
@@ -37,7 +38,7 @@ if (require.main === module) {
         try {
             const { payload, result } = await run(optionsFromInputs(process.env), { cwd: process.env.GITHUB_WORKSPACE || process.cwd() });
             setOutputs(process.env, {
-                flags: payload.observations.length, changed: result ? result.changed : 0, removed: result ? result.removed : 0,
+                flags: new Set(payload.observations.map((o) => o.key)).size, changed: result ? result.changed : 0, removed: result ? result.removed : 0,
             });
         } catch (err) {
             console.log(`::error title=ShipScope flags::${String(err.message).replace(/%/g, '%25').replace(/\r?\n/g, '%0A')}`);
