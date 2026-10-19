@@ -1,0 +1,18 @@
+# Keeps the actions in .github/workflows/ up to date. They are pinned to a commit SHA with the version in a comment
+# (design-docs/SECURITY.md): Dependabot reads that comment, bumps SHA and comment together and opens a PR, so every
+# new action code is seen in a review before it runs. Once a month, all actions in one PR: each PR's CI costs
+# minutes, and the repository is private.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      actions:
+        patterns: ['*']
+    # Conventional Commits PR title (the Tests workflow checks it): "ci(deps): bump …".
+    commit-message:
+      prefix: ci
+      include: scope
+    open-pull-requests-limit: 2

@@ -3,25 +3,10 @@
 Dług techniczny i otwarte sprawy, które nie są nowymi funkcjami (te są w [FEATURES.pl.md](FEATURES.pl.md)).
 Każdy punkt sprawdzony z kodem 2026-10-17.
 
-## Akcje przypięte do tagów, nie do commit SHA
-
-Workflowy (`test.yml`, `server-test.yml`, `release.yml`) używają `actions/checkout@v7` i
-`actions/setup-node@v4`. Tag można przesunąć na inny commit bez ostrzeżenia, a `release.yml` ma prawo zapisu do
-`main` i tworzy wydania. Przypiąć do SHA z komentarzem wersji (`uses: actions/checkout@<40-znakowy-sha> # v7.x.y`)
-i dodać `.github/dependabot.yml`, który będzie je podbijał:
-
-```yaml
-version: 2
-updates:
-  - package-ecosystem: github-actions
-    directory: /
-    schedule:
-      interval: weekly
-```
-
 ## Testy — czego jeszcze brakuje poza kodem
 
-`test.yml` (`npm test`) i `server-test.yml` (serwer na prawdziwym Postgresie) działają na PR i na `main`.
+`test.yml` (`npm test`) i `server-test.yml` (serwer na prawdziwym Postgresie) działają na PR, a `main` testuje job
+`verify` w `release.yml`.
 Brakuje:
 
 - reguły ochrony gałęzi `main`, która wymaga obu zielonych checków (ustawienia repozytorium);
