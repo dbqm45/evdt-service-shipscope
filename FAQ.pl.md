@@ -148,7 +148,7 @@ adapter by wysłał.
        runs-on: ubuntu-latest
        steps:
          - uses: actions/checkout@v7
-         - uses: dbqm45/evdt-service-shipscope/adapters/flags@v0.2.7   # albo nowszy tag wydania
+         - uses: dbqm45/evdt-service-shipscope/adapters/flags@v0.2.8   # albo nowszy tag wydania
            with:
              environment: prod
              files: config/flags.prod.json
@@ -184,6 +184,65 @@ Na lokalnym serwerze (`npm run dev`) użyj wiersza poleceń zamiast Action, z ko
 `SHIPSCOPE_URL=http://localhost:3000 SHIPSCOPE_FLAGS_TOKEN=shpi_... node adapters/flags/shipscope-flags.js --env prod
 --file <ścieżka do innego repozytorium>/config/flags.prod.json`. Opcje: `adapters/flags/README.md`; więcej przykładów:
 `ONBOARDING.pl.md`, „Wysyłanie feature flag”.
+
+### Jak wygląda kompletny workflow?
+
+Plik do skopiowania do innego repozytorium (wersja adaptera **v0.2.8**). Wysyła flagi wszystkich środowisk po każdym
+merge'u, który je zmienia, i można go uruchomić ręcznie, domyślnie na sucho:
+
+```yaml
+# .github/workflows/shipscope-flags.yml
+name: ShipScope flags
+
+on:
+  push:
+    branches: [main]
+    paths: ['config/flags/**']           # tylko gdy zmieniają się flagi
+  workflow_dispatch:                     # ręcznie, z zakładki Actions
+    inputs:
+      dry-run:
+        description: Wypisz wiadomość, nic nie wysyłaj
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: shipscope-flags                 # jedno uruchomienie naraz, po kolei
+  cancel-in-progress: false
+
+jobs:
+  flags:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dbqm45/evdt-service-shipscope/adapters/flags@v0.2.8
+        with:
+          shipscope-url: ${{ vars.SHIPSCOPE_URL }}
+          token: ${{ secrets.SHIPSCOPE_FLAGS_TOKEN }}
+          files: config/flags/{env}.json        # config/flags/test.json, qa.json, prod.json, …
+          env-map: dev=test, qa=qa, prod=prod   # dev.json to test; inne pliki (local.json) są pomijane
+          changed-by: ${{ github.actor }}
+          dry-run: ${{ github.event_name == 'workflow_dispatch' && inputs.dry-run }}
+```
+
+Potrzebuje zmiennej `SHIPSCOPE_URL` i sekretu `SHIPSCOPE_FLAGS_TOKEN` (w repozytorium: Settings → Secrets and
+variables → Actions), a gdy repozytorium ShipScope jest prywatne — dostępu do jego Actions (poprzednie pytanie, krok 1).
+Push do `main` zawsze wysyła; uruchomienie ręczne wysyła tylko z odznaczonym „dry-run”.
+
+Inne układy zmieniają tylko linie w `with:`:
+
+| Twoje flagi | Zamiast `files` / `env-map` |
+| --- | --- |
+| Monorepo Nx, `domains/<domena>/config/flags/{local,dev,test,qa,prod}.ts` | `files: domains/*/config/flags/{env}.ts`, `env-map: dev=test, qa=qa, prod=prod` (i `paths: ['domains/*/config/flags/**']`) |
+| Plik YAML na środowisko z listą flag | `files: config/flags/{env}.yaml`, `path: features`, `rollout-path: rollout` |
+| Jeden plik dla jednego środowiska | `environment: prod`, `files: config/flags.prod.json` (bez `env-map`) |
+| Flagi przełączane na żywo pod adresem URL | `environment: prod`, `url: https://…/flags`; wyzwalacz `schedule: [{ cron: '*/15 * * * *' }]` zamiast `push` |
+
+Żeby wysyłać przy każdym wdrożeniu, wstaw sam krok adaptera na końcu joba wdrażającego, z `environment:` i plikiem tego
+środowiska. Przypnij wersję (`@v0.2.8`); nowsze wydanie ShipScope wchodzi po zmianie tagu.
 
 ## Jira
 
