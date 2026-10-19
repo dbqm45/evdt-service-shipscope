@@ -45,7 +45,8 @@ potokach, z ich tokenami ShipScope — szkoda wychodzi poza to repo.
 - **Złego kodu w wersji, którą sami zatwierdzimy.** PR Dependabota trzeba przeczytać, nie mergować automatycznie.
 - **Naszych własnych tagów.** To osobna sprawa: ruleset na `refs/tags/v*` (Settings → Rules → Rulesets) blokuje
   przesuwanie i usuwanie tagów wydań. Chroni tych, którzy używają naszego adaptera — przypięcie u nas tego nie robi.
-  Zespoły, które chcą tej samej pewności po swojej stronie, mogą przypiąć adapter do SHA zamiast do tagu.
+  Uwaga: w tym repo rulesety dziś nie działają (niżej, „Rulesety a plan GitHub”). Zespoły, które chcą tej samej
+  pewności po swojej stronie, mogą przypiąć adapter do SHA zamiast do tagu.
 
 ### Ocena
 
@@ -63,10 +64,43 @@ Dependabota miesięcznie (kilka minut Actions na jego testy).
 - Opcjonalnie, w ustawieniach repozytorium (Settings → Actions → General) można wymusić, żeby workflowy używały
   wyłącznie akcji przypiętych do SHA — wtedy reguła nie zależy od testu. Do zrobienia ręcznie.
 
+## Rulesety a plan GitHub
+
+**Stan (sprawdzony 2026-10-19):** rulesety na `main` i tagi `v*` są zapisane w ustawieniach, ale **GitHub ich nie
+egzekwuje**. Repo jest prywatne, a konto `dbqm45` jest na darmowym planie; rulesety i ochrona gałęzi działają tam
+tylko w repozytoriach publicznych.
+
+Jak to sprawdzono:
+
+- API rulesetów (`GET /repos/dbqm45/evdt-service-shipscope/rulesets`) i reguł gałęzi
+  (`GET …/rules/branches/main`) odpowiada 403: *„Upgrade to GitHub Pro or make this repository public to enable this
+  feature.”* To samo zwraca klasyczna ochrona gałęzi (`GET …/branches/main/protection`).
+- `GET …/branches/main` podaje `protected: false` — gdyby ruleset obejmował `main`, byłoby `true`.
+- Próba wypchnięcia tymczasowego tagu `v*` nic nie rozstrzygnęła: odrzuciło ją proxy sesji Claude (pozwala pisać
+  tylko do jej gałęzi), nie ruleset.
+
+Co to znaczy: każdy z prawem zapisu do repo może dziś przesunąć albo usunąć tag wydania (`adapters/flags@vX.Y.Z`
+w innych repo wykona wtedy inny kod) i zrobić force-push na `main`. Przypięcie akcji do SHA (wyżej) tego nie
+zmienia — chroni nas przed cudzymi tagami, nie innych przed naszymi.
+
+Możliwości:
+
+1. **GitHub Pro** (ok. 4 USD/mies. dla konta osobistego) — rulesety i ochrona gałęzi w prywatnych repo zaczynają
+   działać bez zmian w kodzie; przy okazji pula minut Actions rośnie z 2000 do 3000. Rekomendowane, jeśli adapter
+   trafia do innych zespołów.
+2. **Repo publiczne** — rulesety i nielimitowane minuty Actions za darmo, ale kod staje się widoczny dla wszystkich
+   (dane klientów są w bazie, nie w repo). Decyzja biznesowa, nie techniczna.
+3. **Bez zmiany planu** — zespoły używające adaptera przypinają go do SHA commitu zamiast do tagu (jak my akcje
+   GitHuba), a prawo zapisu do repo ma tylko wąski, zaufany krąg osób.
+
+Po zmianie planu albo widoczności: powtórzyć dwa pierwsze sprawdzenia (API odpowie listą rulesetów, `protected`
+będzie `true`) i zaktualizować tę sekcję.
+
 ## Do zrobienia ręcznie (ustawienia, nie kod)
 
-- Ruleset na tagi `v*`: blokada tworzenia, przesuwania i usuwania poza administratorami.
-- Ruleset na `main`: blokada force-push i usuwania gałęzi.
+- Rulesety na tagi `v*` (blokada tworzenia, przesuwania i usuwania poza administratorami) i na `main` (blokada
+  force-push i usuwania gałęzi): ustawione, ale **nie egzekwowane** do czasu przejścia na GitHub Pro albo
+  upublicznienia repo (sekcja wyżej).
 - Limit wydatków na Actions ($0) i pomiar zużycia (Settings → Billing).
 - Uprawnienia produkcyjnej GitHub App: tylko odczyt `actions`, `contents`, `deployments`, `metadata` (serwer i tak
   prosi o tokeny tylko z tymi uprawnieniami, `TOKEN_PERMISSIONS` w `server/lib/github-app.js`).
