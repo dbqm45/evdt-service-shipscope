@@ -52,8 +52,8 @@ localhost.
 - **Module boundaries** (`scripts/lib/module-boundaries.js`, `node scripts/check-module-boundaries.js`, tested in
   `test/module-boundaries.test.js`): `scripts/` never requires from `server/` and vice versa; `adapters/` requires
   from neither; `docs/app-*.js` never calls `require()`.
-- Workflows: `test.yml` and `server-test.yml` on PRs (a newer push cancels the older run), `pr-title.yml` (skipped
-  when an edit leaves the title), `release.yml` on every merge to `main`, whose `verify` job is main's only test run
+- Workflows: `test.yml` (PR title check + root tests in one job; a title edit re-checks only the title, a description
+  edit is skipped) and `server-test.yml` on PRs (a newer push cancels the older run), `release.yml` on every merge to `main`, whose `verify` job is main's only test run
   (both suites) and gates the tag. Each job bills at least a minute, so small steps share a job.
 
 ## Tests — `node:test`, not Jest
@@ -80,7 +80,7 @@ localhost.
 One SemVer number for the whole application, in `package.json`, `server/package.json` and
 `server/package-lock.json` (kept equal, `test/release.test.js`), shown in `GET /health`. Commits and PR titles
 follow Conventional Commits (`feat(SHP): ...`; PRs are squash-merged, so the title counts), checked by
-`.github/workflows/pr-title.yml` and the optional `.githooks/commit-msg`. After each merge to `main`,
+the `Tests` workflow (`.github/workflows/test.yml`) and the optional `.githooks/commit-msg`. After each merge to `main`,
 `release.yml` runs `scripts/release.js --ci`, commits `chore(release): X.Y.Z` with the versions and a
 `CHANGELOG.md`/`CHANGELOG.pl.md` entry, tests that commit, tags `vX.Y.Z` and creates a GitHub Release
 (`scripts/release-notes.js`, rules in `scripts/lib/conventional.js`). Never edit the version or a `## [X.Y.Z]`

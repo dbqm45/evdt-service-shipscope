@@ -36,7 +36,7 @@ are squash-merged, so the PR title becomes the commit on `main` and decides the 
 
 Checks:
 
-- **CI**: the `PR title` workflow (`.github/workflows/pr-title.yml`) rejects a non-conforming PR title, also after
+- **CI**: the `Tests` workflow (`.github/workflows/test.yml`) rejects a non-conforming PR title, also after
   the title is edited.
 - **Locally** (optional, once per clone): `npm run hooks:install` enables the `commit-msg` hook from `.githooks/`.
   Check a single message with `npm run lint:commit -- "feat(SHP): …"`.
