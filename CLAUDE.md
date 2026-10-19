@@ -6,7 +6,8 @@ history of how they came about is in git and `CHANGELOG.md`. Related documents:
 - `docs/GLOSSARY.md` — terms that have more than one name (component / tracked repo, PI / increment, source / slot).
 - `design-docs/REPORT_ARCH.md` — architecture and DDD analysis (2026-10-17, written while the file-based sync was
   still here); `ADR-001` (flags are pushed from outside), `ADR-002` (the three memory policies);
-  `FEATURES(.pl).md` — undecided ideas; `TODO.md` — technical debt.
+  `FEATURES(.pl).md` — undecided ideas; `TODO.md` — technical debt; `SECURITY.md` — security decisions (actions
+  pinned to a commit SHA, Dependabot) and the settings still to set by hand.
 - `FAQ.md` — how each number and badge on the dashboard is computed; `ONBOARDING.md` — setting up a workspace;
   `server/README.md` — routes, security model, local setup; `RELEASING.md` — versions.
 
@@ -52,6 +53,8 @@ localhost.
 - **Module boundaries** (`scripts/lib/module-boundaries.js`, `node scripts/check-module-boundaries.js`, tested in
   `test/module-boundaries.test.js`): `scripts/` never requires from `server/` and vice versa; `adapters/` requires
   from neither; `docs/app-*.js` never calls `require()`.
+- Workflow actions are pinned to a full commit SHA with `# vX.Y.Z` (`test/workflows.test.js`); Dependabot
+  (`.github/dependabot.yml`) bumps them monthly in one PR. Why: `design-docs/SECURITY.md`.
 - Workflows: `test.yml` (PR title check + root tests in one job; a title edit re-checks only the title, a description
   edit is skipped) and `server-test.yml` on PRs (a newer push cancels the older run), `release.yml` on every merge to `main`, whose `verify` job is main's only test run
   (both suites) and gates the tag. Each job bills at least a minute, so small steps share a job.
