@@ -55,7 +55,7 @@ function createAppJwt({ appId, privateKey, now = Date.now() }) {
     return `${unsigned}.${signature}`;
 }
 
-async function githubFetch(fetchFn, path, { token, method = 'GET' }) {
+async function githubFetch(fetchFn, path, { token, method = 'GET', body }) {
     let res;
     try {
         res = await fetchFn(`${API}${path}`, {
@@ -66,7 +66,9 @@ async function githubFetch(fetchFn, path, { token, method = 'GET' }) {
                 authorization: `Bearer ${token}`,
                 'user-agent': 'shipscope',
                 'x-github-api-version': '2022-11-28',
+                ...(body === undefined ? {} : { 'content-type': 'application/json' }),
             },
+            ...(body === undefined ? {} : { body: JSON.stringify(body) }),
         });
     } catch (err) {
         throw new GitHubApiError(`${method} ${path.split('?')[0]} failed: ${err.name === 'TimeoutError' ? 'timed out' : err.message}`, 0);
@@ -126,15 +128,38 @@ async function userCanAccessInstallation({ accessToken, installationId, fetch: f
 }
 
 /**
- * A short-lived installation access token (about an hour on GitHub's side). Callers keep it in memory for
- * the duration of one operation; it is never stored.
+ * What ShipScope reads with an installation token, and nothing more: deployments and their statuses, releases,
+ * tags, commits, compares, trees and version files (contents), workflow runs for "manual" (actions), and the
+ * repository list (metadata). The token is cut down to these even when the installation was granted more, so a
+ * leaked token can only read.
+ */
+const TOKEN_PERMISSIONS = { actions: 'read', contents: 'read', deployments: 'read', metadata: 'read' };
+
+/**
+ * A short-lived installation access token (about an hour on GitHub's side), limited to TOKEN_PERMISSIONS (read
+ * only). Callers keep it in memory for the duration of one operation; it is never stored. GitHub refuses (422) a
+ * permission the installation was not granted, e.g. Actions on an installation made before ShipScope asked for
+ * it: then the token asks for the ones the installation has, still read only.
  *
  * @param {{ app: { appId: string, privateKey: import('crypto').KeyObject }, installationId: number, fetch?: typeof fetch }} input
  * @returns {Promise<string>}
  * @throws {GitHubApiError}
  */
 async function createInstallationToken({ app, installationId, fetch: fetchFn = fetch }) {
-    const body = await githubFetch(fetchFn, `/app/installations/${installationId}/access_tokens`, { token: createAppJwt(app), method: 'POST' });
+    const mint = (permissions) => githubFetch(fetchFn, `/app/installations/${installationId}/access_tokens`, {
+        token: createAppJwt(app), method: 'POST', body: { permissions },
+    });
+    let body;
+    try {
+        body = await mint(TOKEN_PERMISSIONS);
+    } catch (err) {
+        if (!(err instanceof GitHubApiError) || err.status !== 422) throw err;
+        const installation = await githubFetch(fetchFn, `/app/installations/${installationId}`, { token: createAppJwt(app) });
+        const granted = installation?.permissions && typeof installation.permissions === 'object' ? installation.permissions : {};
+        const permissions = Object.fromEntries(Object.entries(TOKEN_PERMISSIONS).filter(([name]) => typeof granted[name] === 'string'));
+        if (!Object.keys(permissions).length) throw err;
+        body = await mint(permissions);
+    }
     if (typeof body?.token !== 'string' || !body.token) throw new GitHubApiError('access token response has no token', 502);
     return body.token;
 }
@@ -167,6 +192,7 @@ async function listInstallationRepos({ app, installationId, fetch: fetchFn = fet
 }
 
 module.exports = {
+    TOKEN_PERMISSIONS,
     createAppJwt,
     createInstallationToken,
     githubGet,

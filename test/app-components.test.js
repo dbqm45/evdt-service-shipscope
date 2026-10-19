@@ -50,11 +50,29 @@ test('joinMeta drops falsy parts and separates the rest', () => {
     assert.equal(run(`joinMeta(['a', null, 'b'])`), 'a<span class="deploy-meta-dot"></span>b');
 });
 
-test('ExternalLink escapes the href and can stop click propagation', () => {
-    const out = run(`ExternalLink({ href: 'x"y', stopClick: true, children: 'go' })`);
+test('ExternalLink escapes the href and can stop click propagation, without an inline handler', () => {
+    const out = run(`ExternalLink({ href: 'https://example.com/a"b', stopClick: true, children: 'go' })`);
 
-    assert.match(out, /href="x&quot;y"/);
-    assert.match(out, /onclick="event.stopPropagation\(\)"/);
+    assert.match(out, /href="https:\/\/example\.com\/a&quot;b"/);
+    assert.match(out, / data-stop-click/);
+    assert.doesNotMatch(out, /onclick/);
+    assert.doesNotMatch(run(`ExternalLink({ href: 'https://example.com/', children: 'go' })`), /data-stop-click/);
+});
+
+test('ExternalLink links only https URLs without user info; anything else is plain text', () => {
+    for (const href of ['https://github.com/acme/web/actions/runs/1', 'https://acme.atlassian.net/browse/ABC-1?x=1#y', 'https://ghe.example:8443/a']) {
+        assert.match(run(`ExternalLink({ href: ${JSON.stringify(href)}, children: 'go' })`), /^<a /, href);
+    }
+    for (const href of ['javascript:alert(1)', 'JAVASCRIPT:alert(1)', ' javascript:alert(1)', 'data:text/html,x', 'http://example.com/',
+        '//evil.example/', '/relative', '#', 'https://github.com@evil.example/login', 'https://user:pw@evil.example/', 'https://', 'https:\\\\evil.example']) {
+        assert.equal(run(`ExternalLink({ href: ${JSON.stringify(href)}, children: 'go' })`), '<span>go</span>', href);
+    }
+});
+
+test('the drift modal closes through data-close-dialog; no component uses an inline handler', () => {
+    assert.match(run(`DriftModalContent({ headTitle: 'Diff', sections: [] })`), /<button[^>]*class="drift-modal-close"[^>]*data-close-dialog>/);
+    const source = fs.readFileSync(path.join(__dirname, '..', 'docs', 'app-components.js'), 'utf8');
+    assert.doesNotMatch(source, /\son[a-z]+="/, 'no inline event handler attributes in the markup');
 });
 
 test('ExternalLink without an href is the same text, unlinked', () => {

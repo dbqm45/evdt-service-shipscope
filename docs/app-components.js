@@ -52,15 +52,22 @@ function MonoText({ text }){
     return html`<span class="mono">${text}</span>`;
 }
 
-/** Same `<a target=_blank>` everywhere; `stopClick` keeps a click from also triggering the clickable row/card
- *  the link sits in. Without an `href` (a Jira key before Jira is connected) the same text, unlinked. */
+/** True for an absolute `https://` URL whose host part has no user info: escaping alone would still let
+ *  `javascript:…` or `https://github.com@evil.example/` through as a working link. */
+function isSafeHttpsUrl(href){
+    return typeof href === 'string' && /^https:\/\/[^\s\/?#\\@]+(?:[\/?#][^\s]*)?$/i.test(href);
+}
+
+/** Same `<a target=_blank>` everywhere; `stopClick` (data-stop-click, handled in app-main.js: no inline handlers,
+ *  for the page's Content-Security-Policy) keeps a click from also triggering the clickable row/card the link sits
+ *  in. Without a safe `href` (a Jira key before Jira is connected, or anything but https) the same text, unlinked. */
 function ExternalLink({ href, cls = '', stopClick = false, title = '', children }){
     const classAttr = cls ? html` class="${cls}"` : '';
     const titleAttr = title ? html` title="${title}"` : '';
-    if (!href) {
+    if (!isSafeHttpsUrl(href)) {
         return html`<span${classAttr}${titleAttr}>${children}</span>`;
     }
-    const clickAttr = stopClick ? raw(' onclick="event.stopPropagation()"') : '';
+    const clickAttr = stopClick ? raw(' data-stop-click') : '';
 
     return html`<a${classAttr} href="${href}" target="_blank" rel="noopener noreferrer"${clickAttr}${titleAttr}>${children}</a>`;
 }
@@ -342,7 +349,7 @@ function DriftModalSection({ title, counts = '', paths = [], more = 0, text, cls
 /** `sections` are `DriftModalSection` props. */
 function DriftModalContent({ headTitle, component = '', sections }){
     return html`
-        <div class="drift-modal-head"><h3>${raw(ICONS.warn)} <span>${headTitle}${component ? html` <span class="drift-modal-service">${component}</span>` : ''}</span></h3><button type="button" class="drift-modal-close" aria-label="Close" onclick="this.closest('dialog').close()">×</button></div>
+        <div class="drift-modal-head"><h3>${raw(ICONS.warn)} <span>${headTitle}${component ? html` <span class="drift-modal-service">${component}</span>` : ''}</span></h3><button type="button" class="drift-modal-close" aria-label="Close" data-close-dialog>×</button></div>
         ${sections.map(DriftModalSection)}`;
 }
 

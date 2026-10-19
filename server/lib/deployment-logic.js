@@ -46,16 +46,32 @@ function computeDeployDurationMs(statuses) {
 }
 
 /**
+ * The deploy's workflow run link, only when it is one on GitHub for this very repository. `log_url` is set by
+ * whoever creates the deployment status (anyone with deployments:write on the repo), and the dashboard turns it
+ * into a link: anything else (another host, `javascript:`, `https://github.com@evil.example/`) is dropped.
+ *
+ * @param {unknown} url
+ * @param {string} fullName owner/name of the repository the deployment belongs to
+ * @returns {string|null}
+ */
+function trustedRunUrl(url, fullName) {
+    if (typeof url !== 'string' || typeof fullName !== 'string') return null;
+    const match = /^https:\/\/github\.com\/([^/?#@\s]+\/[^/?#@\s]+)\/actions\/runs\/\d+(?:\/(?:job|attempts)\/\d+)?\/?(?:[?#][^\s]*)?$/.exec(url);
+    return match && match[1].toLowerCase() === fullName.toLowerCase() ? url : null;
+}
+
+/**
  * Turns fetched deployments + statuses into an ordered plan.
  * - unknown environment: permanent skip;
  * - no terminal status yet: `blockedIds` (the cursor must not pass it), unless older than stuckMaxAgeHours,
  *   then a permanent skip so one abandoned pipeline can't hold the cursor back forever;
  * - otherwise a plan entry, sorted by status time, with `previousSha` = the previous successful deploy's
- *   sha on the same environment within this batch (the caller seeds it from the database for the first).
+ *   sha on the same environment within this batch (the caller seeds it from the database for the first);
+ *   its `workflowRunUrl` is the status's `log_url` only when trustedRunUrl() accepts it for `fullName`.
  *
  * @returns {{ plan: object[], blockedIds: number[], skipped: Array<{ id: number, reason: 'environment'|'stuck' }> }}
  */
-function buildDeploymentPlan(deployments, statusesById, { now = Date.now(), stuckMaxAgeHours, previousShaByEnv = {} }) {
+function buildDeploymentPlan(deployments, statusesById, { now = Date.now(), stuckMaxAgeHours, previousShaByEnv = {}, fullName = null }) {
     const withEnv = [];
     const blockedIds = [];
     const skipped = [];
@@ -79,7 +95,7 @@ function buildDeploymentPlan(deployments, statusesById, { now = Date.now(), stuc
             environment,
             status,
             statusCreatedAt: latest.created_at,
-            workflowRunUrl: latest.log_url || null,
+            workflowRunUrl: trustedRunUrl(latest.log_url, fullName),
             durationMs: computeDeployDurationMs(statuses),
         });
     }
@@ -130,6 +146,7 @@ module.exports = {
     extractCommitType,
     pickLatestStatus,
     computeDeployDurationMs,
+    trustedRunUrl,
     buildDeploymentPlan,
     computeNextCursor,
     issuesFromMessages,

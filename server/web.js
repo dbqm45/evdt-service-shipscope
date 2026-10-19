@@ -34,11 +34,27 @@ const SESSION_COOKIE = 'sid';
 // routes/auth.js (reads it in the callback) — the only cookie genuinely shared across two route files.
 const LINK_COOKIE = 'gh_link';
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+// The pages (dashboard, settings, start, invitation) load scripts only from this server, and none inline: an
+// escaping slip in the markup can then not run script. Inline style attributes stay allowed (bar widths and the
+// like are set from data); fonts come from Google Fonts; fetch() goes only to this server.
+const CONTENT_SECURITY_POLICY = [
+    "default-src 'self'",
+    "script-src 'self'",
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+    "font-src 'self' https://fonts.gstatic.com",
+    "img-src 'self' data:",
+    "connect-src 'self'",
+    "object-src 'none'",
+    "base-uri 'none'",
+    "form-action 'self'",
+    "frame-ancestors 'none'",
+].join('; ');
 const DASHBOARD_HEADERS = {
     'cache-control': 'no-cache',
     'x-content-type-options': 'nosniff',
     'x-frame-options': 'DENY',
     'referrer-policy': 'same-origin',
+    'content-security-policy': CONTENT_SECURITY_POLICY,
 };
 const STATE_TTL_SECONDS = 600;
 const POST_LOGIN_REDIRECT = '/'; // which redirects on to the user's first tenant's dashboard
