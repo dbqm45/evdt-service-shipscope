@@ -143,7 +143,7 @@ Start with a dry run: it needs no ShipScope, no token, and shows the exact messa
        runs-on: ubuntu-latest
        steps:
          - uses: actions/checkout@v7
-         - uses: dbqm45/evdt-service-shipscope/adapters/flags@v0.2.7   # or a newer release tag
+         - uses: dbqm45/evdt-service-shipscope/adapters/flags@v0.2.8   # or a newer release tag
            with:
              environment: prod
              files: config/flags.prod.json
@@ -178,6 +178,65 @@ Against a local server (`npm run dev`), use the command line instead of the Acti
 repository: `SHIPSCOPE_URL=http://localhost:3000 SHIPSCOPE_FLAGS_TOKEN=shpi_... node adapters/flags/shipscope-flags.js
 --env prod --file <path to the other repository>/config/flags.prod.json`. Options: `adapters/flags/README.md`;
 more examples: `ONBOARDING.md`, "Sending feature flags".
+
+### What does a complete workflow look like?
+
+A file to copy into the other repository (adapter version **v0.2.8**). It sends the flags of every environment after
+each merge that changes them, and can be started by hand, by default as a dry run:
+
+```yaml
+# .github/workflows/shipscope-flags.yml
+name: ShipScope flags
+
+on:
+  push:
+    branches: [main]
+    paths: ['config/flags/**']           # only when the flags change
+  workflow_dispatch:                     # by hand, from the Actions tab
+    inputs:
+      dry-run:
+        description: Print the message, send nothing
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: shipscope-flags                 # one run at a time, in order
+  cancel-in-progress: false
+
+jobs:
+  flags:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dbqm45/evdt-service-shipscope/adapters/flags@v0.2.8
+        with:
+          shipscope-url: ${{ vars.SHIPSCOPE_URL }}
+          token: ${{ secrets.SHIPSCOPE_FLAGS_TOKEN }}
+          files: config/flags/{env}.json        # config/flags/test.json, qa.json, prod.json, …
+          env-map: dev=test, qa=qa, prod=prod   # dev.json is test; other files (local.json) are skipped
+          changed-by: ${{ github.actor }}
+          dry-run: ${{ github.event_name == 'workflow_dispatch' && inputs.dry-run }}
+```
+
+It needs the variable `SHIPSCOPE_URL` and the secret `SHIPSCOPE_FLAGS_TOKEN` (repository Settings → Secrets and
+variables → Actions), and, when the ShipScope repository is private, access to its Actions (previous question, step 1).
+A push to `main` always sends; a manual run sends only with "dry-run" unticked.
+
+Other layouts change only the `with:` lines:
+
+| Your flags | Instead of `files` / `env-map` |
+| --- | --- |
+| Nx monorepo, `domains/<domain>/config/flags/{local,dev,test,qa,prod}.ts` | `files: domains/*/config/flags/{env}.ts`, `env-map: dev=test, qa=qa, prod=prod` (and `paths: ['domains/*/config/flags/**']`) |
+| One YAML file per environment with a list of flags | `files: config/flags/{env}.yaml`, `path: features`, `rollout-path: rollout` |
+| One file for one environment | `environment: prod`, `files: config/flags.prod.json` (no `env-map`) |
+| Flags switched live at a URL | `environment: prod`, `url: https://…/flags`; trigger `schedule: [{ cron: '*/15 * * * *' }]` instead of `push` |
+
+To send with each deploy instead, put only the adapter step at the end of the deploy job, with `environment:` and that
+environment's file. Pin the version (`@v0.2.8`); a newer ShipScope release is picked up by changing the tag.
 
 ## Jira
 
