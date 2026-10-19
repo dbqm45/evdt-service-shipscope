@@ -7,6 +7,12 @@ dashboard, not a published package), so entries are grouped by date instead. See
 ShipScope is, `CLAUDE.md` for the technical reference, and `FAQ.md` for how specific numbers/badges are
 calculated.
 
+## [0.2.9] - 2026-10-19
+
+### Fixed
+
+- **SHP:** link only safe URLs, add a CSP and read-only GitHub tokens (#53)
+
 ## [0.2.8] - 2026-10-18
 
 ### Added
