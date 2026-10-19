@@ -52,7 +52,9 @@ localhost.
 - **Module boundaries** (`scripts/lib/module-boundaries.js`, `node scripts/check-module-boundaries.js`, tested in
   `test/module-boundaries.test.js`): `scripts/` never requires from `server/` and vice versa; `adapters/` requires
   from neither; `docs/app-*.js` never calls `require()`.
-- Workflows: `test.yml` and `server-test.yml` on every PR and push to `main`, `pr-title.yml`, `release.yml`.
+- Workflows: `test.yml` and `server-test.yml` on PRs (a newer push cancels the older run), `pr-title.yml` (skipped
+  when an edit leaves the title), `release.yml` on every merge to `main`, whose `verify` job is main's only test run
+  (both suites) and gates the tag. Each job bills at least a minute, so small steps share a job.
 
 ## Tests — `node:test`, not Jest
 

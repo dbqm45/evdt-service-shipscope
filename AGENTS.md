@@ -27,4 +27,4 @@ ShipScope is a multi-tenant deployment / feature-flag / Jira dashboard: a backen
 ## Commits & CI
 
 - Commit messages and PR titles follow Conventional Commits with the `SHP` scope (`feat(SHP): ...`); PRs are squash-merged, so the title decides the version.
-- `.github/workflows/` runs both test suites on every PR and push to `main` (`test.yml`, `server-test.yml`), checks the PR title (`pr-title.yml`) and releases after each merge (`release.yml`, see `@RELEASING.md`).
+- `.github/workflows/` runs both test suites on PRs (`test.yml`, `server-test.yml`), checks the PR title (`pr-title.yml`) and, after each merge, tests main once more and releases (`release.yml`, see `@RELEASING.md`).
