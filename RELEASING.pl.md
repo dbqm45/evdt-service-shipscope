@@ -37,7 +37,7 @@ PR-y łączymy przez *squash merge*, więc tytuł PR staje się commitem na `mai
 
 Sprawdzanie:
 
-- **CI**: workflow `PR title` (`.github/workflows/pr-title.yml`) odrzuca tytuł PR niezgodny z formatem, także po
+- **CI**: workflow `Tests` (`.github/workflows/test.yml`) odrzuca tytuł PR niezgodny z formatem, także po
   edycji tytułu.
 - **Lokalnie** (opcjonalnie, raz na klon): `npm run hooks:install` włącza hook `commit-msg` z `.githooks/`.
   Pojedynczy komunikat sprawdzisz poleceniem `npm run lint:commit -- "feat(SHP): …"`.

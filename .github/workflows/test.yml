@@ -1,23 +1,30 @@
 name: Tests
 
-# Root test suite (`npm test`: scripts/, scripts/lib/, docs/app-*.js, the flags adapter, release tooling). No path
-# filters: the suite reads files from across the repo (test/release.test.js checks server/package.json too) and
-# runs in seconds, so every PR gets it. The root has no dependencies, so no `npm ci`. Not on pushes to main: a merge
-# is tested by the Release workflow's verify job (both suites, on the commit main ends up with), so running it here
-# too would bill the same minutes twice.
+# On every PR, in one job (each job bills at least a minute):
+# - the PR title: PRs are squash-merged, so the title becomes the commit on main and drives the next version
+#   (RELEASING.md); checked again when only the title is edited, without re-running the tests;
+# - the root test suite (`npm test`: scripts/, scripts/lib/, docs/app-*.js, the flags adapter, release tooling). No
+#   path filters: the suite reads files from across the repo (test/release.test.js checks server/package.json too)
+#   and runs in seconds. The root has no dependencies, so no `npm ci`.
+# Not on pushes to main: a merge is tested by the Release workflow's verify job (both suites, on the commit main ends
+# up with), so running it here too would bill the same minutes twice.
 on:
   pull_request:
+    types: [opened, edited, synchronize, reopened]
 
 permissions:
   contents: read
 
-# A newer push to the same PR cancels the run still going for the older one.
+# A newer push to the same PR cancels the run still going for the older one. Title edits have their own group, so
+# an edit never cancels the tests of a push.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}-${{ github.event.action == 'edited' && 'title' || 'code' }}
   cancel-in-progress: true
 
 jobs:
   test:
+    # An edit of the description alone leaves the title as it was: skipped (a skipped job bills no minutes).
+    if: github.event.action != 'edited' || github.event.changes.title
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -25,4 +32,11 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: npm test
+      # The title goes through an environment variable, never into the script text.
+      - name: Conventional Commits PR title
+        run: node scripts/check-commit-message.js "$TITLE"
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+      - name: Root tests
+        if: github.event.action != 'edited'
+        run: npm test
