@@ -3,11 +3,11 @@ const path = require('path');
 
 /**
  * The dashboard's static files (docs/), served by the Web Service at /t/<tenantId>/. Only an allowlist is
- * read -- the page, its stylesheet, icon and app-*.js scripts -- and kept in memory, so nothing else under
+ * read -- the page, its stylesheet, icon, theme.js and app-*.js scripts -- and kept in memory, so nothing else under
  * docs/ (documentation, GLOSSARY.md) is ever reachable through the server, and no request path is ever joined
  * onto the filesystem.
  */
-const ASSET_PATTERN = /^(index\.html|style\.css|favicon\.svg|app-[a-z-]+\.js)$/;
+const ASSET_PATTERN = /^(index\.html|style\.css|favicon\.svg|theme\.js|app-[a-z-]+\.js)$/;
 const TYPES = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.js': 'text/javascript; charset=utf-8' };
 
 /**
@@ -25,8 +25,8 @@ function loadDashboardAssets(dir) {
 }
 
 // The server's own pages (ui/: settings, get started) and the dashboard files they reuse, served at /ui/<name>.
-const UI_PATTERN = /^(settings\.html|start\.html|invite\.html|settings\.js|start\.js|invite\.js|theme\.js|settings\.css)$/;
-const UI_SHARED = ['style.css', 'favicon.svg', 'app-html.js'];
+const UI_PATTERN = /^(settings\.html|start\.html|invite\.html|settings\.js|start\.js|invite\.js|settings\.css)$/;
+const UI_SHARED = ['style.css', 'favicon.svg', 'app-html.js', 'theme.js'];
 
 /**
  * @param {string} dir the server's ui/ directory

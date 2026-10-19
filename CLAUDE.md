@@ -132,7 +132,10 @@ emptied. `sync_requests` (webhook queue) is the one non-RLS table; it holds no t
   (`lib/env-drift.js` + `lib/tree-diff.js`) is stored per repo in `tracked_repos.drift = { inputs, failed, envs }`,
   recomputed only when a latest successful deploy changed or the last attempt failed; a failed comparison keeps the
   previous value. Per-repo `version_file`/`drift_ignore_paths` are set by an admin
-  (`PUT /tenants/:tenantId/github/repos/:repoId/settings`). `manual` (needs the App's Actions read permission) and
+  (`PUT /tenants/:tenantId/github/repos/:repoId/settings`). Installation tokens are minted read only
+  (`TOKEN_PERMISSIONS` in `lib/github-app.js`: actions, contents, deployments, metadata; on a 422 the subset the
+  installation has). `workflowRunUrl` is a status's `log_url` only when `trustedRunUrl()` sees a run of that very
+  repository on github.com. `manual` (needs the App's Actions read permission) and
   the creator's display name come from `lib/deployment-people.js`: display-only, cached per tenant per pass, never
   failing the sync.
 - **Feature flags** — pushed from outside, never read by ShipScope (`ADR-001`). An admin names the tenant's flag
@@ -180,7 +183,9 @@ emptied. `sync_requests` (webhook queue) is the one non-RLS table; it holds no t
   `docs/app-html.js`). `settings.js` is a classic script on `html` with pure `render*` sections and `data-action`
   buttons/forms calling the JSON routes (which enforce roles), tested in `server/test/settings-ui.test.js`. Admins
   get a Getting started checklist (`onboardingSteps()`); an empty dashboard links to it (`#setupBanner`); the
-  header's `#settingsLink` (a gear icon after the status badge) shows only in API mode.
+  header's `#settingsLink` (a gear icon after the status badge) shows only in API mode. Every page and asset is
+  served with `DASHBOARD_HEADERS` (`web.js`), including a Content-Security-Policy with `script-src 'self'` (no inline
+  scripts; `server/test/content-security-policy.test.js` checks the sources).
 
 ## Dashboard data (what `GET /api/tenants/:id/dashboard-data` returns)
 
@@ -231,7 +236,11 @@ and workflow inputs are untrusted.
 **Components.** `app-components.js` holds the markup: pure PascalCase functions (`Tag`, `StatusPill`, `SummaryCard`,
 `EpicHeader`, `DeployCard`, `FlagRow`, `BarRow`, `EmptyState`, …) taking one props object, reading no `state`/DOM,
 returning `html`. Views compute data and call them; older view functions (`jiraStatusTagHtml`, `issueRowHtml`,
-`renderDeployCard`, …) are thin wrappers. New markup goes there (`test/app-components.test.js`).
+`renderDeployCard`, …) are thin wrappers. New markup goes there (`test/app-components.test.js`). Every `href` built from
+data goes through `ExternalLink`, which links only `isSafeHttpsUrl()` (absolute `https://`, no user info) and shows
+anything else as text. No inline `<script>` or `on…=` attributes anywhere (the pages' Content-Security-Policy blocks
+them): behaviour goes on data attributes handled in `initDelegatedHandlers()` (`data-stop-click`,
+`data-close-dialog`), the theme is applied by `docs/theme.js` (shared with the settings pages).
 
 **Data loading.** Under `/t/<tenantId>/` `loadData()` reads the dashboard-data endpoint, then one increment's
 issues (`loadJiraIssuesForPi()`); never more than one increment in memory (`state.jiraIssues`, `state.selectedPi`).

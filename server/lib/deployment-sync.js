@@ -159,7 +159,7 @@ async function syncRepo({ pool, token, tenantId, repo, fetch: fetchFn = fetch, n
     }
 
     const previousByEnv = await withScope(pool, { tenantId }, (client) => lastSuccessByEnv(client, { tenantId, repoId }));
-    const { plan, blockedIds, skipped } = buildDeploymentPlan(batch, statusesById, { now, stuckMaxAgeHours });
+    const { plan, blockedIds, skipped } = buildDeploymentPlan(batch, statusesById, { now, stuckMaxAgeHours, fullName });
 
     // Tags and releases: two list calls per repo, and only when there's something new to resolve.
     const refIndex = plan.length ? await fetchRefIndex({ token, fullName, fetch: fetchFn }) : null;

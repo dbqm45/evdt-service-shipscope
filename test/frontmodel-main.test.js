@@ -50,7 +50,7 @@ function loadApp({ fetchImpl, search = '', pathname = '/', patch = s => s, tabs 
         localStorage: { getItem: () => null, setItem(k, v) { stored[k] = v; } },
         fetch: fetchImpl || (() => Promise.reject(new Error('offline'))),
         document: {
-            documentElement: stubElement(), body: stubElement(), addEventListener() {},
+            documentElement: stubElement(), body: stubElement(), listeners: [], addEventListener(type, fn, capture) { ctx.document.listeners.push({ type, fn, capture: !!capture }); },
             getElementById: id => boxes[id] || (boxes[id] = stubElement()),
             createElement: () => { const el = stubElement(); created.push(el); return el; },
             querySelectorAll: sel => (sel === '.tab' ? tabEls.filter(t => !t.removed) : sel === '.view' ? viewEls : []),
@@ -355,4 +355,29 @@ test('sprint select change updates the scope and re-renders', async () => {
     app.boxes.filterSprint.value = '';
     app.boxes.filterSprint.listeners.change[0]();
     assert.equal(app.run('state.selectedSprint'), '');
+});
+
+test('delegated handlers: data-stop-click stops the click in the capture phase, data-close-dialog closes its dialog', async () => {
+    const { ctx } = loadApp();
+    await settle();
+    const clicks = ctx.document.listeners.filter(l => l.type === 'click');
+    const capture = clicks.filter(l => l.capture && String(l.fn).includes('data-stop-click'));
+    const bubble = clicks.filter(l => !l.capture && String(l.fn).includes('data-close-dialog'));
+    assert.deepEqual([capture.length, bubble.length], [1, 1]);
+
+    let stopped = 0;
+    const event = target => ({ target, stopPropagation() { stopped++; } });
+    const link = { closest: sel => (sel === '[data-stop-click]' ? link : null) };
+    const other = { closest: () => null };
+    capture[0].fn(event(link));
+    capture[0].fn(event(other));
+    capture[0].fn(event({}));
+    assert.equal(stopped, 1, 'only a click inside [data-stop-click] is stopped');
+
+    let closed = 0;
+    const dialog = { close() { closed++; } };
+    const button = { closest: sel => (sel === '[data-close-dialog]' ? button : sel === 'dialog' ? dialog : null) };
+    bubble.forEach(l => l.fn(event(button)));
+    bubble.forEach(l => l.fn(event(other)));
+    assert.equal(closed, 1);
 });

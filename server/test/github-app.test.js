@@ -66,3 +66,33 @@ test('listInstallationRepos: mints an installation token, then pages repos with 
     await assert.rejects(() => listInstallationRepos({ app, installationId: 5, fetch: bad }), GitHubApiError);
     await assert.rejects(() => listInstallationRepos({ app, installationId: 5, fetch: async () => json({}) }), GitHubApiError);
 });
+
+test('createInstallationToken: asks for read-only permissions; on a 422 asks for the ones the installation has', async () => {
+    const { createInstallationToken, TOKEN_PERMISSIONS } = require('../lib/github-app');
+    assert.deepStrictEqual(TOKEN_PERMISSIONS, { actions: 'read', contents: 'read', deployments: 'read', metadata: 'read' });
+
+    const asked = [];
+    const full = async (url, init) => {
+        asked.push(JSON.parse(init.body).permissions);
+        assert.strictEqual(init.headers['content-type'], 'application/json');
+        return json({ token: 'ghs_read' }, 201);
+    };
+    assert.strictEqual(await createInstallationToken({ app, installationId: 5, fetch: full }), 'ghs_read');
+    assert.deepStrictEqual(asked, [TOKEN_PERMISSIONS]);
+
+    // An installation without Actions (granted before ShipScope asked for it): GitHub refuses the full set.
+    const calls = [];
+    const noActions = async (url, init) => {
+        calls.push(`${init.method} ${url.replace('https://api.github.com', '')}`);
+        if (url.endsWith('/access_tokens')) {
+            const { permissions } = JSON.parse(init.body);
+            return permissions.actions ? json({ message: 'The permissions requested are not granted to this installation.' }, 422) : json({ token: 'ghs_less', permissions }, 201);
+        }
+        return json({ id: 5, account: { login: 'acme', type: 'Organization' }, permissions: { contents: 'write', deployments: 'read', metadata: 'read', issues: 'write' } });
+    };
+    assert.strictEqual(await createInstallationToken({ app, installationId: 5, fetch: noActions }), 'ghs_less');
+    assert.deepStrictEqual(calls, ['POST /app/installations/5/access_tokens', 'GET /app/installations/5', 'POST /app/installations/5/access_tokens']);
+
+    // Other errors are not retried.
+    await assert.rejects(() => createInstallationToken({ app, installationId: 5, fetch: async () => json({}, 404) }), (err) => err.status === 404);
+});

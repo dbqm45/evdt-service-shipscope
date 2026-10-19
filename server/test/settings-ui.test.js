@@ -496,6 +496,7 @@ test('settings page route: members only (any role), signed-out users go through 
     assert.strictEqual(res.statusCode, 200);
     assert.match(res.headers['content-type'], /^text\/html/);
     assert.strictEqual(res.headers['x-frame-options'], 'DENY');
+    assert.match(res.headers['content-security-policy'], /script-src 'self';/);
     assert.match(res.body, /<script src="\/ui\/settings\.js"><\/script>/);
 
     const bob = await signIn(app, 'bob');

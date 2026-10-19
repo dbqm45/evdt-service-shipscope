@@ -28,6 +28,8 @@ function buildFallbackData(){
     const beState = (enabled, changedAt, changedBy) => ({ 'runtime-be': { enabled, changedAt, changedBy } });
 
     const FE = 'evapl-service-frontend';
+    // A workflow run link of the sample's kind (the dashboard links only https URLs; GitHub's real ones look like this).
+    const RUN = 'https://github.com/example-org/shipscope-sample/actions/runs/1';
     const CH = 'evnm-service-charger-infrastructure';
     const BO = 'evboweb-service-frontend';
     const BF = 'evboweb-service-bff';
@@ -40,18 +42,18 @@ function buildFallbackData(){
     // deployed on TEST and QA). Only environments further right may be "not deployed".
     const deployments = [
         // TEST
-        { id: 'd1', component: FE, environment: ENVIRONMENT.TEST, version: 'v0.13.0', deployedAt: hrsAgo(4), deployedBy: 'Maciej Piasecki', status: 'success', durationMs: 95000, workflowRunUrl: '#', relatedIssues: ['EBO-16964'], resolvedFlags: { assetNuvoloIntegrationEnabled: true } },
-        { id: 'd2', component: CH, environment: ENVIRONMENT.TEST, version: 'v1.4.6', deployedAt: hrsAgo(2), deployedBy: 'Maciej Piasecki', status: 'success', durationMs: 72000, workflowRunUrl: '#', relatedIssues: ['EBO-16955', 'EBO-16702', 'EBO-17001', 'EBO-16970', 'EBO-17101', 'EBO-17102', 'EBO-17103', 'EBO-17105'], resolvedFlags: { triggerMessageManualEnabled: true, ocppDeviationBadgeEnabled: true, triggerRetryEnabled: true, retryQueueViewerEnabled: true, retryQueueExportEnabled: true } },
+        { id: 'd1', component: FE, environment: ENVIRONMENT.TEST, version: 'v0.13.0', deployedAt: hrsAgo(4), deployedBy: 'Maciej Piasecki', status: 'success', durationMs: 95000, workflowRunUrl: RUN, relatedIssues: ['EBO-16964'], resolvedFlags: { assetNuvoloIntegrationEnabled: true } },
+        { id: 'd2', component: CH, environment: ENVIRONMENT.TEST, version: 'v1.4.6', deployedAt: hrsAgo(2), deployedBy: 'Maciej Piasecki', status: 'success', durationMs: 72000, workflowRunUrl: RUN, relatedIssues: ['EBO-16955', 'EBO-16702', 'EBO-17001', 'EBO-16970', 'EBO-17101', 'EBO-17102', 'EBO-17103', 'EBO-17105'], resolvedFlags: { triggerMessageManualEnabled: true, ocppDeviationBadgeEnabled: true, triggerRetryEnabled: true, retryQueueViewerEnabled: true, retryQueueExportEnabled: true } },
         { id: 'd3', component: BO, environment: ENVIRONMENT.TEST, version: 'v0.0.699', deployedAt: daysAgo(14), deployedBy: 'ci-bot', status: 'success', relatedIssues: [] },
         { id: 'd4', component: BF, environment: ENVIRONMENT.TEST, version: 'v1.1.41', deployedAt: daysAgo(1), deployedBy: 'Kacper Jóźwiak', status: 'success', relatedIssues: ['EBO-16702', 'EBO-16955'], resolvedFlags: { ocppDeviationBadgeBffEnabled: true, triggerMessageManualEnabled: true } },
         { id: 'd5', component: SI, environment: ENVIRONMENT.TEST, version: 'v1.0.19', deployedAt: daysAgo(2), deployedBy: 'ci-bot', status: 'success', relatedIssues: ['EBO-16981', 'EBO-16820'] },
         { id: 'd6', component: HO, environment: ENVIRONMENT.TEST, version: 'v1.0.25', deployedAt: daysAgo(2), deployedBy: 'ci-bot', status: 'success', relatedIssues: ['EBO-99001'], resolvedFlags: { legacyMigrationEnabled: true } },
         // QA — d7/d8/d9 are consecutive same-version deploys of the same service, so they collapse
         // into one grouped card ("3 deploys", manual count 2 of 3); d10 stays a normal single card.
-        { id: 'd7', component: BF, environment: ENVIRONMENT.QA, version: 'v1.1.41', deployedAt: hrsAgo(3), deployedBy: 'Maciej Piasecki', status: 'success', manual: true, durationMs: 132000, workflowRunUrl: '#' },
-        { id: 'd8', component: BF, environment: ENVIRONMENT.QA, version: 'v1.1.41', deployedAt: hrsAgo(2.4), deployedBy: 'Maciej Piasecki', status: 'success', manual: true, durationMs: 111000, workflowRunUrl: '#' },
-        { id: 'd9', component: BF, environment: ENVIRONMENT.QA, version: 'v1.1.41', deployedAt: hrsAgo(1.7), deployedBy: 'Maciej Piasecki', status: 'success', relatedIssues: ['EBO-16955'], resolvedFlags: { triggerMessageManualEnabled: true }, durationMs: 125000, workflowRunUrl: '#' },
-        { id: 'd10', component: CH, environment: ENVIRONMENT.QA, version: 'v1.4.6', deployedAt: hrsAgo(1), deployedBy: 'Maciej Piasecki', status: 'success', manual: true, durationMs: 72000, workflowRunUrl: '#', relatedIssues: ['EBO-16955', 'EBO-16702', 'EBO-17001', 'EBO-16970', 'EBO-17101', 'EBO-17102', 'EBO-17103', 'EBO-17105'], resolvedFlags: { triggerMessageManualEnabled: true, ocppDeviationBadgeEnabled: true, triggerRetryEnabled: true, retryQueueViewerEnabled: true, retryQueueExportEnabled: false } },
+        { id: 'd7', component: BF, environment: ENVIRONMENT.QA, version: 'v1.1.41', deployedAt: hrsAgo(3), deployedBy: 'Maciej Piasecki', status: 'success', manual: true, durationMs: 132000, workflowRunUrl: RUN },
+        { id: 'd8', component: BF, environment: ENVIRONMENT.QA, version: 'v1.1.41', deployedAt: hrsAgo(2.4), deployedBy: 'Maciej Piasecki', status: 'success', manual: true, durationMs: 111000, workflowRunUrl: RUN },
+        { id: 'd9', component: BF, environment: ENVIRONMENT.QA, version: 'v1.1.41', deployedAt: hrsAgo(1.7), deployedBy: 'Maciej Piasecki', status: 'success', relatedIssues: ['EBO-16955'], resolvedFlags: { triggerMessageManualEnabled: true }, durationMs: 125000, workflowRunUrl: RUN },
+        { id: 'd10', component: CH, environment: ENVIRONMENT.QA, version: 'v1.4.6', deployedAt: hrsAgo(1), deployedBy: 'Maciej Piasecki', status: 'success', manual: true, durationMs: 72000, workflowRunUrl: RUN, relatedIssues: ['EBO-16955', 'EBO-16702', 'EBO-17001', 'EBO-16970', 'EBO-17101', 'EBO-17102', 'EBO-17103', 'EBO-17105'], resolvedFlags: { triggerMessageManualEnabled: true, ocppDeviationBadgeEnabled: true, triggerRetryEnabled: true, retryQueueViewerEnabled: true, retryQueueExportEnabled: false } },
         { id: 'd11', component: FE, environment: ENVIRONMENT.QA, version: 'v0.8.2', deployedAt: daysAgo(8), deployedBy: 'ci-bot', status: 'success', driftBehind: { behindEnv: ENVIRONMENT.TEST, commitCount: 8, diff: mockDiff(6) }, relatedIssues: ['EBO-16964'], resolvedFlags: { assetNuvoloIntegrationEnabled: false } },
         { id: 'd12', component: BO, environment: ENVIRONMENT.QA, version: 'v0.0.699', deployedAt: hrsAgo(5), deployedBy: 'ci-bot', status: 'success' },
         { id: 'd13', component: SI, environment: ENVIRONMENT.QA, version: 'v1.0.14', deployedAt: daysAgo(44), deployedBy: 'ci-bot', status: 'success', driftBehind: { behindEnv: ENVIRONMENT.TEST, commitCount: 6, diff: mockDiff(9) }, relatedIssues: ['EBO-16820'] },

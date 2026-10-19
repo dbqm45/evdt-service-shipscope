@@ -46,7 +46,9 @@ test('the dashboard page: members only, signed-out users go through sign-in and 
     assert.match(res.headers['content-type'], /^text\/html/);
     assert.strictEqual(res.headers['x-frame-options'], 'DENY');
     assert.strictEqual(res.headers['x-content-type-options'], 'nosniff');
+    assert.match(res.headers['content-security-policy'], /script-src 'self';/);
     assert.match(res.body, /<script src="app-data\.js"><\/script>/);
+    assert.match((await app.inject({ method: 'GET', url: `/t/${tenantId}/theme.js`, cookies: { sid: alice } })).headers['content-type'], /javascript/);
     assert.ok(!/<link rel="preload" href="data\//.test(res.body), 'no preloads of data/*.json');
 
     assert.strictEqual((await app.inject({ method: 'GET', url: `/t/${tenantId}` })).headers.location, page);

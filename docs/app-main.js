@@ -67,6 +67,24 @@ function initGlobalPiSelect(){
     });
 }
 
+/** The behaviour markup asks for with data attributes instead of inline handlers (the page's Content-Security-Policy
+ *  allows no inline script): `data-stop-click` keeps a click on a link from also opening the row or card it sits in
+ *  (capture phase, before the row's own handler); `data-close-dialog` closes the dialog it is in. */
+function initDelegatedHandlers(){
+    document.addEventListener('click', e => {
+        if (e.target && e.target.closest && e.target.closest('[data-stop-click]')) {
+            e.stopPropagation();
+        }
+    }, true);
+    document.addEventListener('click', e => {
+        const close = e.target && e.target.closest ? e.target.closest('[data-close-dialog]') : null;
+        const dialog = close && close.closest('dialog');
+        if (dialog) {
+            dialog.close();
+        }
+    });
+}
+
 function initTabs(){
     switchToTab(DEFAULT_VIEW);
 
@@ -193,6 +211,7 @@ function initTooltips(){
 }
 
 async function init(){
+    initDelegatedHandlers();
     initTabs();
     initTooltips();
     state = await loadData();
