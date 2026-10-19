@@ -73,11 +73,12 @@ Po każdym merge'u do `main` workflow `Release` (`.github/workflows/release.yml`
      (sekcje *Breaking*, *Added*, *Fixed*) i `CHANGELOG.pl.md` (*Niezgodne*, *Nowe*, *Poprawione*) z tytułów commitów.
 2. **Commituje** to na `main` jako `github-actions[bot]` z komunikatem `chore(release): X.Y.Z`. Push tokenem
    `GITHUB_TOKEN` nie uruchamia innych workflow, więc commit wydania nie wywołuje kolejnego wydania.
-3. **Sprawdza** ten commit: `npm test` w katalogu głównym i testy `server/` na prawdziwym Postgresie.
+3. **Sprawdza** ten commit: `npm test` w katalogu głównym i testy `server/` na prawdziwym Postgresie. Dzieje się to
+   przy każdym merge'u, z nową wersją czy bez: to jedyne testy na `main` (workflowy testów działają na PR-ach).
 4. **Tworzy tag** `vX.Y.Z` z adnotacją na commicie wydania, tylko gdy testy przeszły.
-5. **Tworzy GitHub Release** `vX.Y.Z` z wpisem z changelogu (`node scripts/release-notes.js X.Y.Z`). Istniejący
-   Release zostaje bez zmian; brakujący (np. przebieg padł po utworzeniu tagu) dorobi kolejny przebieg na `main`
-   albo ręczne *Run workflow*.
+5. **Tworzy GitHub Release** `vX.Y.Z` z wpisem z changelogu (`node scripts/release-notes.js X.Y.Z`), w tym samym
+   jobie co tag. Istniejący Release zostaje bez zmian; brakujący (np. przebieg padł po utworzeniu tagu) dorobi ręczne
+   *Run workflow*.
 
 Kilka PR-ów zmergowanych szybko po sobie: przebiegi czekają w kolejce (`concurrency: release`), więc nie policzą
 tej samej wersji dwa razy. Gdy w trakcie wydania na `main` trafi nowy commit, push commitu wydania zostanie

@@ -1,15 +1,20 @@
 name: Tests
 
-# Root test suite (`npm test`: scripts/, scripts/lib/, docs/app-*.js, release tooling). No path filters:
-# the suite reads files from across the repo (test/release.test.js checks server/package.json too) and
-# runs in seconds, so every PR gets it. The root has no dependencies, so no `npm ci`.
+# Root test suite (`npm test`: scripts/, scripts/lib/, docs/app-*.js, the flags adapter, release tooling). No path
+# filters: the suite reads files from across the repo (test/release.test.js checks server/package.json too) and
+# runs in seconds, so every PR gets it. The root has no dependencies, so no `npm ci`. Not on pushes to main: a merge
+# is tested by the Release workflow's verify job (both suites, on the commit main ends up with), so running it here
+# too would bill the same minutes twice.
 on:
   pull_request:
-  push:
-    branches: [main]
 
 permissions:
   contents: read
+
+# A newer push to the same PR cancels the run still going for the older one.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
 
 jobs:
   test:

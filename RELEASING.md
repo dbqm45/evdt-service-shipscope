@@ -72,11 +72,12 @@ After every merge to `main` the `Release` workflow (`.github/workflows/release.y
      commit titles.
 2. **Commits** that to `main` as `github-actions[bot]` with the message `chore(release): X.Y.Z`. A push with
    `GITHUB_TOKEN` starts no other workflow, so the release commit doesn't trigger another release.
-3. **Verifies** that commit: root `npm test` and the `server/` suite against a real Postgres.
+3. **Verifies** that commit: root `npm test` and the `server/` suite against a real Postgres. This runs on every
+   merge, with or without a new version: it is the only test run on `main` (the test workflows run on PRs).
 4. **Tags** `vX.Y.Z` (annotated) on the release commit, only if verification passed.
-5. **Creates the GitHub Release** `vX.Y.Z` with the changelog entry (`node scripts/release-notes.js X.Y.Z`). An
-   existing release is left alone; a missing one (e.g. a run failed after tagging) is created by the next run on
-   `main` or a manual *Run workflow*.
+5. **Creates the GitHub Release** `vX.Y.Z` with the changelog entry (`node scripts/release-notes.js X.Y.Z`), in the
+   same job as the tag. An existing release is left alone; a missing one (e.g. a run failed after tagging) is
+   created by a manual *Run workflow*.
 
 Several PRs merged in quick succession: runs queue (`concurrency: release`), so they never compute the same
 version twice. If a new commit lands on `main` during a release, the release commit's push is rejected and the run

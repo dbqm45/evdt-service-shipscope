@@ -7,9 +7,10 @@ name: Release
 #      package.json and server/package-lock.json, adds the CHANGELOG.md / CHANGELOG.pl.md entries; the job commits
 #      that as "chore(release): X.Y.Z" to main. A version already set by hand (a merged "chore(release)" PR, or the
 #      first 0.1.0) is released as is.
-#   2. verify: the root and server/ test suites (server/ against a real Postgres) on that exact commit.
-#   3. tag + github-release: the annotated git tag vX.Y.Z on that commit, only if verify passed, and a GitHub
-#      Release with its CHANGELOG.md entry.
+#   2. verify: the root and server/ test suites (server/ against a real Postgres) on that exact commit. It runs on
+#      every merge, released or not: it is the only test run on main (test.yml and server-test.yml run on PRs).
+#   3. publish: the annotated git tag vX.Y.Z on that commit, only if verify passed, and a GitHub Release with its
+#      CHANGELOG.md entry. One job for both: each job bills at least a minute.
 on:
   push:
     branches: [main]
@@ -83,10 +84,11 @@ jobs:
           echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
           echo "Version $version, new release: $new, commit $(git rev-parse --short HEAD)"
 
-  # Stands in for ci_for_sdlc's image smoke test: a version is only tagged on a commit whose tests pass.
+  # Stands in for ci_for_sdlc's image smoke test: a version is only tagged on a commit whose tests pass. Also the
+  # test run of every merge to main.
   verify:
     needs: prepare
-    if: needs.prepare.outputs.skip != 'true' && needs.prepare.outputs.new == 'true'
+    if: needs.prepare.outputs.skip != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     services:
@@ -119,35 +121,12 @@ jobs:
         env:
           TEST_DATABASE_URL: postgres://shipscope_app:shipscope_app@localhost:5432/postgres
 
-  # A released version is never moved or re-used (SemVer rule 3): the tag is created once, on the commit
-  # whose tests passed.
-  tag:
+  # A released version is never moved or re-used (SemVer rule 3): the tag is created once, on the commit whose tests
+  # passed. Then the GitHub Release of that version, with its CHANGELOG.md entry as notes. A release that is missing
+  # (e.g. a run failed after tagging) is created by a manual run (Run workflow); an existing one is left as is.
+  publish:
     needs: [prepare, verify]
-    if: needs.prepare.outputs.new == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          ref: ${{ needs.prepare.outputs.sha }}
-      - name: Create tag v${{ needs.prepare.outputs.version }}
-        env:
-          VERSION: ${{ needs.prepare.outputs.version }}
-          SHA: ${{ needs.prepare.outputs.sha }}
-        run: |
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git tag -a "v$VERSION" -m "Release $VERSION" "$SHA"
-          git push origin "refs/tags/v$VERSION"
-
-  # The GitHub Release of the current version, with its CHANGELOG.md entry as notes. Runs whenever the tag
-  # exists, not only right after tagging, so a release that is missing (e.g. a failed run) is created by the next
-  # run on main or by a manual run. An existing release is left as is.
-  github-release:
-    needs: [prepare, verify, tag]
-    if: ${{ !cancelled() && needs.prepare.result == 'success' && needs.prepare.outputs.skip != 'true' && needs.verify.result != 'failure' && needs.tag.result != 'failure' }}
+    if: needs.verify.result == 'success' && (needs.prepare.outputs.new == 'true' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -159,6 +138,16 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      - name: Create tag v${{ needs.prepare.outputs.version }}
+        if: needs.prepare.outputs.new == 'true'
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+          SHA: ${{ needs.prepare.outputs.sha }}
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git tag -a "v$VERSION" -m "Release $VERSION" "$SHA"
+          git push origin "refs/tags/v$VERSION"
       - name: Create GitHub Release v${{ needs.prepare.outputs.version }}
         env:
           GH_TOKEN: ${{ github.token }}
@@ -173,5 +162,5 @@ jobs:
             exit 0
           fi
           node scripts/release-notes.js "$VERSION" > notes.md
-          # --verify-tag: never let gh create the tag itself; it must be the one made by the tag job.
+          # --verify-tag: never let gh create the tag itself; it must be the one made by the step above.
           gh release create "v$VERSION" --verify-tag --title "v$VERSION" --notes-file notes.md

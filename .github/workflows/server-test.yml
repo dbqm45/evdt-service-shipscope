@@ -1,5 +1,7 @@
 name: Server tests
 
+# The server/ suite against a real Postgres, on PRs that touch what it tests. Not on pushes to main: the Release
+# workflow's verify job runs it on every merge.
 on:
   pull_request:
     paths:
@@ -7,16 +9,19 @@ on:
       # Server tests also post the flags adapter's messages and the onboarding guide's examples through the route.
       - 'adapters/**'
       - 'ONBOARDING*.md'
-  push:
-    branches: [main]
-    paths:
-      - 'server/**'
-      - 'adapters/**'
-      - 'ONBOARDING*.md'
+
+permissions:
+  contents: read
+
+# A newer push to the same PR cancels the run still going for the older one.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
 
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     services:
       postgres:
         image: postgres:16-alpine
