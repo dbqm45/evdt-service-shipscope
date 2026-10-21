@@ -245,7 +245,9 @@ returning `html`. Views compute data and call them; older view functions (`jiraS
 data goes through `ExternalLink`, which links only `isSafeHttpsUrl()` (absolute `https://`, no user info) and shows
 anything else as text. No inline `<script>` or `on…=` attributes anywhere (the pages' Content-Security-Policy blocks
 them): behaviour goes on data attributes handled in `initDelegatedHandlers()` (`data-stop-click`,
-`data-close-dialog`), the theme is applied by `docs/theme.js` (shared with the settings pages).
+`data-close-dialog`), the theme is applied by `docs/theme.js` (shared with the settings pages). Every `data-*`
+the components write is listed with its reader in `test/app-handlers-contract.test.js`, which also clicks the real
+handlers and checks the drift button's attributes against `openDriftModal()`'s parameters.
 
 **Data loading.** Under `/t/<tenantId>/` `loadData()` reads the dashboard-data endpoint, then one increment's
 issues (`loadJiraIssuesForPi()`); never more than one increment in memory (`state.jiraIssues`, `state.selectedPi`).
