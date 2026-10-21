@@ -419,10 +419,11 @@ test('earliestProdDeployedAt takes the minimum across live deployments and the n
         ],
         issueDeployments: { 'K-1': { prod: { c: { deployedAt: ago(0, 30) } } }, 'K-2': { prod: { c: { deployedAt: ago(0, 8) } } }, 'K-3': {} },
     });
-    assert.equal(ev("earliestProdDeployedAt('K-1')"), t(30));
-    assert.equal(ev("earliestProdDeployedAt('K-2')"), t(8));
-    assert.equal(ev("earliestProdDeployedAt('K-3')"), null);
-    assert.equal(ev("earliestProdDeployedAt('K-9')"), null);
+    assert.equal(ev("earliestProdDeployedAt({ key: 'K-1' })"), t(30));
+    assert.equal(ev("earliestProdDeployedAt({ key: 'K-2' })"), t(8));
+    assert.equal(ev("earliestProdDeployedAt({ key: 'K-3' })"), null);
+    assert.equal(ev("earliestProdDeployedAt({ key: 'K-9' })"), null);
+    assert.equal(ev("earliestProdDeployedAt({ key: 'K-9', subtaskKeys: ['K-1', 'K-2'] })"), t(30), 'its sub-tasks\' deployments count');
 });
 
 test('leadTimeToProdBySprint: median per sprint, clamping and exclusions', () => {

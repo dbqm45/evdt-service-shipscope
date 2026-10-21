@@ -170,17 +170,18 @@ function renderStaleFlagsChart(){
     }))}`;
 }
 
-/** Earliest known successful prod deployment referencing this issue, across both the live
+/** Earliest known successful prod deployment referencing this issue or one of its sub-tasks, across both the live
  *  `state.deployments` (may have aged out of retention) and the never-trimmed
  *  `state.issueDeployments` fallback — see issueDeployedOnComponent()'s own comment for why both are
  *  checked. An issue can ship via more than one component, so this takes the minimum across all of them,
  *  not just one. */
-function earliestProdDeployedAt(issueKey){
+function earliestProdDeployedAt(issue){
+    const keys = issueKeys(issue);
     const liveTimes = state.deployments
-        .filter(d => d.environment === ENVIRONMENT.PROD && d.status === 'success' && (d.relatedIssues || []).includes(issueKey))
+        .filter(d => d.environment === ENVIRONMENT.PROD && d.status === 'success' && deploymentNamesAny(d, keys))
         .map(d => new Date(d.deployedAt).getTime());
-    const historical = state.issueDeployments[issueKey]?.prod || {};
-    const historicalTimes = Object.values(historical).map(h => new Date(h.deployedAt).getTime());
+    const historicalTimes = keys.flatMap(k => Object.values(state.issueDeployments[k]?.prod || {}))
+        .map(h => new Date(h.deployedAt).getTime());
     const all = [...liveTimes, ...historicalTimes];
 
     return all.length ? Math.min(...all) : null;
@@ -201,7 +202,7 @@ function leadTimeToProdBySprint(){
             return;
         }
 
-        const firstProdAt = earliestProdDeployedAt(issue.key);
+        const firstProdAt = earliestProdDeployedAt(issue);
 
         if (!firstProdAt) {
             return;

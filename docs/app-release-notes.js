@@ -96,7 +96,7 @@ function renderReleaseNotes(){
     // item actually is.
     const renderIssueRow = issue => {
         const prodLevel = issueStatusForEnv(issue, ENVIRONMENT.PROD).level;
-        const prodAt = earliestProdDeployedAt(issue.key);
+        const prodAt = earliestProdDeployedAt(issue);
 
         return ReleaseNoteItem({
             type: issue.type,

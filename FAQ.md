@@ -268,7 +268,8 @@ PROD. The Service filter narrows the list to one application. (`docs/app-release
 ### Why is it empty although Jira is connected?
 
 Nothing has reached PROD yet in the selected increment, or no deployment's commit messages mention the issues' keys
-(that is how an issue is linked to a deployment). Check the Jira connection and board sync time in Settings.
+or their sub-tasks' keys (that is how an issue is linked to a deployment; a commit naming only a sub-task counts for
+its Story). Check the Jira connection and board sync time in Settings.
 
 ## Data freshness
 

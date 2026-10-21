@@ -93,7 +93,7 @@ function issueBreakdownHtml(issue){
     const rows = issueLinks(issue).map(l => ({
         component: l.component,
         flagKey: l.flagKey,
-        envs: ENVIRONMENTS.map(env => linkStatus(l, issue.key, env)),
+        envs: ENVIRONMENTS.map(env => linkStatus(l, issue, env)),
     }));
     const anyCodeDeployed = ENVIRONMENTS.some(env => statusLabel(issueStatusForEnv(issue, env).level) === 'Code deployed');
 

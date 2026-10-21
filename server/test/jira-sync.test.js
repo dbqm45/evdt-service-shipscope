@@ -121,15 +121,16 @@ test('jira model: an issue mapped to the dashboard shape, its sprint taken from 
     const scope = { pi: 'PI-27.3', sprintsInScope: new Map([[2, sp(2, 'Sparks 27.3.1', 'closed')], [3, sp(3, 'Sparks 27.3.2', 'active')]]) };
     const issue = mapIssue(raw('ABC-1', 'Story', [{ id: 2, name: 'Sparks 27.3.1' }, { id: 3, name: 'Sparks 27.3.2' }, { id: 99, name: 'Rocket 27.3.9' }], {
         parent: { key: 'ABC-10', fields: { summary: 'The epic' } },
-        subtasks: [{ fields: { status: { statusCategory: { key: 'done' } } } }, { fields: { status: { statusCategory: { key: 'new' } } } }],
+        subtasks: [{ key: 'ABC-7', fields: { status: { statusCategory: { key: 'done' } } } }, { key: 'not a key', fields: { status: { statusCategory: { key: 'new' } } } }],
         issuelinks: [{ type: { inward: 'is blocked by' }, inwardIssue: { key: 'XYZ-9', fields: { summary: 'API first', status: { statusCategory: { key: 'indeterminate' } } } } }],
         customfield_10021: [{ value: 'Impediment' }],
     }), FIELD_IDS, scope);
     assert.deepStrictEqual(issue, {
         key: 'ABC-1', type: 'Story', title: 'ABC-1 title', pi: 'PI-27.3', sprint: 'Sparks 27.3.2', status: 'In Progress', statusCategory: 'indeterminate',
-        dependencyBlocked: true, projectName: 'eMobility Sparks', epicKey: 'ABC-10', epicTitle: 'The epic', impediment: true, subtasks: { done: 1, total: 2 },
+        dependencyBlocked: true, projectName: 'eMobility Sparks', epicKey: 'ABC-10', epicTitle: 'The epic', impediment: true, subtasks: { done: 1, total: 2 }, subtaskKeys: ['ABC-7'],
         priority: 'Major', created: '2026-09-01T10:00:00.000+0000', resolvedAt: null, featureFlags: [], dependencyNote: 'Blocked by XYZ-9: API first',
     });
+    assert.deepStrictEqual(mapIssue(raw('ABC-6', 'Task'), FIELD_IDS, scope).subtaskKeys, [], 'no sub-tasks: an empty list');
     assert.strictEqual(mapIssue(raw('ABC-2', 'Bug', [{ id: 99, name: 'Rocket 27.3.9' }]), FIELD_IDS, scope).sprint, null, 'another board\'s sprint is not this issue\'s here');
     assert.strictEqual(mapIssue(raw('ABC-3', 'Task', [], { customfield_10014: 'ABC-11' }), FIELD_IDS, scope).epicKey, 'ABC-11', 'legacy Epic Link');
     assert.strictEqual(mapIssue(raw('ABC-4', 'Sub'), FIELD_IDS, scope), null, 'sub-tasks are counted on their parent');
