@@ -12,28 +12,41 @@ function currentVersion(component, environment){
 
     return list[0] || null;
 }
+/** The keys a deployment may name an issue by: its own and its sub-tasks' (`subtaskKeys`, from the Jira sync;
+ *  absent on issues synced before the field existed, which then match on their own key only). */
+function issueKeys(issue){
+    return [issue.key, ...(Array.isArray(issue.subtaskKeys) ? issue.subtaskKeys : [])];
+}
+/** True when a deployment's `relatedIssues` names any of `keys`. */
+function deploymentNamesAny(d, keys){
+    return (d.relatedIssues || []).some(k => keys.includes(k));
+}
 /** Falls back to state.issueDeployments (never trimmed, unlike state.deployments — see
  *  the server's issue_deployments table) when the live record has aged out of
  *  retention. The synthesized stand-in only carries what callers actually read off a real record
  *  here (deployedAt/commitUrl) — enough for release-status joins and ghostFlagAge's own deployedAt read. */
-function issueDeployedOnComponent(component, issueKey, env) {
-    const live = componentDeployments(component, env).find(d => (d.relatedIssues || []).includes(issueKey));
+function issueDeployedOnComponent(component, issue, env) {
+    const keys = issueKeys(issue);
+    const live = componentDeployments(component, env).find(d => deploymentNamesAny(d, keys));
 
     if (live) {
         return live;
     }
 
-    const historical = state.issueDeployments[issueKey]?.[env]?.[component];
+    const key = keys.find(k => state.issueDeployments[k]?.[env]?.[component]);
+    const historical = key && state.issueDeployments[key][env][component];
 
-    return historical ? { ...historical, relatedIssues: [issueKey], component, environment: env, status: 'success' } : null;
+    return historical ? { ...historical, relatedIssues: [key], component, environment: env, status: 'success' } : null;
 }
-/** Any successful deployment (on any component) that references this issue key, ignoring flags entirely. */
-function anyDeploymentForIssue(issueKey, env){
+/** Any successful deployment (on any component) that references this issue or one of its sub-tasks, ignoring
+ *  flags entirely. */
+function anyDeploymentForIssue(issue, env){
+    const keys = issueKeys(issue);
     const live = state.deployments.some(d =>
-        d.environment === env && d.status === 'success' && (d.relatedIssues || []).includes(issueKey)
+        d.environment === env && d.status === 'success' && deploymentNamesAny(d, keys)
     );
 
-    return live || !!state.issueDeployments[issueKey]?.[env];
+    return live || keys.some(k => !!state.issueDeployments[k]?.[env]);
 }
 function issueLinks(issue){
     const flags = flagsForIssue(issue.key);
@@ -43,8 +56,8 @@ function issueLinks(issue){
 
     return pairs;
 }
-function linkStatus(link, issueKey, env){
-    const dep = issueDeployedOnComponent(link.component, issueKey, env);
+function linkStatus(link, issue, env){
+    const dep = issueDeployedOnComponent(link.component, issue, env);
     const envEntry = state.flagStates[link.flagKey] ? state.flagStates[link.flagKey][env] : null;
     const fs = effectiveFlagState(envEntry);
     const flagOn = fs ? !!fs.enabled : false;
@@ -64,13 +77,13 @@ function issueStatusForEnv(issue, env){
         // referencing this issue actually ship to this environment? This is
         // strictly less precise (we can't know if a flag is hiding it), but
         // far more honest than always showing "none".
-        const deployedHere = anyDeploymentForIssue(issue.key, env);
+        const deployedHere = anyDeploymentForIssue(issue, env);
 
         return { level: deployedHere ? RELEASE_LEVEL.DEPLOYED_CODE_ONLY : RELEASE_LEVEL.NONE, blocked:false, results:[] };
     }
 
     const results = pairs.map(l => ({
-        ...linkStatus(l, issue.key, env),
+        ...linkStatus(l, issue, env),
         component: l.component,
         flagKey: l.flagKey
     }));
@@ -201,7 +214,7 @@ function issueEnvDate(issue, env){
     };
 
     issueLinks(issue).forEach(l => {
-        const dep = issueDeployedOnComponent(l.component, issue.key, env);
+        const dep = issueDeployedOnComponent(l.component, issue, env);
 
         if (dep) {
             consider(dep.deployedAt);
@@ -217,7 +230,7 @@ function issueEnvDate(issue, env){
     // For flag-less (fallback-derived) issues, fall back to raw deployment dates too.
     if (!issueLinks(issue).length) {
         state.deployments
-            .filter(d => d.environment === env && d.status === 'success' && (d.relatedIssues || []).includes(issue.key))
+            .filter(d => d.environment === env && d.status === 'success' && deploymentNamesAny(d, issueKeys(issue)))
             .forEach(d => consider(d.deployedAt));
     }
 

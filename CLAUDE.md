@@ -213,10 +213,12 @@ emptied. `sync_requests` (webhook queue) is the one non-RLS table; it holds no t
   (an "increment" — PI, sprint, release or month — keeps the name `pi` in the data); issues of one increment come from
   `GET /api/tenants/:id/jira-issues`. Issue fields: `key`, `type`, `title`, `pi`, `sprint`, `status`,
   `statusCategory` (`new`/`indeterminate`/`done`), `projectName`, `epicKey`/`epicTitle` (`null` on Epics),
-  `impediment` (Jira's Flagged), `subtasks: { done, total }` or `null`, `priority`, `created`, `resolvedAt`,
+  `impediment` (Jira's Flagged), `subtasks: { done, total }` or `null`, `subtaskKeys` (`[]` without sub-tasks), `priority`, `created`, `resolvedAt`,
   `dependencyBlocked`/`dependencyNote`, `featureFlags`. `issueStatusIndex` maps every key to `{ pi, statusCategory }`.
 - **Release status**: an issue links to flags via `jiraKeys` and to deployments via `relatedIssues` (and
-  `issueDeployments`, which outlives retention); `issueStatusForEnv()` gives `none` / `deployed` (code shipped, flag
+  `issueDeployments`, which outlives retention), matched on `issueKeys(issue)` — its key plus `subtaskKeys`, so a
+  commit naming only a sub-task counts for the Story (issues synced before the field match on their own key until
+  the next sync); `issueStatusForEnv()` gives `none` / `deployed` (code shipped, flag
   off) / `released` (flag on) / `partial` / `deployed_code_only` (no flag to check).
 
 ## Frontend (`docs/`)

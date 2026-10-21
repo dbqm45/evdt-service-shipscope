@@ -338,6 +338,9 @@ function extractFlagKeys(fields, flagLink) {
     return [...new Set(candidates.filter((k) => FLAG_KEY.test(k)))].slice(0, MAX_FLAGS_PER_ISSUE);
 }
 
+const ISSUE_KEY = /^[A-Z][A-Z0-9_]*-\d+$/;
+const MAX_SUBTASK_KEYS = 100;
+
 const str = (v, max = 500) => (typeof v === 'string' ? v.slice(0, max) : null);
 
 /**
@@ -351,7 +354,7 @@ const str = (v, max = 500) => (typeof v === 'string' ? v.slice(0, max) : null);
  */
 function mapIssue(raw, fieldIds, { pi, sprintsInScope, sprint: fallbackSprint = null }) {
     const f = raw?.fields;
-    if (typeof raw?.key !== 'string' || !/^[A-Z][A-Z0-9_]*-\d+$/.test(raw.key) || !f) return null;
+    if (typeof raw?.key !== 'string' || !ISSUE_KEY.test(raw.key) || !f) return null;
     const type = issueType(f.issuetype);
     if (!type) return null;
 
@@ -366,6 +369,9 @@ function mapIssue(raw, fieldIds, { pi, sprintsInScope, sprint: fallbackSprint = 
     const subtasks = Array.isArray(f.subtasks) && f.subtasks.length
         ? { done: f.subtasks.filter((st) => st?.fields?.status?.statusCategory?.key === 'done').length, total: f.subtasks.length }
         : null;
+    // A commit may name only a sub-task; the dashboard joins deployments on the issue's key plus these.
+    const subtaskKeys = (Array.isArray(f.subtasks) ? f.subtasks : [])
+        .map((st) => st?.key).filter((k) => typeof k === 'string' && ISSUE_KEY.test(k)).slice(0, MAX_SUBTASK_KEYS);
     let epicKey = null;
     let epicTitle = null;
     if (type !== 'Epic') {
@@ -393,6 +399,7 @@ function mapIssue(raw, fieldIds, { pi, sprintsInScope, sprint: fallbackSprint = 
         epicTitle,
         impediment: Array.isArray(flagged) && flagged.length > 0,
         subtasks,
+        subtaskKeys,
         priority: str(f.priority?.name, 100),
         created: str(f.created, 40),
         resolvedAt: str(f.resolutiondate, 40),

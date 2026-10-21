@@ -25,7 +25,7 @@ function componentMeta(name){
 function componentsForIssue(issue){
     const fromLinks = issueLinks(issue).map(l => l.component);
     const fromDeploys = state.deployments
-        .filter(d => (d.relatedIssues || []).includes(issue.key))
+        .filter(d => deploymentNamesAny(d, issueKeys(issue)))
         .map(d => d.component);
 
     return [...new Set([...fromLinks, ...fromDeploys])];

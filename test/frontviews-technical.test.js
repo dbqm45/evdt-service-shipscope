@@ -128,6 +128,7 @@ test('componentsForIssue / applicationsForIssue combine flag links and deploymen
     assert.deepEqual(ev("componentsForIssue({ key: 'A-1' })").sort(), ['be', 'fe']);
     assert.deepEqual(ev("applicationsForIssue({ key: 'A-1' })").sort(), ['EBO', 'be']);
     assert.deepEqual(ev("componentsForIssue({ key: 'A-9' })"), []);
+    assert.deepEqual(ev("componentsForIssue({ key: 'A-8', subtaskKeys: ['A-1'] })"), ['be', 'fe'], 'a sub-task\'s deployments count');
     assert.deepEqual(ev("applicationsForIssue({ key: 'A-9' })"), ['Unassigned']);
 });
 

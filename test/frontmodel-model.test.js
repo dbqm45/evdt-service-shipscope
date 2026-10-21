@@ -74,17 +74,33 @@ test('issueDeployedOnComponent / anyDeploymentForIssue use live records then the
         deployments: [dep('c', 'prod', { id: 'live', relatedIssues: ['K-1'] }), dep('c', 'prod', { id: 'noissues', relatedIssues: undefined }), dep('c', 'qa', { status: 'failure', relatedIssues: ['K-3'] })],
         issueDeployments: { 'K-2': { prod: { c: { deployedAt: '2026-01-01T00:00:00Z', commitUrl: 'u' } } } },
     });
-    assert.equal(run('issueDeployedOnComponent("c","K-1","prod").id'), 'live');
-    assert.deepEqual(j('issueDeployedOnComponent("c","K-2","prod")'), {
+    assert.equal(run('issueDeployedOnComponent("c",{key:"K-1"},"prod").id'), 'live');
+    assert.deepEqual(j('issueDeployedOnComponent("c",{key:"K-2"},"prod")'), {
         deployedAt: '2026-01-01T00:00:00Z', commitUrl: 'u', relatedIssues: ['K-2'], component: 'c', environment: 'prod', status: 'success' });
-    assert.equal(run('issueDeployedOnComponent("c","K-9","prod")'), null);
-    assert.equal(run('issueDeployedOnComponent("zzz","K-2","prod")'), null);
+    assert.equal(run('issueDeployedOnComponent("c",{key:"K-9"},"prod")'), null);
+    assert.equal(run('issueDeployedOnComponent("zzz",{key:"K-2"},"prod")'), null);
 
-    assert.equal(run('anyDeploymentForIssue("K-1","prod")'), true);
-    assert.equal(run('anyDeploymentForIssue("K-1","qa")'), false);
-    assert.equal(run('anyDeploymentForIssue("K-3","qa")'), false, 'failed deploys do not count');
-    assert.equal(run('anyDeploymentForIssue("K-2","prod")'), true, 'historical index fallback');
-    assert.equal(run('anyDeploymentForIssue("K-2","test")'), false);
+    assert.equal(run('anyDeploymentForIssue({key:"K-1"},"prod")'), true);
+    assert.equal(run('anyDeploymentForIssue({key:"K-1"},"qa")'), false);
+    assert.equal(run('anyDeploymentForIssue({key:"K-3"},"qa")'), false, 'failed deploys do not count');
+    assert.equal(run('anyDeploymentForIssue({key:"K-2"},"prod")'), true, 'historical index fallback');
+    assert.equal(run('anyDeploymentForIssue({key:"K-2"},"test")'), false);
+});
+
+test('a deployment naming only a sub-task counts for its parent (subtaskKeys)', () => {
+    const { j, run, setState } = loadApp();
+
+    setState({
+        deployments: [dep('c', 'prod', { id: 'sub', relatedIssues: ['S-2'] })],
+        issueDeployments: { 'S-3': { qa: { c: { deployedAt: '2026-01-01T00:00:00Z' } } } },
+    });
+    const story = '{key:"S-1",subtaskKeys:["S-2","S-3"]}';
+    assert.equal(run(`issueDeployedOnComponent("c",${story},"prod").id`), 'sub');
+    assert.deepEqual(j(`issueDeployedOnComponent("c",${story},"qa").relatedIssues`), ['S-3'], 'historical index by a sub-task key');
+    assert.equal(run(`anyDeploymentForIssue(${story},"prod")`), true);
+    assert.equal(run(`anyDeploymentForIssue(${story},"qa")`), true);
+    assert.equal(run('anyDeploymentForIssue({key:"S-1"},"prod")'), false, 'without subtaskKeys (synced before the field) only the own key');
+    assert.deepEqual(j(`issueStatusForEnv(${story},"prod")`), { level: 'deployed_code_only', blocked: false, results: [] });
 });
 
 test('issueStatusForEnv without linked flags: raw deployment presence', () => {

@@ -273,8 +273,8 @@ klucz Jiry i datę pierwszego trafienia na PROD. Filtr Service zawęża listę d
 
 ### Dlaczego jest pusto, choć Jira jest połączona?
 
-W wybranym okresie nic jeszcze nie trafiło na PROD albo opisy commitów wdrożeń nie wymieniają kluczy tych zadań (tak
-zadanie łączy się z deploymentem). Sprawdź w Settings połączenie z Jirą i czas synchronizacji tablic.
+W wybranym okresie nic jeszcze nie trafiło na PROD albo opisy commitów wdrożeń nie wymieniają kluczy tych zadań ani
+ich sub-tasków (tak zadanie łączy się z deploymentem; commit z samym kluczem sub-taska liczy się dla jego Story). Sprawdź w Settings połączenie z Jirą i czas synchronizacji tablic.
 
 ## Aktualność danych
 
