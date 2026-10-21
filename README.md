@@ -41,7 +41,7 @@ Two views, both reading the same underlying data:
 See [FAQ.md](FAQ.md) for a detailed explanation of how each of these figures, badges, and checks is
 calculated.
 
-### Release Notes
+### Delivery summary
 
 A third tab lists the Jira issues already released to PROD, by PI → sprint, split into features and bug fixes,
 with a Service filter by **application**. See [FAQ.md](FAQ.md) for how "released" is

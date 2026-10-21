@@ -255,7 +255,7 @@ the sprint name (`27.3.1` → `PI-27.3`, or the board's own PI-name template), `
 that don't work in PIs the "increment" is the sprint, the release or the month, and the selector shows that instead.
 (`server/lib/jira-model.js`.)
 
-## Release Notes tab
+## Delivery summary tab
 
 ### What does it show?
 

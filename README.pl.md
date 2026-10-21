@@ -41,7 +41,7 @@ Dwa widoki, oba czytające te same dane źródłowe:
 Zobacz [FAQ.pl.md](FAQ.pl.md) po szczegółowe wyjaśnienie, jak każda z tych liczb, badge'y i sprawdzeń jest
 liczona.
 
-### Release Notes
+### Delivery summary
 
 Trzecia zakładka wymienia zadania z Jiry już wydane na PROD, według PI → sprintu, z podziałem na funkcje i
 poprawki błędów, z filtrem „Service” według **aplikacji**. Zobacz
