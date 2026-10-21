@@ -28,3 +28,11 @@ test('Dependabot updates the workflow actions', () => {
     const config = fs.readFileSync(path.join(__dirname, '..', '.github', 'dependabot.yml'), 'utf8');
     assert.match(config, /package-ecosystem: github-actions/);
 });
+
+test('actionlint runs on PRs from a release binary checked against a pinned SHA-256', () => {
+    const workflow = fs.readFileSync(path.join(DIR, 'test.yml'), 'utf8');
+    assert.match(workflow, /VERSION: \d+\.\d+\.\d+\n/);
+    assert.match(workflow, /SHA256: [0-9a-f]{64}\n/);
+    assert.match(workflow, /sha256sum -c -/, 'the download is checked before it runs');
+    assert.match(workflow, /"\$RUNNER_TEMP\/actionlint"/);
+});

@@ -61,6 +61,10 @@ Dependabota miesięcznie (kilka minut Actions na jego testy).
   daje SHA dla tagu). Bez tego `npm test` nie przejdzie.
 - PR Dependabota: przejrzeć listę zmian (notatki wydania akcji) przed merge'em; tytuł jest w formacie Conventional
   Commits, więc przechodzi sprawdzenie w `test.yml`.
+- actionlint w `test.yml` to nie akcja, tylko plik binarny z wydania na GitHubie, sprawdzany przed uruchomieniem
+  sumą SHA-256 zapisaną w workflowie (`VERSION`, `SHA256`). Dependabot go nie podbija: nowa wersja to ręczna zmiana
+  obu wartości (suma z pliku `actionlint_X.Y.Z_checksums.txt` w wydaniu). Inaczej niż obraz Dockera po tagu, podmiana
+  pliku w wydaniu skończy się błędem sumy, nie cudzym kodem w jobie.
 - Opcjonalnie, w ustawieniach repozytorium (Settings → Actions → General) można wymusić, żeby workflowy używały
   wyłącznie akcji przypiętych do SHA — wtedy reguła nie zależy od testu. Do zrobienia ręcznie.
 
