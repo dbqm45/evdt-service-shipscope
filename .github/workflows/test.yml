@@ -6,6 +6,8 @@ name: Tests
 # - the root test suite (`npm test`: scripts/, scripts/lib/, docs/app-*.js, the flags adapter, release tooling). No
 #   path filters: the suite reads files from across the repo (test/release.test.js checks server/package.json too)
 #   and runs in seconds. The root has no dependencies, so no `npm ci`.
+# - actionlint over .github/workflows (expressions, job dependencies, and the run: scripts through the runner's
+#   shellcheck), a release binary checked against a pinned SHA-256 rather than an action or a Docker image tag.
 # Not on pushes to main: a merge is tested by the Release workflow's verify job (both suites, on the commit main ends
 # up with), so running it here too would bill the same minutes twice.
 on:
@@ -40,3 +42,14 @@ jobs:
       - name: Root tests
         if: github.event.action != 'edited'
         run: npm test
+      - name: actionlint
+        if: github.event.action != 'edited'
+        env:
+          VERSION: 1.7.12
+          SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+        run: |
+          archive="actionlint_${VERSION}_linux_amd64.tar.gz"
+          curl -sSfL -o "$RUNNER_TEMP/$archive" "https://github.com/rhysd/actionlint/releases/download/v${VERSION}/${archive}"
+          echo "$SHA256  $RUNNER_TEMP/$archive" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP" actionlint
+          "$RUNNER_TEMP/actionlint" -color

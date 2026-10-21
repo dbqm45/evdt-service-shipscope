@@ -55,8 +55,8 @@ localhost.
   from neither; `docs/app-*.js` never calls `require()`.
 - Workflow actions are pinned to a full commit SHA with `# vX.Y.Z` (`test/workflows.test.js`); Dependabot
   (`.github/dependabot.yml`) bumps them monthly in one PR. Why: `design-docs/SECURITY.md`.
-- Workflows: `test.yml` (PR title check + root tests in one job; a title edit re-checks only the title, a description
-  edit is skipped) and `server-test.yml` on PRs (a newer push cancels the older run), `release.yml` on every merge to `main`, whose `verify` job is main's only test run
+- Workflows: `test.yml` (PR title check + root tests + actionlint in one job; a title edit re-checks only the title, a
+  description edit is skipped; actionlint is a release binary checked against a pinned SHA-256, bumped by hand) and `server-test.yml` on PRs (a newer push cancels the older run), `release.yml` on every merge to `main`, whose `verify` job is main's only test run
   (both suites) and gates the tag. Each job bills at least a minute, so small steps share a job.
 
 ## Tests — `node:test`, not Jest

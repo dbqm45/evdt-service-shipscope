@@ -79,9 +79,11 @@ jobs:
           if git rev-parse -q --verify "refs/tags/v$version" > /dev/null; then new=false; else new=true; fi
           # A new version needs its CHANGELOG.md entry (the release notes) before anything is tagged.
           if [ "$new" = true ]; then node scripts/release-notes.js "$version" > /dev/null; fi
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "new=$new" >> "$GITHUB_OUTPUT"
-          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          {
+            echo "version=$version"
+            echo "new=$new"
+            echo "sha=$(git rev-parse HEAD)"
+          } >> "$GITHUB_OUTPUT"
           echo "Version $version, new release: $new, commit $(git rev-parse --short HEAD)"
 
   # Stands in for ci_for_sdlc's image smoke test: a version is only tagged on a commit whose tests pass. Also the
