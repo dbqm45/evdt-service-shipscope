@@ -251,9 +251,9 @@ Anywhere else it returns `FALLBACK` (badge "Sample") without any request. Jira l
 (`app-core.js`) uses `state.jiraBrowseUrl`; `null` (no Jira connected, or the sample data) shows keys unlinked. Dates use `pl-PL`, except the Insights
 rollbacks/drift chart axis (`en-US`).
 
-**Global controls.** One PI `<select>` (`initGlobalPiSelect()`) in the tabs row serves Product view, Release Notes
+**Global controls.** One PI `<select>` (`initGlobalPiSelect()`) in the tabs row serves Product view, Delivery summary
 and Insights (hidden on Technical view). Options come from `index.json` with the server's `currentPi()` marked; a
-change refetches the shard behind a "latest request wins" check, refreshes the Product/Release Notes filter options
+change refetches the shard behind a "latest request wins" check, refreshes the Product/Delivery summary filter options
 and re-renders. `currentPi()` (the org's active PI) and `state.selectedPi` (what the user browses) are different
 things. `#filterSprint` (next to it, shown only on Product view) narrows to "All sprints", the current sprint
 (default, "Current sprint (name)", resolved from `index.json` dates for the current PI only; with several active the
@@ -261,6 +261,8 @@ newest-started), "Current sprint + unresolved" (`SPRINT_CURRENT_PLUS_UNRESOLVED`
 older-sprint items of the PI not yet released on prod; offered only when a current sprint exists) or one sprint.
 It is a scope control: reapplied on load and PI switch (`refreshSprintSelect()`), not reset by "Clear".
 `issuesInSprintScope()` feeds the issue list, the Epic rollup and the summary tiles.
+The tiles (`renderProductSummary()`, by `prodStatusBucket()`) count PROD only and say so: "Released to PROD",
+"Deployed to PROD (hidden)" (flag off, or no flag), "Partially on PROD", "Not on PROD".
 
 **Product view.** Grouped by Epic (`groupIssuesByEpic()`): an Epic is a header, never a data row; children group by
 `epicKey` even when the Epic itself was not synced (header from the child's `epicKey`/`epicTitle`); the rest goes to
@@ -284,7 +286,8 @@ shows the file diff, the Git history counts and "What this does not show". The t
 (`filterDeployRange`, display-only, unrelated to retention); clicking a deployment in the matrix clears it.
 The flags panel uses `issueStatusIndex` for `flagBlastRadius()`/`flagStaleWarning()` (`STALE_FLAG_DAYS` = 60).
 
-**Release Notes** (always on). Real-PI (`isRealPi`) issues released to users on prod (`issueIsReleasedToProd()`:
+**Delivery summary** (always on; the code keeps the old name: `app-release-notes.js`,
+`releaseNotes*` ids). Real-PI (`isRealPi`) issues released to users on prod (`issueIsReleasedToProd()`:
 `released` or `deployed_code_only`), grouped by PI → sprint (newest first, `compareVersionDesc`), split into
 "Features & Improvements" and "Bug Fixes"; a Service filter over the applications narrows the list.
 Unreleased issues are not shown. Each item: title + PROD pill on the first line, then the key (a plain

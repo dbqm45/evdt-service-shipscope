@@ -140,6 +140,9 @@ test('renderProductSummary: counts, current tag, active tile and hostile PI', ()
     assert.ok(out.includes('3/4'));
     assert.equal(out.split('data-tile-key').length - 1, 4);
     assert.ok(out.includes('25% of items'));
+    for (const label of ['Released to PROD', 'Deployed to PROD (hidden)', 'Partially on PROD', 'Not on PROD']) {
+        assert.ok(out.includes(label), label);
+    }
 
 
     setState({ selectedPi: EVIL, jiraIssues: [issue('B-1')], jiraIndex: null });

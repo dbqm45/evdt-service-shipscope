@@ -13,10 +13,10 @@ function renderProductSummary(){
     const piCardHtml = PiCard({ name: targetPi && incrementLabel(targetPi), isCurrent: showCurrentTag, total, onProd, onProdPct: pct(onProd) });
 
     const tiles = [
-        { key: 'released', label: 'Released', color: 'var(--nd-released)', value: counts.released },
-        { key: 'code', label: 'Code deployed', color: 'var(--nd-code)', value: counts.code },
-        { key: 'partial', label: 'Partial', color: 'var(--nd-warn)', value: counts.partial },
-        { key: 'none', label: 'Not deployed', color: 'var(--nd-fg-4)', value: counts.none },
+        { key: 'released', label: 'Released to PROD', color: 'var(--nd-released)', value: counts.released },
+        { key: 'code', label: 'Deployed to PROD (hidden)', color: 'var(--nd-code)', value: counts.code },
+        { key: 'partial', label: 'Partially on PROD', color: 'var(--nd-warn)', value: counts.partial },
+        { key: 'none', label: 'Not on PROD', color: 'var(--nd-fg-4)', value: counts.none },
     ];
 
     const tilesHtml = tiles.map(t => StatusTile({

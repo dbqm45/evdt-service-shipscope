@@ -261,7 +261,7 @@ nazwy sprintu (`27.3.1` → `PI-27.3` albo według szablonu nazwy PI ustawionego
 nazwa. Dla tablic, które nie pracują w PI, okresem jest sprint, wydanie albo miesiąc i to pokazuje selektor.
 (`server/lib/jira-model.js`.)
 
-## Zakładka Release Notes
+## Zakładka Delivery summary
 
 ### Co pokazuje?
 
