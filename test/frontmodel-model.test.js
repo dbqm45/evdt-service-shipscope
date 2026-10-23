@@ -103,6 +103,24 @@ test('a deployment naming only a sub-task counts for its parent (subtaskKeys)', 
     assert.deepEqual(j(`issueStatusForEnv(${story},"prod")`), { level: 'deployed_code_only', blocked: false, results: [] });
 });
 
+test('an issue with no deployment of its own counts as deployed where all its blockers are (blockedByKeys)', () => {
+    const { j, run, setState } = loadApp();
+
+    setState({
+        // B-1 (a Story) shipped through its sub-task B-3 on test and qa; B-2 only on test.
+        deployments: [dep('c', 'test', { relatedIssues: ['B-3', 'B-2'] }), dep('c', 'qa', { relatedIssues: ['B-3'] })],
+        jiraIssues: [{ key: 'B-1', subtaskKeys: ['B-3'] }],
+    });
+    assert.deepEqual(j('issueStatusForEnv({key:"BUG-1",blockedByKeys:["B-1"]},"qa")'), { level: 'deployed_code_only', blocked: false, results: [] },
+        'the blocker is matched on its sub-task\'s key');
+    assert.equal(run('issueStatusForEnv({key:"BUG-1",blockedByKeys:["B-1"]},"prod").level'), 'none');
+    assert.equal(run('issueStatusForEnv({key:"BUG-2",blockedByKeys:["B-1","B-2"]},"test").level'), 'deployed_code_only');
+    assert.equal(run('issueStatusForEnv({key:"BUG-2",blockedByKeys:["B-1","B-2"]},"qa").level'), 'none', 'every blocker, not any');
+    assert.equal(run('issueStatusForEnv({key:"BUG-3",blockedByKeys:["B-2"]},"test").level'), 'deployed_code_only', 'a blocker not loaded: its own key');
+    assert.equal(run('issueStatusForEnv({key:"BUG-4",blockedByKeys:[]},"test").level'), 'none');
+    assert.equal(run('issueStatusForEnv({key:"BUG-5"},"test").level'), 'none', 'synced before the field');
+});
+
 test('issueStatusForEnv without linked flags: raw deployment presence', () => {
     const { j, setState } = loadApp();
 

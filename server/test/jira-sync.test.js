@@ -127,10 +127,17 @@ test('jira model: an issue mapped to the dashboard shape, its sprint taken from 
     }), FIELD_IDS, scope);
     assert.deepStrictEqual(issue, {
         key: 'ABC-1', type: 'Story', title: 'ABC-1 title', pi: 'PI-27.3', sprint: 'Sparks 27.3.2', status: 'In Progress', statusCategory: 'indeterminate',
-        dependencyBlocked: true, projectName: 'eMobility Sparks', epicKey: 'ABC-10', epicTitle: 'The epic', impediment: true, subtasks: { done: 1, total: 2 }, subtaskKeys: ['ABC-7'],
+        dependencyBlocked: true, blockedByKeys: ['XYZ-9'], projectName: 'eMobility Sparks', epicKey: 'ABC-10', epicTitle: 'The epic', impediment: true, subtasks: { done: 1, total: 2 }, subtaskKeys: ['ABC-7'],
         priority: 'Major', created: '2026-09-01T10:00:00.000+0000', resolvedAt: null, featureFlags: [], dependencyNote: 'Blocked by XYZ-9: API first',
     });
     assert.deepStrictEqual(mapIssue(raw('ABC-6', 'Task'), FIELD_IDS, scope).subtaskKeys, [], 'no sub-tasks: an empty list');
+    const doneBlocker = mapIssue(raw('ABC-8', 'Bug', [], { issuelinks: [
+        { type: { inward: 'is blocked by' }, inwardIssue: { key: 'ABC-1', fields: { status: { statusCategory: { key: 'done' } } } } },
+        { type: { inward: 'is blocked by' }, inwardIssue: { key: 'ABC-1' } },
+        { type: { inward: 'relates to' }, inwardIssue: { key: 'ABC-2' } },
+        { type: { inward: 'is blocked by' }, inwardIssue: { key: 'not a key' } },
+    ] }), FIELD_IDS, scope);
+    assert.deepStrictEqual(doneBlocker.blockedByKeys, ['ABC-1'], 'resolved blockers too, once each; other links and bad keys left out');
     assert.strictEqual(mapIssue(raw('ABC-2', 'Bug', [{ id: 99, name: 'Rocket 27.3.9' }]), FIELD_IDS, scope).sprint, null, 'another board\'s sprint is not this issue\'s here');
     assert.strictEqual(mapIssue(raw('ABC-3', 'Task', [], { customfield_10014: 'ABC-11' }), FIELD_IDS, scope).epicKey, 'ABC-11', 'legacy Epic Link');
     assert.strictEqual(mapIssue(raw('ABC-4', 'Sub'), FIELD_IDS, scope), null, 'sub-tasks are counted on their parent');

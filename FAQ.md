@@ -266,6 +266,16 @@ the sprint name (`27.3.1` → `PI-27.3`, or the board's own PI-name template), `
 that don't work in PIs the "increment" is the sprint, the release or the month, and the selector shows that instead.
 (`server/lib/jira-model.js`.)
 
+### How is an issue linked to a deployment, and why can it say "Not deployed"?
+
+Through the Jira keys in the deployment's commit messages. An issue counts as deployed on an environment when a
+successful deployment there names its key or the key of one of its sub-tasks. An issue with no deployment of its own
+and no flag also counts as deployed where **every** issue it "is blocked by" is deployed (each blocker matched on its
+key and its sub-tasks' keys): a bug fixed in a Story's sub-task shows the Story's deployments. Only one level of
+blockers is followed. "Not deployed" means none of this matched; issues synced before the sub-task and blocker keys
+were added match on their own key until the next Jira sync. (`issueKeys()`, `deployedViaBlockers()` in
+`docs/app-model.js`; `subtaskKeys`/`blockedByKeys` from `server/lib/jira-model.js`.)
+
 ## Delivery summary tab
 
 ### What does it show?

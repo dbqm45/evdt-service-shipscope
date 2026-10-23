@@ -340,6 +340,7 @@ function extractFlagKeys(fields, flagLink) {
 
 const ISSUE_KEY = /^[A-Z][A-Z0-9_]*-\d+$/;
 const MAX_SUBTASK_KEYS = 100;
+const MAX_BLOCKED_BY_KEYS = 20;
 
 const str = (v, max = 500) => (typeof v === 'string' ? v.slice(0, max) : null);
 
@@ -364,8 +365,13 @@ function mapIssue(raw, fieldIds, { pi, sprintsInScope, sprint: fallbackSprint = 
     const inScope = sprintEntries.filter((s) => Number.isSafeInteger(s?.id) && sprintsInScope.has(s.id)).map((s) => sprintsInScope.get(s.id));
     const sprint = inScope.find((s) => s.state === 'active') || inScope[inScope.length - 1] || null;
 
-    const blockers = (Array.isArray(f.issuelinks) ? f.issuelinks : []).filter((link) => link?.type?.inward === 'is blocked by'
-        && link.inwardIssue && link.inwardIssue.fields?.status?.statusCategory?.key !== 'done');
+    const blockedBy = (Array.isArray(f.issuelinks) ? f.issuelinks : []).filter((link) => link?.type?.inward === 'is blocked by'
+        && link.inwardIssue);
+    const blockers = blockedBy.filter((link) => link.inwardIssue.fields?.status?.statusCategory?.key !== 'done');
+    // Every "is blocked by" issue, resolved or not: an issue whose code shipped in what blocks it (no commit of its own)
+    // counts as deployed where all of them are (deployedViaBlockers() in docs/app-model.js).
+    const blockedByKeys = [...new Set(blockedBy.map((link) => link.inwardIssue.key).filter((k) => typeof k === 'string' && ISSUE_KEY.test(k)))]
+        .slice(0, MAX_BLOCKED_BY_KEYS);
     const subtasks = Array.isArray(f.subtasks) && f.subtasks.length
         ? { done: f.subtasks.filter((st) => st?.fields?.status?.statusCategory?.key === 'done').length, total: f.subtasks.length }
         : null;
@@ -394,6 +400,7 @@ function mapIssue(raw, fieldIds, { pi, sprintsInScope, sprint: fallbackSprint = 
         status: str(f.status?.name, 100),
         statusCategory: ['new', 'indeterminate', 'done'].includes(statusCategory) ? statusCategory : null,
         dependencyBlocked: blockers.length > 0,
+        blockedByKeys,
         projectName: str(f.project?.name, 200),
         epicKey,
         epicTitle,

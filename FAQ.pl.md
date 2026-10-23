@@ -272,6 +272,16 @@ nazwy sprintu (`27.3.1` → `PI-27.3` albo według szablonu nazwy PI ustawionego
 nazwa. Dla tablic, które nie pracują w PI, okresem jest sprint, wydanie albo miesiąc i to pokazuje selektor.
 (`server/lib/jira-model.js`.)
 
+### Jak zadanie łączy się z wdrożeniem i dlaczego może mieć „Not deployed”?
+
+Przez klucze Jiry w opisach commitów wdrożenia. Zadanie jest wdrożone na środowisku, gdy udane wdrożenie na nim
+wymienia jego klucz albo klucz jednego z jego sub-tasków. Zadanie bez własnego wdrożenia i bez flagi liczy się też
+jako wdrożone tam, gdzie wdrożone jest **każde** zadanie, przez które jest „is blocked by” (każde dopasowywane po
+kluczu i kluczach jego sub-tasków): błąd naprawiony w sub-tasku Story pokazuje wdrożenia tej Story. Brany jest tylko
+jeden poziom blokad. „Not deployed” znaczy, że nic z tego nie pasuje; zadania zsynchronizowane przed dodaniem kluczy
+sub-tasków i blokad pasują tylko po własnym kluczu do następnej synchronizacji Jiry. (`issueKeys()`,
+`deployedViaBlockers()` w `docs/app-model.js`; `subtaskKeys`/`blockedByKeys` z `server/lib/jira-model.js`.)
+
 ## Zakładka Delivery summary
 
 ### Co pokazuje?
