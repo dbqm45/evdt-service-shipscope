@@ -14,6 +14,12 @@ const PER_PAGE = 100;
 const MAX_PAGES = 20;
 /** Per request. Without it one stalled connection would block the worker indefinitely. */
 const REQUEST_TIMEOUT_MS = 30_000;
+/**
+ * A GET that fails with a 5xx or a network error (not a timeout: that one already took 30 s) is tried again after
+ * each delay, so a moment of GitHub trouble doesn't cost a deployment's issues or a whole repo's pass. Writes are
+ * never repeated, and a rate limit has its own pause (GitHubRateLimitError). Tests set the delays to 0.
+ */
+const RETRY = { delaysMs: [2000, 4000, 8000], sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)) };
 
 class GitHubApiError extends Error {
     constructor(message, status) {
@@ -55,7 +61,20 @@ function createAppJwt({ appId, privateKey, now = Date.now() }) {
     return `${unsigned}.${signature}`;
 }
 
-async function githubFetch(fetchFn, path, { token, method = 'GET', body }) {
+async function githubFetch(fetchFn, path, options) {
+    const retries = (options.method || 'GET') === 'GET' ? RETRY.delaysMs : [];
+    for (let attempt = 0; ; attempt++) {
+        try {
+            return await githubFetchOnce(fetchFn, path, options);
+        } catch (err) {
+            const transient = !(err instanceof GitHubRateLimitError) && (err.status >= 500 || (err.status === 0 && !err.timedOut));
+            if (!transient || attempt >= retries.length) throw err;
+            await RETRY.sleep(retries[attempt]);
+        }
+    }
+}
+
+async function githubFetchOnce(fetchFn, path, { token, method = 'GET', body }) {
     let res;
     try {
         res = await fetchFn(`${API}${path}`, {
@@ -71,7 +90,8 @@ async function githubFetch(fetchFn, path, { token, method = 'GET', body }) {
             ...(body === undefined ? {} : { body: JSON.stringify(body) }),
         });
     } catch (err) {
-        throw new GitHubApiError(`${method} ${path.split('?')[0]} failed: ${err.name === 'TimeoutError' ? 'timed out' : err.message}`, 0);
+        const timedOut = err.name === 'TimeoutError';
+        throw Object.assign(new GitHubApiError(`${method} ${path.split('?')[0]} failed: ${timedOut ? 'timed out' : err.message}`, 0), { timedOut });
     }
     if (isRateLimited(res)) {
         // GitHub: without a header, wait at least a minute.
@@ -201,4 +221,5 @@ module.exports = {
     listInstallationRepos,
     GitHubApiError,
     GitHubRateLimitError,
+    RETRY,
 };
