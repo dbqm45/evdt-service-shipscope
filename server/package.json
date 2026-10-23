@@ -1,6 +1,6 @@
 {
   "name": "shipscope-server",
-  "version": "0.2.11",
+  "version": "0.2.12",
   "private": true,
   "description": "ShipScope SaaS backend (Fastify + Postgres) — see @CLAUDE.md's \"Backend (server/)\" section.",
   "engines": {

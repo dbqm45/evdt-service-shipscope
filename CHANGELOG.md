@@ -7,6 +7,12 @@ dashboard, not a published package), so entries are grouped by date instead. See
 ShipScope is, `CLAUDE.md` for the technical reference, and `FAQ.md` for how specific numbers/badges are
 calculated.
 
+## [0.2.12] - 2026-10-23
+
+### Fixed
+
+- **SHP:** refuse flag keys every object already has, like toString (#64)
+
 ## [0.2.11] - 2026-10-23
 
 ### Fixed
