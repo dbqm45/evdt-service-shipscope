@@ -11,7 +11,7 @@ const vm = require('vm');
  */
 
 // The scripts buildFallbackData() needs, in docs/index.html order.
-const SCRIPTS = ['app-html', 'app-core', 'app-components', 'app-data', 'app-model'];
+const SCRIPTS = ['app-html', 'app-icons', 'app-core', 'app-components', 'app-data', 'app-model'];
 
 // What the scripts' load-time code (e.g. the theme button in app-core.js) touches; nothing is rendered.
 const stubElement = () => ({

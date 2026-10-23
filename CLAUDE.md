@@ -235,7 +235,7 @@ reading it through `loadData()` in a `vm`; `server-test.yml` also runs on `docs/
 ## Frontend (`docs/`)
 
 **Files.** Classic `<script>` tags (not ES modules — those do not load over `file://`, which `FALLBACK` needs),
-loaded by `docs/index.html` in this order: `app-html`, `app-core`, `app-components`, `app-data`, `app-model`,
+loaded by `docs/index.html` in this order: `app-html`, `app-icons`, `app-core`, `app-components`, `app-data`, `app-model`,
 `app-product`, `app-technical`, `app-technical-matrix`, `app-technical-timeline`, `app-technical-flags`,
 `app-release-notes`, `app-insights`, `app-main` (last; it calls `init()`). They share one global scope. Function
 declarations hoist only within one file, so code that *runs* at load time may use only the same or earlier files —
@@ -243,7 +243,8 @@ declarations hoist only within one file, so code that *runs* at load time may us
 `app-technical.js` keeps the helpers shared by the three `app-technical-*` files.
 
 **Escaping.** `app-html.js` provides the `html` tagged template (and `escapeHtml`): every interpolated value is
-escaped unless it is a nested `html` result, a `raw()` constant (e.g. an `ICONS` entry) or an array of those. All
+escaped unless it is a nested `html` result, a `raw()` constant (every `ICONS` entry and `barsIcon()`/`envBadgeIcon()`
+result in `app-icons.js` already is one, so icons go in without `raw()`) or an array of those. All
 `innerHTML` code uses `html`. An array of results assigned to `innerHTML` is comma-joined — wrap it as
 `` html`${arr}` ``. An already-built fragment interpolated into `html` must be `raw()` or it shows escaped. A plain
 `.title =` DOM property is never HTML-parsed and takes the raw string. Commit messages, Jira fields, display names
