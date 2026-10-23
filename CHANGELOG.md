@@ -7,6 +7,16 @@ dashboard, not a published package), so entries are grouped by date instead. See
 ShipScope is, `CLAUDE.md` for the technical reference, and `FAQ.md` for how specific numbers/badges are
 calculated.
 
+## [0.2.10] - 2026-10-23
+
+### Added
+
+- **SHP:** rename Release Notes to Delivery summary, PROD tile labels (#57)
+
+### Fixed
+
+- **SHP:** count deployments naming only a sub-task for its Story (#58)
+
 ## [0.2.9] - 2026-10-19
 
 ### Fixed

@@ -7,6 +7,16 @@ dashboard, nie publikowany pakiet), dlatego wpisy są pogrupowane według dat. I
 ShipScope, znajdują się w `README.pl.md`, pełne techniczne odniesienie w `CLAUDE.md` (po angielsku), a
 wyjaśnienie sposobu liczenia poszczególnych wartości/badge'y w `FAQ.pl.md`.
 
+## [0.2.10] - 2026-10-23
+
+### Nowe
+
+- **SHP:** rename Release Notes to Delivery summary, PROD tile labels (#57)
+
+### Poprawione
+
+- **SHP:** count deployments naming only a sub-task for its Story (#58)
+
 ## [0.2.9] - 2026-10-19
 
 ### Poprawione
