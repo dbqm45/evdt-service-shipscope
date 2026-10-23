@@ -8,7 +8,7 @@ const url = require('node:url');
 const vm = require('node:vm');
 
 const NOW = new Date('2026-10-09T12:00:00Z').getTime();
-const FILES = ['app-html', 'app-core', 'app-components', 'app-data', 'app-model', 'app-product', 'app-technical', 'app-technical-matrix', 'app-technical-timeline', 'app-technical-flags', 'app-release-notes', 'app-insights', 'app-main'];
+const FILES = ['app-html', 'app-icons', 'app-core', 'app-components', 'app-data', 'app-model', 'app-product', 'app-technical', 'app-technical-matrix', 'app-technical-timeline', 'app-technical-flags', 'app-release-notes', 'app-insights', 'app-main'];
 const settle = async () => { for (let i = 0; i < 20; i++) { await new Promise(r => setImmediate(r)); } };
 const plain = v => JSON.parse(JSON.stringify(v));
 

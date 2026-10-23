@@ -41,7 +41,7 @@ function load(){
         document: { documentElement: stub(), getElementById: () => stub(), addEventListener: (type, fn, capture) => listeners.push({ type, fn, capture: !!capture }) } };
 
     vm.createContext(ctx);
-    ['app-html', 'app-core', 'app-components'].forEach(f => vm.runInContext(source(f), ctx));
+    ['app-html', 'app-icons', 'app-core', 'app-components'].forEach(f => vm.runInContext(source(f), ctx));
     // app-main.js calls init() when loaded; only its delegated handlers are needed here.
     const handlers = /function initDelegatedHandlers\(\)\{[\s\S]*?\n\}\n/.exec(source('app-main'));
     assert.ok(handlers, 'initDelegatedHandlers() is in app-main.js');

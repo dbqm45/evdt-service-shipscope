@@ -25,7 +25,7 @@ const { syncAll } = require('../lib/deployment-sync');
 
 const DOCS = path.join(__dirname, '..', '..', 'docs');
 // docs/index.html order, without app-main.js (it starts the page on load).
-const SCRIPTS = ['app-html', 'app-core', 'app-components', 'app-data', 'app-model', 'app-product', 'app-technical', 'app-technical-matrix'];
+const SCRIPTS = ['app-html', 'app-icons', 'app-core', 'app-components', 'app-data', 'app-model', 'app-product', 'app-technical', 'app-technical-matrix'];
 const USERS = { alice: { id: 870_000_001, login: 'alice' } };
 const ACME = 7101;
 const ATLASSIAN = { clientId: 'atl-client', clientSecret: 'atl-secret', encryptionKey: crypto.randomBytes(32) };

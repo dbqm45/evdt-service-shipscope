@@ -34,7 +34,7 @@ function loadApp({ fetchImpl, storageThrows, loc } = {}) {
     };
 
     vm.createContext(ctx);
-    ['app-html', 'app-core', 'app-components', 'app-data', 'app-model'].forEach(f =>
+    ['app-html', 'app-icons', 'app-core', 'app-components', 'app-data', 'app-model'].forEach(f =>
         vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'docs', `${f}.js`), 'utf8'), ctx, { filename: require('node:url').pathToFileURL(path.join(__dirname, '..', 'docs', `${f}.js`)).href }));
     vm.runInContext('const FALLBACK = buildFallbackData();', ctx);
 
@@ -77,17 +77,19 @@ test('initTheme reflects a pre-applied light theme in the button title', () => {
     assert.equal(boxes.themeToggle.title, 'Switch to dark theme');
 });
 
-test('barsIcon lights the first N bars; ENV_BAR_COUNT and ICONS shape', () => {
+test('barsIcon lights the first N bars; ENV_BAR_COUNT and ICONS shape (every icon already raw())', () => {
     const { run } = loadApp();
-    const svg = run('barsIcon(2)');
+    const svg = run('String(barsIcon(2))');
 
     assert.equal((svg.match(/#ECEEF1/g) || []).length, 2);
     assert.equal((svg.match(/#33373D/g) || []).length, 1);
-    assert.equal((run('barsIcon(0)').match(/#ECEEF1/g) || []).length, 0);
-    assert.equal((run('barsIcon(3)').match(/#33373D/g) || []).length, 0);
+    assert.equal((run('String(barsIcon(0))').match(/#ECEEF1/g) || []).length, 0);
+    assert.equal((run('String(barsIcon(3))').match(/#33373D/g) || []).length, 0);
     assert.deepEqual(JSON.parse(run('JSON.stringify(ENV_BAR_COUNT)')), { test: 1, qa: 2, prod: 3 });
     assert.deepEqual(JSON.parse(run('JSON.stringify(ENVIRONMENTS)')), ['test', 'qa', 'prod']);
-    assert.ok(run('Object.values(ICONS).every(v => typeof v === "string" && v.startsWith("<svg"))'));
+    assert.ok(run('Object.values(ICONS).every(v => v instanceof SafeHtml && v.value.startsWith("<svg"))'));
+    assert.ok(run('barsIcon(1) instanceof SafeHtml && envBadgeIcon(1) instanceof SafeHtml'));
+    assert.ok(run('String(html`<i>${ICONS.flag}</i>`).startsWith("<i><svg")'), 'goes into html unescaped, no raw() needed');
     assert.ok(run('["external","manual","chevron","chevronDown","warn","flag","hourglass","bug","check"].every(k => k in ICONS)'));
 });
 

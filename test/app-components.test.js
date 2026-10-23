@@ -12,7 +12,7 @@ function load(){
         document: { documentElement: stubElement(), getElementById: () => stubElement() } };
 
     vm.createContext(ctx);
-    ['app-html', 'app-core', 'app-components'].forEach(f =>
+    ['app-html', 'app-icons', 'app-core', 'app-components'].forEach(f =>
         vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'docs', `${f}.js`), 'utf8'), ctx));
 
     return code => String(vm.runInContext(code, ctx));

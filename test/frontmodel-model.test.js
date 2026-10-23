@@ -21,7 +21,7 @@ function loadApp() {
         localStorage: { setItem() {} }, document: { documentElement: el(), getElementById: () => el() } };
 
     vm.createContext(ctx);
-    ['app-html', 'app-core', 'app-components', 'app-model'].forEach(f => {
+    ['app-html', 'app-icons', 'app-core', 'app-components', 'app-model'].forEach(f => {
         const file = path.join(__dirname, '..', 'docs', `${f}.js`);
 
         vm.runInContext(fs.readFileSync(file, 'utf8'), ctx, { filename: url.pathToFileURL(file).href });

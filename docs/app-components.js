@@ -7,7 +7,7 @@
 // Loaded after app-core.js (some components read `ICONS`) and before every view. Atoms (Tag, StatusPill, …)
 // come first, molecules built from them after, grouped by the view that uses them. Naming: PascalCase, one
 // props object per component. Strings go in as plain strings (escaped by `html`); pre-built markup goes in as
-// `html` results; only fixed developer-authored constants (`ICONS.*`) are wrapped in `raw()` here.
+// `html` results; fixed developer-authored markup is `raw()` (`ICONS.*` already are, docs/app-icons.js).
 
 /** Joins truthy class names with a space — keeps optional modifiers from leaving stray double spaces. */
 function classNames(...parts){
@@ -21,7 +21,7 @@ function Tag({ text, cls = '', title = '', icon = null }){
     const titleAttr = title ? html` title="${title}"` : '';
 
     if (icon) {
-        return html`<span class="${classNames('tag', 'tag-flagged', cls)}"${titleAttr}>${raw(icon)}<span>${text}</span></span>`;
+        return html`<span class="${classNames('tag', 'tag-flagged', cls)}"${titleAttr}>${icon}<span>${text}</span></span>`;
     }
 
     return html`<span class="${classNames('tag', cls)}"${titleAttr}>${text}</span>`;
@@ -88,20 +88,20 @@ function ResolvedFlagBadge({ flagKey, on }){
 /** Grey pill. `withIcon` adds the cursor glyph used for "Manual" deploys; without it the same look doubles as a
  *  plain component chip. */
 function ManualBadge({ text = 'Manual', withIcon = false }){
-    return html`<span class="manual-badge">${withIcon ? raw(ICONS.manual) : ''}${text}</span>`;
+    return html`<span class="manual-badge">${withIcon ? ICONS.manual : ''}${text}</span>`;
 }
 
 function RollbackBadge({ toRef }){
-    return html`<span class="rollback-badge" title="moved this environment back to an earlier commit (${toRef})">${raw(ICONS.rewind)} rollback</span>`;
+    return html`<span class="rollback-badge" title="moved this environment back to an earlier commit (${toRef})">${ICONS.rewind} rollback</span>`;
 }
 
 function RunBadge({ url }){
-    return ExternalLink({ href: url, cls: 'run-badge', stopClick: true, title: 'View workflow run', children: raw(ICONS.external) });
+    return ExternalLink({ href: url, cls: 'run-badge', stopClick: true, title: 'View workflow run', children: ICONS.external });
 }
 
-/** `icon` is a ready-made SVG string (see `envBadgeIcon()` in app-core.js). */
+/** `icon` is a ready-made raw() SVG (see `envBadgeIcon()` in app-icons.js). */
 function EnvBadge({ env, icon }){
-    return html`<span class="env-badge">${raw(icon)}${env.toUpperCase()}</span>`;
+    return html`<span class="env-badge">${icon}${env.toUpperCase()}</span>`;
 }
 
 /** "Name" or, when the raw login differs from the shown name, "Name" with the login as its tooltip. */
@@ -234,7 +234,7 @@ function IssueRow({ rowClass, issueKey, href, title, type, badges, cells, breakd
 
 function EpicChevron({ hasChildren, collapsed }){
     return hasChildren
-        ? html`<span class="wi-epic-chevron${collapsed ? '' : ' open'}">${raw(ICONS.chevron)}</span>`
+        ? html`<span class="wi-epic-chevron${collapsed ? '' : ' open'}">${ICONS.chevron}</span>`
         : html`<span class="wi-epic-chevron-empty" title="No linked work items">–</span>`;
 }
 
@@ -282,17 +282,17 @@ function EnvStatusNote({ text, warn = false }){
     return html`<span class="${classNames('env-status-note', warn && 'env-status-warn')}">${text}</span>`;
 }
 
-/** Title row of an env card; `icon` is the `barsIcon()` SVG string, `note` an `EnvStatusNote`. */
+/** Title row of an env card; `icon` is the `barsIcon()` raw() SVG, `note` an `EnvStatusNote`. */
 function EnvCardHeader({ env, icon, serviceCount, note }){
     return html`
       <div class="env-title-row">
-        <div class="env-title">${raw(icon)}${env}<span class="env-count">${serviceCount} service${serviceCount === 1 ? '' : 's'}</span></div>
+        <div class="env-title">${icon}${env}<span class="env-count">${serviceCount} service${serviceCount === 1 ? '' : 's'}</span></div>
         ${note}
       </div>`;
 }
 
 function FlagsNotTrackedIcon(){
-    return html`<span class="flags-not-tracked-icon" title="Feature flags for this component aren't tracked in the Flags panel below yet — check with the owning team directly.">${raw(ICONS.flag)}</span>`;
+    return html`<span class="flags-not-tracked-icon" title="Feature flags for this component aren't tracked in the Flags panel below yet — check with the owning team directly.">${ICONS.flag}</span>`;
 }
 
 /** Avatar plus name block of a matrix row. `.comp-name` is the flex row: avatar on the left, then a plain
@@ -331,7 +331,7 @@ function ComponentDeployedMeta({ status, version, driftNote = '' }){
 function DriftNoteButton({ env, behind, skipped, sameVersion, diffJson }){
     const data = html`data-env="${env}" data-behind="${behind}" data-skipped="${skipped}" data-same-version="${sameVersion ? '1' : ''}" data-diff="${diffJson}"`;
 
-    return html`<button type="button" class="drift-info-btn drift-note" title="Diff to ${env} — click for details" ${data}>${raw(ICONS.warn)} Diff to ${env}</button>`;
+    return html`<button type="button" class="drift-info-btn drift-note" title="Diff to ${env} — click for details" ${data}>${ICONS.warn} Diff to ${env}</button>`;
 }
 
 /** Plain `.drift-note` line (Flags panel): "possibly stale", "diverges from build default". */
@@ -349,7 +349,7 @@ function DriftModalSection({ title, counts = '', paths = [], more = 0, text, cls
 /** `sections` are `DriftModalSection` props. */
 function DriftModalContent({ headTitle, component = '', sections }){
     return html`
-        <div class="drift-modal-head"><h3>${raw(ICONS.warn)} <span>${headTitle}${component ? html` <span class="drift-modal-service">${component}</span>` : ''}</span></h3><button type="button" class="drift-modal-close" aria-label="Close" data-close-dialog>×</button></div>
+        <div class="drift-modal-head"><h3>${ICONS.warn} <span>${headTitle}${component ? html` <span class="drift-modal-service">${component}</span>` : ''}</span></h3><button type="button" class="drift-modal-close" aria-label="Close" data-close-dialog>×</button></div>
         ${sections.map(DriftModalSection)}`;
 }
 
@@ -367,7 +367,7 @@ function FlagRowContent({ name, state }){
 }
 
 function InfoTip({ text }){
-    return html`<span class="info-tip" title="${text}">${raw(ICONS.info)}</span>`;
+    return html`<span class="info-tip" title="${text}">${ICONS.info}</span>`;
 }
 
 /* ---------- Technical view: deployment history ---------- */
@@ -408,12 +408,12 @@ function DeployCardTitle({ kind, status, component, version }){
           ${ComponentAvatar({ kind })}
           ${StatusDot({ status })}
           <span class="deploy-comp">${component}</span>
-          <span class="version-arrow">${raw(ICONS.arrowRight)}</span>
+          <span class="version-arrow">${ICONS.arrowRight}</span>
           <span class="version">${version}</span>`;
 }
 
 function DeployGroupToggle({ groupKey, count, open }){
-    return html`<button type="button" class="deploy-group-toggle${open ? ' open' : ''}" data-group-key="${groupKey}">${count} deploys ${raw(ICONS.chevronDown)}</button>`;
+    return html`<button type="button" class="deploy-group-toggle${open ? ' open' : ''}" data-group-key="${groupKey}">${count} deploys ${ICONS.chevronDown}</button>`;
 }
 
 /** One run inside an expanded grouped-deploy card. */
@@ -437,7 +437,7 @@ function FlagAddedCard({ name, timeText, components }){
     <div class="flag-added-item">
       <div class="deploy-top">
         <div class="deploy-left">
-          <span class="flag-event-icon">${raw(ICONS.flag)}</span>
+          <span class="flag-event-icon">${ICONS.flag}</span>
           <span class="flag-new-name">${name}</span>
           <span class="flag-new-pill">New flag</span>
         </div>
@@ -492,7 +492,7 @@ function FlagRow({ name, typeLabel, open, notes, states, details }){
         <div class="ff-meta">
           <span>${typeLabel}</span>
           ${MetaDot()}
-          <button type="button" class="deploy-group-toggle${open ? ' open' : ''}" aria-expanded="${open}" aria-label="${open ? 'Hide' : 'Show'} details for ${name}">Details ${raw(ICONS.chevronDown)}</button>
+          <button type="button" class="deploy-group-toggle${open ? ' open' : ''}" aria-expanded="${open}" aria-label="${open ? 'Hide' : 'Show'} details for ${name}">Details ${ICONS.chevronDown}</button>
         </div>
         ${notes}
       </div>
