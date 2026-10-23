@@ -102,6 +102,20 @@ Zasady:
 - **Wydanej wersji się nie zmienia.** Taga nie przesuwamy ani nie usuwamy; błąd w wydaniu naprawia kolejna wersja.
 - **Wycofywanie funkcji**: najpierw MINOR z oznaczeniem „przestarzałe” i zastępstwem, usunięcie dopiero w MAJOR.
 
+## Wersja adaptera flag w FAQ
+
+Przykładowe workflowy w FAQ (`FAQ.md`/`FAQ.pl.md`, „Jak wypróbować adapter flag…” i „Jak wygląda kompletny
+workflow?”) przypinają adapter do wydania: `adapters/flags@vX.Y.Z` i commit wydania `@<sha> # vX.Y.Z`. Każde wydanie
+taguje całe repozytorium, ale większość wydań nie zmienia adaptera; wtedy przykład nadal uruchamia ten sam kod i nie
+jest podbijany.
+
+- Po wydaniu sprawdź, czy zmieniło adapter od wersji pokazanej w FAQ:
+  `git log --oneline vFAQ..vNOWA -- adapters/`. Pusta lista: FAQ zostaje bez zmian.
+- Coś na liście: w PR typu `docs` zamień każde `vFAQ` w obu plikach FAQ na `vNOWA`, a przypięty SHA na commit wydania,
+  `git ls-remote https://github.com/dbqm45/evdt-service-shipscope 'refs/tags/vNOWA^{}'` (tagi są z adnotacją: bez
+  `^{}` dostaniesz obiekt tagu). `test/faq-adapter-version.test.js` sprawdza, że oba pliki podają jedną wersję, a
+  przypięta linia ją niesie.
+
 ## Wymagania po stronie GitHuba
 
 - *Settings → Actions → General → Workflow permissions*: workflow deklaruje `contents: write` dla jobów, które

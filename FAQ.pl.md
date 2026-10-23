@@ -155,7 +155,7 @@ adapter by wysłał.
        runs-on: ubuntu-latest
        steps:
          - uses: actions/checkout@v7
-         - uses: dbqm45/evdt-service-shipscope/adapters/flags@v0.2.11   # albo nowszy tag wydania
+         - uses: dbqm45/evdt-service-shipscope/adapters/flags@v0.2.14   # albo nowszy tag wydania
            with:
              environment: prod
              files: config/flags.prod.json
@@ -194,7 +194,7 @@ Na lokalnym serwerze (`npm run dev`) użyj wiersza poleceń zamiast Action, z ko
 
 ### Jak wygląda kompletny workflow?
 
-Plik do skopiowania do innego repozytorium (wersja adaptera **v0.2.11**). Wysyła flagi wszystkich środowisk po każdym
+Plik do skopiowania do innego repozytorium (wersja adaptera **v0.2.14**). Wysyła flagi wszystkich środowisk po każdym
 merge'u, który je zmienia, i można go uruchomić ręcznie, domyślnie na sucho:
 
 ```yaml
@@ -225,7 +225,7 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v7
-      - uses: dbqm45/evdt-service-shipscope/adapters/flags@v0.2.11
+      - uses: dbqm45/evdt-service-shipscope/adapters/flags@v0.2.14
         with:
           shipscope-url: ${{ vars.SHIPSCOPE_URL }}
           token: ${{ secrets.SHIPSCOPE_FLAGS_TOKEN }}
@@ -249,17 +249,17 @@ Inne układy zmieniają tylko linie w `with:`:
 | Flagi przełączane na żywo pod adresem URL | `environment: prod`, `url: https://…/flags`; wyzwalacz `schedule: [{ cron: '*/15 * * * *' }]` zamiast `push` |
 
 Żeby wysyłać przy każdym wdrożeniu, wstaw sam krok adaptera na końcu joba wdrażającego, z `environment:` i plikiem tego
-środowiska. Przypnij wersję (`@v0.2.11`); nowsze wydanie ShipScope wchodzi po zmianie tagu.
+środowiska. Przypnij wersję (`@v0.2.14`); nowsze wydanie ShipScope wchodzi po zmianie tagu.
 
 Tag na GitHubie da się jednak przesunąć (tagi wydań tego repo nie są chronione, `design-docs/SECURITY.md`). Jeśli krok
 ma uruchamiać dokładnie ten kod, który przejrzałeś, przypnij commit wydania, z wersją w komentarzu, żeby Dependabot
 i czytelnik wiedzieli, która to:
 
 ```yaml
-      - uses: dbqm45/evdt-service-shipscope/adapters/flags@839b1b082a20798fc1734eb04613fde3d1f42ca5 # v0.2.11
+      - uses: dbqm45/evdt-service-shipscope/adapters/flags@204105a2ec5a57f5b5a832dfc8ff99d0e7c5e2ac # v0.2.14
 ```
 
-Commit dowolnego wydania: `git ls-remote https://github.com/dbqm45/evdt-service-shipscope 'refs/tags/v0.2.11^{}'`
+Commit dowolnego wydania: `git ls-remote https://github.com/dbqm45/evdt-service-shipscope 'refs/tags/v0.2.14^{}'`
 (to tag z adnotacją: bez `^{}` dostaniesz obiekt tagu, nie commit).
 
 ## Jira
