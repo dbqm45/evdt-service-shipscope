@@ -179,10 +179,11 @@ function earliestProdDeployedAt(issue){
     const keys = issueKeys(issue);
     const liveTimes = state.deployments
         .filter(d => d.environment === ENVIRONMENT.PROD && d.status === 'success' && deploymentNamesAny(d, keys))
-        .map(d => new Date(d.deployedAt).getTime());
+        .map(d => d.deployedAt);
     const historicalTimes = keys.flatMap(k => Object.values(state.issueDeployments[k]?.prod || {}))
-        .map(h => new Date(h.deployedAt).getTime());
-    const all = [...liveTimes, ...historicalTimes];
+        .map(h => h.deployedAt);
+    // A record without a date would read as 1970 (new Date(null)), not as "unknown".
+    const all = [...liveTimes, ...historicalTimes].filter(Boolean).map(t => new Date(t).getTime()).filter(Number.isFinite);
 
     return all.length ? Math.min(...all) : null;
 }

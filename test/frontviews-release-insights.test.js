@@ -125,26 +125,34 @@ function notesFilters(el, app = '', type = '') {
     el('filterNotesType').value = type;
 }
 
-test('renderReleaseNotesSummary: counts features and bugs for the selected PI and marks the current one', () => {
-    const { run, setState, html } = loadApp();
+test('releaseNotesModel: PI and sprint groups newest first, features and bugs split, last prod date', () => {
+    const { ev, setState } = loadApp();
 
-    setState(rnState());
-    run('renderReleaseNotesSummary()');
-    let out = html('releaseNotesSummary');
+    setState(rnState({ jiraIndex: idx([{ name: 'Sparks 27.3.2', startDate: ago(0, 5), endDate: ago(0, -9) }]) }));
+    const { reason, groups } = ev("releaseNotesModel({ app: '', type: '' })");
 
-    assert.ok(out.includes('Features &amp; improvements released'));
-    assert.ok(out.includes('in PI-27.3 (current PI)'));
-    assert.match(out, /summary-value">\d+ /);
+    assert.equal(reason, null);
+    assert.deepEqual(groups.map(g => [g.pi, g.isCurrent, g.features, g.bugs]), [['PI-27.3', true, 3, 1]]);
+    const sprints = groups[0].sprints;
 
-    setState(rnState({ selectedPi: 'PI-27.2' }));
-    run('renderReleaseNotesSummary()');
-    out = html('releaseNotesSummary');
-    assert.ok(out.includes('in PI-27.2<'));
-    assert.ok(!out.includes('(current PI)'));
+    assert.deepEqual(sprints.map(sp => sp.sprint).filter(n => n !== 'Unassigned sprint'), ['Sparks 27.3.2', 'Sparks 27.3.1']);
+    assert.ok(sprints.some(sp => sp.sprint === 'Unassigned sprint'), 'an issue without a sprint gets its own group');
+    const current = sprints.find(sp => sp.sprint === 'Sparks 27.3.2');
 
-    setState(rnState({ selectedPi: null }));
-    run('renderReleaseNotesSummary()');
-    assert.ok(html('releaseNotesSummary').includes('no PI selected'));
+    assert.equal(current.isCurrent, true);
+    assert.equal(current.key, JSON.stringify(['PI-27.3', 'Sparks 27.3.2']));
+    assert.deepEqual(current.features.map(i => i.issue.key), ['K-1']);
+    assert.deepEqual(current.bugs.map(i => i.issue.key), ['K-2']);
+    assert.equal(current.lastProdAt, Date.parse(ago(0, 3)));
+    assert.deepEqual(sprints.find(sp => sp.sprint === 'Sparks 27.3.1').items.map(i => i.issue.key), ['K-3'], 'K-6 (flag off) is not released');
+});
+
+test('notesCountsText: items and bug fixes, singular and plural', () => {
+    const { ev } = loadApp();
+
+    assert.equal(ev("notesCountsText({ items: [1], bugs: [] })"), '1 item');
+    assert.equal(ev("notesCountsText({ items: [1, 2, 3], bugs: [1] })"), '3 items · 1 bug fix');
+    assert.equal(ev("notesCountsText({ items: [1, 2], bugs: [1, 2] })"), '2 items · 2 bug fixes');
 });
 
 test('renderReleaseNotes: empty state when nothing is synced', () => {
@@ -154,7 +162,6 @@ test('renderReleaseNotes: empty state when nothing is synced', () => {
     notesFilters(el);
     run('renderReleaseNotes()');
     assert.ok(html('releaseNotesBody').includes('No issues synced from Jira yet'));
-    assert.ok(html('releaseNotesCount').includes('0</span> items'));
 });
 
 test('renderReleaseNotes: stub-only issues explain the missing PI', () => {
@@ -183,35 +190,61 @@ test('renderReleaseNotes: filters that match nothing and real issues not yet on 
     assert.ok(html('releaseNotesBody').includes('No results for the selected filters'));
 });
 
-test('renderReleaseNotes: groups by PI and sprint, splits features and bugs, escapes titles', () => {
+test('renderReleaseNotes: sprint list and the newest sprint\'s panel, escaped, with figures and sections', () => {
     const { run, setState, el, html } = loadApp();
 
-    setState(rnState({ jiraIssues: [
-        issue('K-1', { sprint: 'Sparks 27.3.2', title: EVIL }), issue('K-2', { type: 'Bug', sprint: 'Sparks 27.3.2' }), issue('K-3', { sprint: 'Sparks 27.3.1' }),
-        issue('K-4', { sprint: null }), issue('K-5', { sprint: 'Sparks 27.3.2', pi: '—' }), issue('K-6', { sprint: 'Sparks 27.3.1' }),
-    ] }));
+    setState(rnState());
     notesFilters(el);
     run('renderReleaseNotes()');
     const out = html('releaseNotesBody');
 
     assert.ok(!out.includes(EVIL));
     assert.ok(out.includes('&lt;img'));
-    assert.ok(out.includes('Features &amp; Improvements'));
-    assert.ok(out.includes('Bug Fixes'));
-    assert.ok(out.includes('Unassigned sprint'));
     assert.ok(out.indexOf('Sparks 27.3.2') < out.indexOf('Sparks 27.3.1'), 'newest sprint first');
+    assert.ok(out.includes('Unassigned sprint'));
     assert.ok(!out.includes('K-5'), 'non-real PI issue is not listed');
+    assert.match(out, /<button type="button" class="dn-sprint active" data-sprint-key="[^"]*Sparks 27.3.2[^"]*" aria-pressed="true">/);
+    assert.ok(out.includes('2 items · 1 bug fix'));
+    assert.ok(out.includes('<b>3</b> features · <b>1</b> bug<'));
+    // the panel: Sparks 27.3.2 with K-1 (feature, flag on) and K-2 (bug, flag on)
+    assert.match(out, /<h2 class="dn-panel-title">Sparks 27.3.2<\/h2>/);
+    assert.ok(out.includes('data-copy-notes'));
+    assert.match(out, /dn-stat-value[^"]*">2<[\s\S]*items on prod[\s\S]*dn-stat-value[^"]*">2<[\s\S]*released to users[\s\S]*dn-stat-value[^"]*">0<[\s\S]*code deployed, no flag[\s\S]*dn-stat-value[^"]*">1<[\s\S]*bugs fixed/);
+    assert.ok(out.includes('Features &amp; improvements') && out.includes('Bug fixes'));
     assert.ok(out.includes('status-pill'));
     assert.ok(out.includes('browse/K-1'));
-    assert.ok(html('releaseNotesCount').includes('class="pv-count-num"'));
+    assert.ok(out.includes(`on prod ${run(`fmtDateShort(${JSON.stringify(ago(0, 3))})`)}`));
 
+    // a selected sprint stays selected while it is listed; the Bug filter drops it and the panel falls back
+    run(`selectedNotesSprint = ${JSON.stringify(JSON.stringify(['PI-27.3', 'Sparks 27.3.1']))}`);
+    run('renderReleaseNotes()');
+    assert.match(html('releaseNotesBody'), /<h2 class="dn-panel-title">Sparks 27.3.1<\/h2>/);
     notesFilters(el, '', 'Bug');
     run('renderReleaseNotes()');
     const bugsOnly = html('releaseNotesBody');
 
-    assert.ok(bugsOnly.includes('Bug Fixes') && !bugsOnly.includes('Features &amp; Improvements'));
-    assert.ok(html('releaseNotesCount').includes('1</span> item'));
-    assert.ok(!html('releaseNotesCount').includes('items'));
+    assert.match(bugsOnly, /<h2 class="dn-panel-title">Sparks 27.3.2<\/h2>/);
+    assert.ok(bugsOnly.includes('Bug fixes') && !bugsOnly.includes('Features &amp; improvements'));
+    assert.ok(bugsOnly.includes('1 item · 1 bug fix'));
+});
+
+test('releaseNotesMarkdown: the selected sprint as headings and lists, keys linked only to https', () => {
+    const { run, setState, el } = loadApp();
+
+    setState(rnState());
+    notesFilters(el);
+    const date = run(`fmtDateShort(${JSON.stringify(ago(0, 3))})`);
+
+    assert.equal(run('releaseNotesMarkdown()'), [
+        '## Sparks 27.3.2 (PI-27.3)', '',
+        '### Features & improvements', '', `- [K-1](https://jira.example/browse/K-1) ${EVIL} (Released, on prod ${date})`, '',
+        '### Bug fixes', '', `- [K-2](https://jira.example/browse/K-2) T K-2 (Released, on prod ${date})`, '',
+    ].join('\n'));
+
+    setState(rnState({ jiraBrowseUrl: null }));
+    assert.ok(run('releaseNotesMarkdown()').includes('- K-1 '), 'unlinked without Jira');
+    setState({});
+    assert.equal(run('releaseNotesMarkdown()'), '');
 });
 
 test('renderReleaseNotes: sprint with only unreleased items is omitted, and PI with none too', () => {
@@ -253,7 +286,7 @@ test('renderReleaseNotes: application filter narrows by component application', 
     }));
     notesFilters(el, 'EBO');
     run('renderReleaseNotes()');
-    assert.ok(html('releaseNotesBody').includes('release-note-item'));
+    assert.ok(html('releaseNotesBody').includes('dn-item'));
     notesFilters(el, 'EVP');
     run('renderReleaseNotes()');
     assert.ok(html('releaseNotesBody').includes('No results for the selected filters'));
@@ -267,7 +300,9 @@ test('renderReleaseNotes: item without a resolvable prod date omits the date', (
     run('renderReleaseNotes()');
     const out = html('releaseNotesBody');
 
-    assert.ok(out.includes('release-note-item'));
+    assert.ok(out.includes('dn-item'));
+    assert.ok(!out.includes('dn-item-date') && !out.includes('last on prod'), 'no date on the item, none in the panel note');
+    assert.ok(out.includes('<b>—</b>'));
 });
 
 test('comparePriorityDesc ranks the org scheme then unknown names alphabetically', () => {

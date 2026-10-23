@@ -597,8 +597,8 @@ test('refreshReleaseNotesFilterOptions builds application and type options from 
     assert.deepEqual(typeGroup.children.map(c => c.dataset.value), ['Bug', 'Story', 'Task']);
 });
 
-test('initReleaseNotesFilters wires type clicks, app input and clear', () => {
-    const { run, setState, el, html } = loadApp();
+test('initReleaseNotesFilters wires type clicks, app input, sprint cards, copy and reset', async () => {
+    const { ctx, run, setState, el, html } = loadApp();
     const typeGroup = withOptionQsa(el('filterNotesTypeGroup'));
     const allBtn = new El('button');
     const bugBtn = new El('button');
@@ -616,12 +616,32 @@ test('initReleaseNotesFilters wires type clicks, app input and clear', () => {
     typeGroup.fire('click', { target: { closest: () => bugBtn } });
     assert.equal(el('filterNotesType').value, 'Bug');
     assert.ok(bugBtn.classes.has('active'));
-    assert.ok(html('releaseNotesCount').includes('pv-count-num'));
+
+    // a sprint card selects its sprint (kept in selectedNotesSprint until a reset)
+    const key = JSON.stringify(['PI-27.3', 'Sparks 27.3.1']);
+    const card = { dataset: { sprintKey: key } };
+
+    el('releaseNotesBody').fire('click', { target: { closest: sel => (sel === '[data-sprint-key]' ? card : null) } });
+    assert.equal(run('selectedNotesSprint'), key);
+
+    // Copy as Markdown writes the selected sprint and marks the button
+    const written = [];
+    const copy = new El('button');
+
+    ctx.navigator = { clipboard: { writeText: t => { written.push(t); return Promise.resolve(); } } };
+    ctx.setTimeout = () => {};
+    el('releaseNotesBody').fire('click', { target: { closest: sel => (sel === '[data-copy-notes]' ? copy : null) } });
+    await Promise.resolve();
+    assert.equal(written.length, 1);
+    assert.equal(written[0], run('releaseNotesMarkdown()'));
+    assert.ok(copy.classes.has('copied'));
 
     el('filterNotesApp').value = 'svc';
     el('filterNotesApp').fire('input');
-    el('btnClearNotesFilters').onclick();
+    run('resetReleaseNotesFilters()');
     assert.equal(el('filterNotesApp').value, '');
     assert.equal(el('filterNotesType').value, '');
+    assert.equal(run('selectedNotesSprint'), null);
     assert.ok(allBtn.classes.has('active') && !bugBtn.classes.has('active'));
+    assert.ok(html('releaseNotesBody').length > 0);
 });

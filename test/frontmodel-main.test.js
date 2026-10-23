@@ -242,10 +242,11 @@ test('PI select change loads the shard, resets filters and refreshes sprint scop
 
     const { boxes, run } = app;
     let clears = 0;
-    let noteClears = 0;
 
     boxes.btnClearFilters.onclick = () => { clears++; };
-    boxes.btnClearNotesFilters.onclick = () => { noteClears++; };
+    boxes.filterNotesApp.value = 'svc';
+    boxes.filterNotesType.value = 'Bug';
+    run('selectedNotesSprint = "x"');
     boxes.chartSprint.innerHTML = '';
 
     boxes.globalPiSelect.value = 'PI-1.0';
@@ -255,7 +256,9 @@ test('PI select change loads the shard, resets filters and refreshes sprint scop
     assert.deepEqual(plain(run('state.jiraIssues.map(i => i.key)')), ['B-1']);
     assert.equal(run('state.selectedSprint'), '', 'PI without sprint data -> All sprints');
     assert.equal(clears, 1);
-    assert.equal(noteClears, 1);
+    assert.equal(boxes.filterNotesApp.value, '', 'Delivery summary filters reset');
+    assert.equal(boxes.filterNotesType.value, '');
+    assert.equal(run('selectedNotesSprint'), null);
     assert.ok(String(boxes.chartSprint.innerHTML).length > 0, 'insights re-rendered');
 });
 

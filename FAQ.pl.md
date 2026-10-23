@@ -294,10 +294,13 @@ sub-tasków i blokad pasują tylko po własnym kluczu do następnej synchronizac
 ### Co pokazuje?
 
 Zadania, które są dostępne dla użytkowników na PROD — `released` (wdrożone i z włączoną flagą) albo wdrożone bez
-flagi, na którą trzeba czekać — pogrupowane po okresie i sprincie (od najnowszych) i podzielone na „Features &
-Improvements” oraz „Bug Fixes”. Niewydane zadania nie są pokazywane. Każda pozycja ma plakietkę statusu na PROD,
-klucz Jiry i datę pierwszego trafienia na PROD. Filtr Service zawęża listę do jednej aplikacji.
-(`docs/app-release-notes.js`, `issueIsReleasedToProd`, `earliestProdDeployedAt`.)
+flagi, na którą trzeba czekać. Po lewej sprinty każdego okresu (od najnowszych), każdy z dniem, w którym ostatnio coś
+z niego trafiło na PROD, i liczbą pozycji oraz poprawek błędów; po prawej kliknięty sprint (domyślnie najnowszy):
+cztery liczby — pozycje na PROD, wydane użytkownikom (flaga włączona), kod wdrożony bez flagi, poprawione błędy —
+a pod nimi „Features & improvements” i „Bug fixes”. Każda pozycja ma typ, klucz Jiry, plakietkę statusu na PROD
+i datę pierwszego trafienia na PROD. Niewydane zadania nie są pokazywane. Filtry Service i Type zawężają listę;
+„Copy as Markdown” kopiuje wybrany sprint jako gotową notkę o wydaniu. (`docs/app-release-notes.js`,
+`issueIsReleasedToProd`, `earliestProdDeployedAt`.)
 
 ### Dlaczego jest pusto, choć Jira jest połączona?
 

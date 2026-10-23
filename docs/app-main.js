@@ -59,7 +59,7 @@ function initGlobalPiSelect(){
         document.getElementById('btnClearFilters').click();
 
         refreshReleaseNotesFilterOptions();
-        document.getElementById('btnClearNotesFilters').click();
+        resetReleaseNotesFilters();
 
         if (INSIGHTS_ENABLED) {
             renderInsights();

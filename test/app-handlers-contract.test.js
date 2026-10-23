@@ -25,6 +25,8 @@ const READERS = {
     'data-epic-key': 'app-product',
     'data-group-key': 'app-technical-timeline',
     'data-flag': 'app-technical-flags',
+    'data-sprint-key': 'app-release-notes',
+    'data-copy-notes': 'app-release-notes',
     'data-tile-key': null,
 };
 // The drift button's attributes reach openDriftModal() through `{ ...infoBtn.dataset }`, not one by one.
