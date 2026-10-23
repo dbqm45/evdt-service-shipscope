@@ -9,6 +9,8 @@ on:
       # Server tests also post the flags adapter's messages and the onboarding guide's examples through the route.
       - 'adapters/**'
       - 'ONBOARDING*.md'
+      # The dashboard-data contract test (server/test/dashboard-contract.test.js) loads the frontend that reads it.
+      - 'docs/app-*.js'
 
 permissions:
   contents: read
