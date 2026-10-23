@@ -7,6 +7,12 @@ dashboard, nie publikowany pakiet), dlatego wpisy są pogrupowane według dat. I
 ShipScope, znajdują się w `README.pl.md`, pełne techniczne odniesienie w `CLAUDE.md` (po angielsku), a
 wyjaśnienie sposobu liczenia poszczególnych wartości/badge'y w `FAQ.pl.md`.
 
+## [0.2.13] - 2026-10-23
+
+### Poprawione
+
+- **SHP:** resolve version=latest and suffixed versions to a tag (#65)
+
 ## [0.2.12] - 2026-10-23
 
 ### Poprawione
