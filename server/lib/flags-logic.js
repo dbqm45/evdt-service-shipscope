@@ -11,8 +11,18 @@ class IngestPayloadError extends Error {}
 // A sender's own change time is trusted within these bounds; outside them the payload is rejected.
 const MAX_CHANGED_AT_AGE_MS = 7 * 24 * 3600e3;
 const MAX_CHANGED_AT_SKEW_MS = 5 * 60e3;
-// Keys become object keys in the dashboard's flag data; these would turn into prototype writes there.
-const DANGEROUS_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+/**
+ * Flag keys become object keys in the dashboard's flag data. A name every object already has (`__proto__`,
+ * `constructor`, `toString`, `valueOf`, `hasOwnProperty`, ...) would read or write the shared prototype there
+ * instead of the flag's own entry: the flag vanishes, and the built-in it hit is changed for every tenant in the
+ * process. Such keys are refused on the way in and skipped on the way out (rows stored before this check).
+ *
+ * @param {string} key
+ * @returns {boolean}
+ */
+function isReservedKey(key) {
+    return key === 'prototype' || key in Object.prototype;
+}
 
 /** 'runtime' sources fill the dashboard's 'runtime-be' slot; everything else fills 'build'. */
 function slotOf(kind) {
@@ -46,7 +56,7 @@ function checkPayload(payload, now) {
     const seen = new Map();
     const observations = [];
     payload.observations.forEach((obs, i) => {
-        if (DANGEROUS_KEYS.has(obs.key)) throw new IngestPayloadError(`observations[${i}].key is not a valid flag key`);
+        if (isReservedKey(obs.key)) throw new IngestPayloadError(`observations[${i}].key is not a valid flag key`);
         if (obs.rollout !== undefined && obs.state !== 'partial') throw new IngestPayloadError(`observations[${i}]: rollout is only meaningful with state "partial"`);
         let changedAt = now;
         if (obs.changedAt !== undefined) {
@@ -73,7 +83,7 @@ function checkPayload(payload, now) {
     const observedKeys = new Set(observations.map((o) => o.key));
     const metaByKey = new Map();
     for (const [i, meta] of (payload.flags || []).entries()) {
-        if (DANGEROUS_KEYS.has(meta.key)) throw new IngestPayloadError(`flags[${i}].key is not a valid flag key`);
+        if (isReservedKey(meta.key)) throw new IngestPayloadError(`flags[${i}].key is not a valid flag key`);
         if (metaByKey.has(meta.key)) throw new IngestPayloadError(`flags[${i}]: ${meta.key} is listed twice`);
         // Metadata only travels with values: a sender describes the flags it reports, never someone else's.
         if (!observedKeys.has(meta.key)) throw new IngestPayloadError(`flags[${i}]: ${meta.key} has no observations in this payload`);
@@ -135,7 +145,7 @@ function sourceDescriptors(sourceRows, componentOf) {
 function pickWinningValues(values, sources) {
     const winners = new Map();
     const componentsOf = new Map();
-    for (const v of values) {
+    for (const v of values.filter((row) => !isReservedKey(row.key))) {
         const source = sources.get(v.source_id);
         const id = `${v.key}\u0000${v.environment}\u0000${source.slot}`;
         const best = winners.get(id);
@@ -176,7 +186,7 @@ function pickWinningValues(values, sources) {
  */
 function visibleFlagsMeta(flags, { slotsOf, componentsOf }, fromJira) {
     const flagsMeta = {};
-    for (const f of flags.filter((row) => slotsOf.has(row.key))) {
+    for (const f of flags.filter((row) => slotsOf.has(row.key) && !isReservedKey(row.key))) {
         flagsMeta[f.key] = {
             description: f.manual_description || f.description || '',
             source: slotsOf.get(f.key).has('runtime-be') ? 'runtime-be' : 'build',
@@ -204,6 +214,7 @@ function historyRecords(history, sources) {
 
 module.exports = {
     IngestPayloadError,
+    isReservedKey,
     MAX_CHANGED_AT_AGE_MS,
     MAX_CHANGED_AT_SKEW_MS,
     slotOf,

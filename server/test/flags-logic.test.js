@@ -5,7 +5,29 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const {
     slotOf, enabledFrom, mergeJiraKeys, sameValue, planIngestWrites, sourceDescriptors, pickWinningValues, visibleFlagsMeta, historyRecords,
+    isReservedKey,
 } = require('../lib/flags-logic');
+
+test('isReservedKey: every name an object already has, plus prototype; ordinary keys pass', () => {
+    for (const key of ['__proto__', 'constructor', 'prototype', 'toString', 'valueOf', 'hasOwnProperty', '__defineGetter__', 'isPrototypeOf']) {
+        assert.equal(isReservedKey(key), true, key);
+    }
+    for (const key of ['newCheckout', 'to_string', 'proto', 'Constructor', 'value.of']) assert.equal(isReservedKey(key), false, key);
+});
+
+test('a reserved key stored before the check is skipped on the way out, and no built-in is changed', () => {
+    const sources = new Map([['s', { name: 'S', slot: 'build', priority: 0, component: 'web' }]]);
+    const row = (key) => ({ source_id: 's', key, environment: 'prod', state: 'on', rollout: null, changed_at: new Date('2026-01-01'), changed_by: 'x' });
+    const winners = pickWinningValues([row('toString'), row('valueOf'), row('ok')], sources);
+    assert.deepEqual(Object.keys(winners.flagStates), ['ok']);
+    assert.deepEqual([...winners.slotsOf.keys()], ['ok']);
+    assert.equal(Object.hasOwn(Object.prototype.toString, 'prod'), false, 'Object.prototype.toString untouched');
+    assert.equal(Object.hasOwn(Object.prototype.valueOf, 'prod'), false);
+    const flag = (key) => ({ key, description: 'd', manual_description: null, jira_keys: [], manual_jira_keys: [], created_at: new Date('2026-01-01') });
+    const slotsOf = new Map([['toString', new Set(['build'])], ['ok', new Set(['build'])]]);
+    const componentsOf = new Map([['toString', new Set(['web'])], ['ok', new Set(['web'])]]);
+    assert.deepEqual(Object.keys(visibleFlagsMeta([flag('toString'), flag('ok')], { slotsOf, componentsOf }, new Map())), ['ok']);
+});
 
 test('slotOf: runtime sources fill runtime-be, everything else fills build', () => {
     assert.equal(slotOf('runtime'), 'runtime-be');

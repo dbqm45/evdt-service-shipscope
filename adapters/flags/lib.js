@@ -13,7 +13,9 @@ const { parseYaml, YamlError } = require('./yaml');
 const ENVIRONMENTS = ['test', 'qa', 'prod'];
 // The same rules as the server's schema; checked here so a wrong key fails before anything is sent.
 const FLAG_KEY = /^[A-Za-z_][A-Za-z0-9_.:-]{0,127}$/;
-const DANGEROUS_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+// A name every object has (__proto__, constructor, toString, ...): ShipScope refuses it as a flag key, and as an
+// object key here it would set or hide the prototype instead of the flag. Same rule as the server's isReservedKey().
+const isReservedKey = (key) => key === 'prototype' || key in Object.prototype;
 const MAX_OBSERVATIONS = 5000;
 const FORMATS = ['json', 'yaml', 'properties', 'env', 'ts', 'js'];
 // In a list of flag objects, the fields tried for the flag's key and for its value when none is named.
@@ -242,6 +244,7 @@ function flagMap(doc, { path: dotPath, valuePath, keyField, rolloutPath, prefix 
     for (const [rawKey, value] of entries) {
         if (prefix && !rawKey.startsWith(prefix)) continue;
         const key = prefix ? rawKey.slice(prefix.length) : rawKey;
+        if (isReservedKey(key)) throw new AdapterError(`${where}: "${key}" cannot be a flag key (every object already has it)`);
         if (Object.hasOwn(out, key)) throw new AdapterError(`${where}: flag ${key} is listed twice`);
         out[key] = value;
     }
@@ -286,7 +289,7 @@ function buildPayload({ byEnv, changedBy, complete = true }) {
     const observations = [];
     for (const env of ENVIRONMENTS.filter((e) => envs.includes(e))) {
         for (const key of Object.keys(byEnv[env]).sort()) {
-            if (!FLAG_KEY.test(key) || DANGEROUS_KEYS.has(key)) {
+            if (!FLAG_KEY.test(key) || isReservedKey(key)) {
                 throw new AdapterError(`"${key}" is not a valid flag key (letters, digits and _ . : -, starting with a letter or _)`);
             }
             observations.push({ key, env, ...byEnv[env][key] });

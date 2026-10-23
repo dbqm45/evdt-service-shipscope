@@ -71,7 +71,8 @@ a flag service. Each such place is one **flag source**:
 }
 ```
 
-- `observations` — one entry per flag and environment: `key` (case-sensitive, letters, digits and `_ . : -`), `env`
+- `observations` — one entry per flag and environment: `key` (case-sensitive, letters, digits and `_ . : -`; not a name every
+  JavaScript object has, such as `constructor` or `toString`), `env`
   (`test`, `qa` or `prod`: map your own names, e.g. `staging` → `qa`, `production` → `prod`), `state` (`on`, `off` or
   `partial` — on for some users, with an optional `rollout` percentage) and an optional `changedAt` (ISO 8601) when
   you send late; it must be within the last 7 days, and an older value never replaces a newer one.

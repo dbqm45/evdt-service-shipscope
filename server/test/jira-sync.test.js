@@ -110,6 +110,7 @@ test('jira model: feature flags an issue names -- in a field (text, labels, opti
     assert.deepStrictEqual(extractFlagKeys({ labels: ['flag:newCheckout', 'FLAG:darkMode', 'team-sparks', 'flag:', 'flagged'] }, label), ['newCheckout', 'darkMode']);
     assert.deepStrictEqual(extractFlagKeys({ labels: ['flag:newCheckout'] }, null), [], 'no convention: nothing');
     assert.deepStrictEqual(extractFlagKeys({}, label), []);
+    assert.deepStrictEqual(extractFlagKeys({ labels: ['flag:toString', 'flag:constructor', 'flag:ok'] }, label), ['ok'], 'names every object has are not flag keys');
 
     assert.ok(issueFields({ flagLink: field }).includes('customfield_10050'), 'the flag field is fetched');
     assert.ok(!issueFields({ flagLink: label }).some((f) => f.startsWith('customfield_')), 'labels are fetched anyway');
