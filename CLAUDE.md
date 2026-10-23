@@ -124,7 +124,9 @@ emptied. `sync_requests` (webhook queue) is the one non-RLS table; it holds no t
 - **Tenants and members (FR-002/003)** — `lib/tenants.js`; invitation links (`lib/invitations.js`: one-time hashed
   tokens, single-use claim by conditional `UPDATE`, last-admin guard). `GET /invitations/:token` answers HTML (a
   page with a Join button, `ui/invite.html`) to browsers and JSON to other clients.
-- **GitHub App connection (FR-004/006)** — `lib/github-app.js` (App JWT, installation tokens), `lib/github-connections.js`.
+- **GitHub App connection (FR-004/006)** — `lib/github-app.js` (App JWT, installation tokens; a GET failing with a
+  5xx or a network error, not a timeout, is retried after 2/4/8 s, `RETRY`; writes and rate limits never are),
+  `lib/github-connections.js`.
   An installation is linked only after the user's own token shows they can access it (`GET /user/installations` in
   the sign-in callback), never on the `installation_id` of GitHub's setup redirect alone.
 - **Deployment ingestion (FR-005)** — the worker (`worker.js`) runs `lib/deployment-sync.js` and the Jira sync

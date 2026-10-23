@@ -1,6 +1,10 @@
 const assert = require('node:assert');
 const crypto = require('crypto');
 
+// Retried GitHub GETs (5xx, network errors) wait 2/4/8 s in production; a fake GitHub answering 500 on purpose
+// must not slow the suite down.
+require('../../lib/github-app').RETRY.delaysMs = [0, 0, 0];
+
 const AUTH = {
     githubClientId: 'Iv1.test',
     githubClientSecret: 'test-secret',

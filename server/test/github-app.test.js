@@ -1,7 +1,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const crypto = require('crypto');
-const { createAppJwt, getInstallation, userCanAccessInstallation, listInstallationRepos, GitHubApiError } = require('../lib/github-app');
+const { createAppJwt, getInstallation, userCanAccessInstallation, listInstallationRepos, githubGet, GitHubApiError, GitHubRateLimitError, RETRY } = require('../lib/github-app');
 
 const { privateKey, publicKey } = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 });
 const app = { appId: '4242', privateKey };
@@ -95,4 +95,44 @@ test('createInstallationToken: asks for read-only permissions; on a 422 asks for
 
     // Other errors are not retried.
     await assert.rejects(() => createInstallationToken({ app, installationId: 5, fetch: async () => json({}, 404) }), (err) => err.status === 404);
+});
+
+test('githubGet: a 5xx or a network error is retried after 2/4/8 s; a 4xx, a timeout or a rate limit is not', async (t) => {
+    const waits = [];
+    t.mock.method(RETRY, 'sleep', async (ms) => { waits.push(ms); });
+    t.mock.property(RETRY, 'delaysMs', [2000, 4000, 8000]);
+    const answers = (...list) => t.mock.fn(async () => {
+        const next = list.shift();
+        if (next instanceof Error) throw next;
+        return typeof next === 'number' ? json({}, next) : json(next);
+    });
+
+    let fetchMock = answers(502, Object.assign(new Error('socket hang up'), { name: 'Error' }), 503, { ok: true });
+    assert.deepStrictEqual(await githubGet({ token: 't', path: '/x', fetch: fetchMock }), { ok: true });
+    assert.deepStrictEqual(waits, [2000, 4000, 8000]);
+    assert.strictEqual(fetchMock.mock.callCount(), 4);
+
+    waits.length = 0;
+    fetchMock = answers(500, 500, 500, 500);
+    await assert.rejects(githubGet({ token: 't', path: '/x', fetch: fetchMock }), (err) => err instanceof GitHubApiError && err.status === 500);
+    assert.strictEqual(fetchMock.mock.callCount(), 4, 'gives up after the last delay');
+
+    for (const [label, first] of [['404', 404], ['timeout', Object.assign(new Error('t'), { name: 'TimeoutError' })]]) {
+        waits.length = 0;
+        fetchMock = answers(first, { ok: true });
+        await assert.rejects(githubGet({ token: 't', path: '/x', fetch: fetchMock }), GitHubApiError, label);
+        assert.strictEqual(fetchMock.mock.callCount(), 1, `${label}: not retried`);
+    }
+    fetchMock = t.mock.fn(async () => new Response('{}', { status: 429, headers: { 'retry-after': '1' } }));
+    await assert.rejects(githubGet({ token: 't', path: '/x', fetch: fetchMock }), GitHubRateLimitError);
+    assert.strictEqual(fetchMock.mock.callCount(), 1, 'a rate limit pauses the installation instead');
+    assert.deepStrictEqual(waits, []);
+});
+
+test('createInstallationToken: a POST is never repeated, even on a 5xx', async (t) => {
+    const { createInstallationToken } = require('../lib/github-app');
+    t.mock.method(RETRY, 'sleep', async () => {});
+    const fetchMock = t.mock.fn(async () => json({}, 502));
+    await assert.rejects(createInstallationToken({ app, installationId: 1, fetch: fetchMock }), GitHubApiError);
+    assert.strictEqual(fetchMock.mock.callCount(), 1);
 });
