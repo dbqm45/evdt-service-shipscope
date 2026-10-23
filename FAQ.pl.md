@@ -45,6 +45,13 @@ trafienie:
 4. ciąg wyglądający na wersję (`v1.2.3`, `1.2.3`) w **opisie commita**;
 5. skrócony **SHA commita**.
 
+Wartość z pliku wersji jest dopasowywana do taga: tak jak zapisana, potem z dodanym albo usuniętym prefiksem `v`,
+a dla wersji z sufiksem, np. `1.4.25-okta`, `2.0.0-rc.1`, `1.0.0+build5` czy `1.0.0_hotfix`, tag bazowy `1.4.25`
+(dokładny tag zawsze wygrywa). Pokazywana wersja zostaje taka, jak zapisana (`1.4.25-okta`); tag służy do powiązanych
+zadań, rollbacku i driftu. `version=latest` oznacza najnowszy opublikowany release (nie przedpremierowy), który
+istniał w chwili utworzenia deploymentu, i ten tag jest pokazywany. Lepiej jednak, żeby pipeline zapisywał konkretną
+wersję (`version=v1.1.46`): „latest” to tylko domysł.
+
 Release i tag są przed opisem commita, bo wolny tekst może wspominać niezwiązaną wersję; Release albo tag to celowy
 sygnał. Deploy prosto z commita z gałęzi funkcjonalnej zwykle kończy się na SHA, bo żadnego sygnału nie ma. Do
 porównań na GitHubie używany jest tylko potwierdzony Release/tag (albo SHA); wersja wzięta z opisu jest tylko

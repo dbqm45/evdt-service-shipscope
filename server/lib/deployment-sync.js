@@ -177,7 +177,9 @@ async function syncRepo({ pool, token, tenantId, repo, fetch: fetchFn = fetch, n
         const commit = await githubGet({ token, path: `/repos/${fullName}/commits/${sha}`, fetch: fetchFn });
         const message = commit?.commit?.message || '';
         const fileRef = repo.versionFile
-            ? await resolveVersionFile({ token, fullName, versionFile: repo.versionFile, sha, tagNames: refIndex.tagNames, fetch: fetchFn })
+            ? await resolveVersionFile({
+                token, fullName, versionFile: repo.versionFile, sha, tagNames: refIndex.tagNames, releases: refIndex.releases, at: entry.dep.created_at, fetch: fetchFn,
+            })
             : null;
         const { version, resolvedRef } = resolveVersion({ sha, message, refIndex, fileRef });
         const previous = previousByEnv[entry.environment] || null;
