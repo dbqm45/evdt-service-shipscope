@@ -131,7 +131,10 @@ emptied. `sync_requests` (webhook queue) is the one non-RLS table; it holds no t
   every `SYNC_INTERVAL_MINUTES` (default 15) and `lib/retention.js` daily, each behind a Postgres advisory lock. Retention is per tenant
   (`tenants.deployment_retention_days`, default 90, 7–730) and always keeps each repo/environment's latest and latest
   successful deployment. Version resolution (`lib/version-resolution.js`: release → tag → version file → commit
-  message; compares use only a verified release/tag or the SHA, stored as `deployments.resolved_ref`). Drift
+  message; compares use only a verified release/tag or the SHA, stored as `deployments.resolved_ref`). A version
+  file's label goes through `matchVersionLabel()`: the tag as written, the `v` prefix toggled, the base `X.Y.Z` tag
+  of a suffixed label (`1.4.25-okta`; label kept, tag used), and `latest` = the newest published non-prerelease
+  release before the deployment's `created_at` (its tag becomes the label). Drift
   (`lib/env-drift.js` + `lib/tree-diff.js`) is stored per repo in `tracked_repos.drift = { inputs, failed, envs }`,
   recomputed only when a latest successful deploy changed or the last attempt failed; a failed comparison keeps the
   previous value. Per-repo `version_file`/`drift_ignore_paths` are set by an admin

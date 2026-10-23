@@ -1,7 +1,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const { fakeGitHub, AUTH, signIn, testGitHubApp } = require('./helpers/auth');
-const { extractPromotedVersion, parseVersionProperty, fetchRefIndex, resolveVersionFile, resolveVersion } = require('../lib/version-resolution');
+const { extractPromotedVersion, parseVersionProperty, matchVersionLabel, fetchRefIndex, resolveVersionFile, resolveVersion } = require('../lib/version-resolution');
 const { computeEnvDrift } = require('../lib/env-drift');
 
 const sha = (n) => n.toString(16).padStart(40, 'a');
@@ -72,6 +72,55 @@ test('resolveVersionFile: a tag by that name, else the commit it names, else nul
     assert.strictEqual(await resolve(sha(3)), null, 'a ref GitHub does not know');
     assert.strictEqual(await resolve(sha(4)), null, 'no version= line');
     assert.strictEqual(await resolve(sha(5)), null, 'no file at that commit');
+});
+
+test('matchVersionLabel: exact tag, the v prefix toggled, the base tag of a suffixed version, latest release', () => {
+    const tagNames = new Set(['v1.4.25', '2.0.0', '3.1.0-okta', '3.1.0', 'v5.0.0']);
+    const m = (label, extra) => matchVersionLabel(label, { tagNames, ...extra });
+    assert.deepStrictEqual(m('v1.4.25'), { ref: 'v1.4.25', label: 'v1.4.25' });
+    assert.deepStrictEqual(m('1.4.25'), { ref: 'v1.4.25', label: '1.4.25' }, 'v added');
+    assert.deepStrictEqual(m('v2.0.0'), { ref: '2.0.0', label: 'v2.0.0' }, 'v dropped');
+    for (const suffix of ['-okta', '-abc', '-rc.1', '+build5', '_hotfix']) {
+        assert.deepStrictEqual(m(`1.4.25${suffix}`), { ref: 'v1.4.25', label: `1.4.25${suffix}` }, suffix);
+    }
+    assert.deepStrictEqual(m('3.1.0-okta'), { ref: '3.1.0-okta', label: '3.1.0-okta' }, 'an exact tag wins over the base one');
+    assert.strictEqual(m('1.4.25.1'), null, 'a fourth number is not a suffix');
+    assert.strictEqual(m('9.9.9-okta'), null, 'no base tag either');
+    assert.strictEqual(m('main'), null);
+
+    const releases = [{ tag: 'v5.0.0', publishedAt: '2026-10-10T00:00:00Z' }, { tag: '2.0.0', publishedAt: '2026-09-01T00:00:00Z' }];
+    assert.deepStrictEqual(m('latest', { releases, at: '2026-10-20T00:00:00Z' }), { ref: 'v5.0.0', label: 'v5.0.0' });
+    assert.deepStrictEqual(m('LATEST', { releases, at: '2026-10-01T00:00:00Z' }), { ref: '2.0.0', label: '2.0.0' }, 'the newest one that existed then');
+    assert.strictEqual(m('latest', { releases, at: '2026-08-01T00:00:00Z' }), null, 'no release yet');
+    assert.strictEqual(m('latest', { releases }), null, 'no deployment time');
+    assert.deepStrictEqual(matchVersionLabel('latest', { tagNames: new Set(['latest']), releases, at: '2026-10-20T00:00:00Z' }),
+        { ref: 'latest', label: 'latest' }, 'a tag really named latest is used as is');
+});
+
+test('fetchRefIndex: releases for "latest" are the published, non-prerelease ones whose tag exists, newest first', async () => {
+    const { fetch } = fakeRepo({
+        tags: [{ name: 'v1', commit: { sha: sha(1) } }, { name: 'v2', commit: { sha: sha(2) } }, { name: 'v3', commit: { sha: sha(3) } }],
+        releases: [
+            { tag_name: 'v1', published_at: '2026-09-01T00:00:00Z' },
+            { tag_name: 'v2', published_at: '2026-10-01T00:00:00Z' },
+            { tag_name: 'v3', published_at: '2026-10-05T00:00:00Z', prerelease: true },
+            { tag_name: 'v3', published_at: null, draft: true },
+            { tag_name: 'gone', published_at: '2026-10-09T00:00:00Z' },
+        ],
+    });
+    const { releases } = await fetchRefIndex({ token: TOKEN, fullName: 'acme/web', fetch });
+    assert.deepStrictEqual(releases, [{ tag: 'v2', publishedAt: '2026-10-01T00:00:00Z' }, { tag: 'v1', publishedAt: '2026-09-01T00:00:00Z' }]);
+});
+
+test('resolveVersionFile: version=latest and a suffixed version resolve to a tag', async () => {
+    const { fetch, calls } = fakeRepo({
+        files: { [sha(1)]: { 'trigger.properties': 'version=latest\n' }, [sha(2)]: { 'trigger.properties': 'version=1.4.25-okta\n' } },
+    });
+    const releases = [{ tag: 'v1.1.46', publishedAt: '2026-10-10T00:00:00Z' }];
+    const resolve = (at) => resolveVersionFile({ token: TOKEN, fullName: 'acme/web', versionFile: 'trigger.properties', sha: at, tagNames: new Set(['v1.1.46', 'v1.4.25']), releases, at: '2026-10-20T00:00:00Z', fetch });
+    assert.deepStrictEqual(await resolve(sha(1)), { ref: 'v1.1.46', label: 'v1.1.46' });
+    assert.deepStrictEqual(await resolve(sha(2)), { ref: 'v1.4.25', label: '1.4.25-okta' });
+    assert.ok(!calls.some((c) => c.startsWith('commits/')), 'no commit lookup when a tag matched');
 });
 
 test('computeEnvDrift: the git tree decides; commit counts are context only', async () => {
@@ -281,6 +330,32 @@ test('sync: a version file names what really shipped; set later, it re-resolves 
     });
     [repo] = await rows('SELECT drift FROM tracked_repos');
     assert.deepStrictEqual(repo.drift.envs, {}, 'qa and prod both run v0.0.2 now');
+});
+
+test('sync: version=latest is the release published before the deployment; a suffixed version uses its base tag', async (t) => {
+    const trigger = (n) => sha(200 + n);
+    const web = {
+        deployments: [
+            { id: 2, environment: 'test', sha: trigger(2), created_at: at(10) },
+            { id: 1, environment: 'prod', sha: trigger(1), created_at: at(20) },
+        ],
+        statuses: { 1: ok(19), 2: ok(9) },
+        commits: { [sha(1)]: 'feat: ABC-1', [sha(2)]: 'feat: ABC-2', [trigger(1)]: 'trigger', [trigger(2)]: 'trigger' },
+        tags: [{ name: 'v1.0.0', commit: { sha: sha(1) } }, { name: 'v1.1.0', commit: { sha: sha(2) } }],
+        // v1.1.0 was published after the prod deployment was created: "latest" then still meant v1.0.0.
+        releases: [{ tag_name: 'v1.1.0', published_at: at(15) }, { tag_name: 'v1.0.0', published_at: at(30) }],
+        files: { [trigger(1)]: { 'trigger.properties': 'version=latest\n' }, [trigger(2)]: { 'trigger.properties': 'version=1.1.0-okta\n' } },
+        treeOf: { [sha(1)]: 'tree-1', [sha(2)]: 'tree-2' },
+        trees: { 'tree-1': tree({ 'a.js': '1' }), 'tree-2': tree({ 'a.js': '2' }) },
+        compare: () => ({ ahead_by: 1, behind_by: 0 }),
+    };
+    const { app, alice, tenantId, sync, rows } = await setup(t, web);
+    const res = await app.inject({ method: 'PUT', url: `/tenants/${tenantId}/github/repos/1/settings`, cookies: { sid: alice }, payload: { versionFile: 'trigger.properties', driftIgnorePaths: [] } });
+    assert.strictEqual(res.statusCode, 200, res.body);
+
+    await sync();
+    const deps = await rows('SELECT deployment_id, version, resolved_ref FROM deployments ORDER BY deployment_id');
+    assert.deepStrictEqual(deps.map((d) => [Number(d.deployment_id), d.version, d.resolved_ref]), [[1, 'v1.0.0', 'v1.0.0'], [2, '1.1.0-okta', 'v1.1.0']]);
 });
 
 test('sync: a failed drift comparison keeps the previous value and is retried on the next pass', async (t) => {

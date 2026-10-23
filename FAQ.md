@@ -43,6 +43,13 @@ The same rule for every environment; what differs is only which commit is deploy
 4. a version-like string (`v1.2.3`, `1.2.3`) in the **commit message**;
 5. the shortened **commit SHA**.
 
+The version file's value is matched to a tag: as written, then with the `v` prefix added or dropped, then — for a
+version with a suffix such as `1.4.25-okta`, `2.0.0-rc.1`, `1.0.0+build5` or `1.0.0_hotfix` — the base tag `1.4.25`
+(an exact tag always wins). The version shown stays as written (`1.4.25-okta`); the tag is used for the issues,
+rollback and drift. `version=latest` means the newest published (non-pre-)release that existed when the deployment
+was created, and that tag is shown. A pipeline that writes the concrete version (`version=v1.1.46`) is still the
+better choice: "latest" is a guess.
+
 Releases and tags come before the message because free text can mention an unrelated version; a Release or tag is
 a deliberate signal. A deploy straight from a feature-branch commit usually ends at the SHA because no signal
 exists. Only a verified Release/tag (or the SHA) is used for GitHub comparisons; a version taken from a message is
