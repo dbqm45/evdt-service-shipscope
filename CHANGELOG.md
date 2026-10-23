@@ -7,6 +7,12 @@ dashboard, not a published package), so entries are grouped by date instead. See
 ShipScope is, `CLAUDE.md` for the technical reference, and `FAQ.md` for how specific numbers/badges are
 calculated.
 
+## [0.2.16] - 2026-10-23
+
+### Added
+
+- **SHP:** show Settings as pages with a sidebar (#71)
+
 ## [0.2.15] - 2026-10-23
 
 ### Added
