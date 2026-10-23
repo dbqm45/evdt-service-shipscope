@@ -69,13 +69,12 @@ test('Release Notes render several rows without stray commas and escape hostile 
     seed(ctx);
     vm.runInContext('renderReleaseNotes()', ctx);
 
-    for (const id of ['releaseNotesBody', 'releaseNotesSummary', 'releaseNotesCount']) {
-        const out = html(id);
+    const out = html('releaseNotesBody');
 
-        assert.ok(!out.includes(EVIL), `${id} contains an unescaped payload`);
-        assert.ok(!/>\s*,\s*</.test(out), `${id} contains a stray comma between elements`);
-    }
-    assert.ok(html('releaseNotesBody').includes('release-note-item'), 'expected released items to be listed');
+    assert.ok(!out.includes(EVIL), 'releaseNotesBody contains an unescaped payload');
+    assert.ok(!/>\s*,\s*</.test(out), 'releaseNotesBody contains a stray comma between elements');
+    assert.ok(out.includes('dn-item'), 'expected released items to be listed');
+    assert.ok(out.includes('dn-sprint'), 'expected the sprint list');
     assert.ok(html('releaseNotesBody').includes('&lt;img'), 'expected the title to appear escaped');
 });
 

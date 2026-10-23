@@ -304,11 +304,16 @@ The flags panel uses `issueStatusIndex` for `flagBlastRadius()`/`flagStaleWarnin
 
 **Delivery summary** (always on; the code keeps the old name: `app-release-notes.js`,
 `releaseNotes*` ids). Real-PI (`isRealPi`) issues released to users on prod (`issueIsReleasedToProd()`:
-`released` or `deployed_code_only`), grouped by PI → sprint (newest first, `compareVersionDesc`), split into
-"Features & Improvements" and "Bug Fixes"; a Service filter over the applications narrows the list.
-Unreleased issues are not shown. Each item: title + PROD pill on the first line, then the key (a plain
-`<span class="tag mono">`; the title is already the link) and the first prod date (`earliestProdDeployedAt()`,
-omitted when unknown). Empty with fallback stubs.
+`released` or `deployed_code_only`), as `releaseNotesModel()` builds them: increments → sprints (newest first,
+`compareVersionDesc`), each split into features and bugs, with the latest first-prod date of its items. No page
+header; a toolbar with the Service (applications) and Type filters, then two columns: the sprint list (a card per
+sprint: day/month of `lastProdAt`, name, "current", "N items · M bug fixes"; `data-sprint-key`) and the selected
+sprint's panel (`selectedNotesSprint`, the newest when unset or filtered out): PROD badge, "Current sprint · last on
+prod", four figures (items on prod / released to users = `released` / code deployed, no flag = `deployed_code_only` /
+bugs fixed), "Features & improvements" and "Bug fixes". Each item: title (the link), type and key tags, PROD pill
+and first prod date (`earliestProdDeployedAt()`, omitted when unknown). "Copy as Markdown" (`data-copy-notes`) puts
+`releaseNotesMarkdown()` on the clipboard. A PI switch calls `resetReleaseNotesFilters()`. Unreleased issues are not
+shown; empty with fallback stubs.
 
 **Insights** (behind `?insights=1`, `INSIGHTS_ENABLED`). Hand-rolled charts over existing data: release status per
 sprint on prod (`sprintReleaseStatusBreakdown()`, labels from `sprintLabelFor()`) and lead time Done → prod

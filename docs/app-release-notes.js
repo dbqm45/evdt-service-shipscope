@@ -1,152 +1,219 @@
 /**
- * Release Notes: real (non-fallback-stub) Jira issues released to prod, grouped by PI then sprint, narrowed by
- * the Service (application, via `state.componentsOrder`) and Type filters. Purely derived from `state` — no data file
- * or request of its own beyond what loadData() already fetches.
+ * Delivery summary (the code keeps the old name, Release Notes): real (non-fallback-stub) Jira issues released to
+ * prod (`issueIsReleasedToProd()`), as a list of sprints on the left and the selected sprint on the right —
+ * figures, then "Features & improvements" and "Bug fixes". Narrowed by the Service (application, via
+ * `state.componentsOrder`) and Type filters. Purely derived from `state` — no data file or request of its own
+ * beyond what loadData() already fetches.
  */
-/** Release Notes summary row: always the *current* PI's released counts — deliberately ignoring
- *  whatever PI/Service/Type filters are active below, so this stays one unambiguous statement
- *  ("what actually shipped this PI") instead of shifting meaning as someone filters the list. */
-function renderReleaseNotesSummary(){
-    const box = document.getElementById('releaseNotesSummary');
-    // `state.selectedPi`, not `currentPi()` — the two can legitimately differ (browsing a past PI via the
-    // global PI selector while the org has already moved on to a newer one), and `state.jiraIssues` only
-    // ever holds `selectedPi`'s issues, so filtering by `currentPi()` here would silently find nothing.
-    const pi = state.selectedPi;
-    const inScope = selectedIncrements();
-    const released = state.jiraIssues.filter(i => i.type !== ISSUE_TYPE.EPIC && inScope.includes(i.pi) && issueIsReleasedToProd(i));
-    const features = released.filter(i => i.type !== ISSUE_TYPE.BUG).length;
-    const bugs = released.filter(i => i.type === ISSUE_TYPE.BUG).length;
-    const piNote = pi ? `in ${incrementLabel(pi)}${pi === currentPi() ? ' (current PI)' : ''}` : 'no PI selected';
 
-    const cards = [
-        { label: 'Features & improvements released', value: String(features) },
-        { label: 'Bugs fixed', value: String(bugs) },
-    ];
+/** The sprint shown on the right, as its `sprintKey`; null (or one the filters no longer list) = the newest one. */
+let selectedNotesSprint = null;
 
-    box.innerHTML = html`${cards.map(c => SummaryCard({ label: c.label, value: c.value, note: piNote }))}`;
+const NO_SPRINT = 'Unassigned sprint';
+
+/** A sprint's identity across increments (two PIs can have sprints of the same name). */
+function notesSprintKey(pi, sprint){
+    return JSON.stringify([pi, sprint]);
+}
+
+/**
+ * What the tab shows, from `state` and the two filters: per increment (newest first) its sprints (newest first)
+ * with their released items, split into features and bugs, and the last time any of them reached PROD. `reason`
+ * says why there is nothing to show: `none` (no issues synced), `stubs` (only fallback stubs, no real PI),
+ * `filtered` (filters match nothing), `unreleased` (nothing on PROD yet); null when there is something.
+ *
+ * @param {{ app: string, type: string }} filters
+ * @returns {{ reason: string|null, groups: Array<{ pi: string, isCurrent: boolean, features: number, bugs: number,
+ *   sprints: Array<{ key: string, pi: string, sprint: string, isCurrent: boolean, items: object[], features: object[], bugs: object[], lastProdAt: number|null }> }> }}
+ */
+function releaseNotesModel({ app, type }){
+    const realPi = state.jiraIssues.filter(i => isRealPi(i.pi));
+    const filtered = realPi.filter(i => (!app || applicationsForIssue(i).includes(app)) && (!type || i.type === type));
+    const released = filtered.filter(issueIsReleasedToProd);
+    let reason = null;
+
+    if (!state.jiraIssues.length) {
+        reason = 'none';
+    } else if (!realPi.length) {
+        reason = 'stubs';
+    } else if (!filtered.length) {
+        reason = 'filtered';
+    } else if (!released.length) {
+        reason = 'unreleased';
+    }
+
+    const currentSprints = currentSprintNames();
+    const byPi = new Map();
+
+    released.forEach(issue => {
+        const sprint = issue.sprint || NO_SPRINT;
+        const sprints = byPi.get(issue.pi) || byPi.set(issue.pi, new Map()).get(issue.pi);
+
+        (sprints.get(sprint) || sprints.set(sprint, []).get(sprint)).push(issue);
+    });
+
+    const groups = [...byPi.keys()].sort(compareVersionDesc).map(pi => {
+        const sprints = [...byPi.get(pi).keys()].sort(compareVersionDesc).map(sprint => {
+            const items = byPi.get(pi).get(sprint).map(issue => ({
+                issue,
+                level: issueStatusForEnv(issue, ENVIRONMENT.PROD).level,
+                prodAt: earliestProdDeployedAt(issue),
+            }));
+            const times = items.map(i => i.prodAt).filter(t => t !== null);
+
+            return {
+                key: notesSprintKey(pi, sprint),
+                pi,
+                sprint,
+                isCurrent: pi === currentPi() && currentSprints.includes(sprint),
+                items,
+                features: items.filter(i => i.issue.type !== ISSUE_TYPE.BUG),
+                bugs: items.filter(i => i.issue.type === ISSUE_TYPE.BUG),
+                lastProdAt: times.length ? Math.max(...times) : null,
+            };
+        });
+
+        return {
+            pi,
+            isCurrent: pi === currentPi(),
+            features: sprints.reduce((n, s) => n + s.features.length, 0),
+            bugs: sprints.reduce((n, s) => n + s.bugs.length, 0),
+            sprints,
+        };
+    });
+
+    return { reason, groups };
+}
+
+/** The sprint the right-hand panel shows: the selected one if it is still listed, else the newest. */
+function selectedNotesSprintOf(groups){
+    const sprints = groups.flatMap(g => g.sprints);
+
+    return sprints.find(s => s.key === selectedNotesSprint) || sprints[0] || null;
+}
+
+const EMPTY_NOTES_MESSAGES = {
+    none: () => 'No issues synced from Jira yet',
+    // "Synced, but every issue is a commit-derived stub" (no title/PI/status) is a different, more actionable thing to
+    // tell someone than "nothing here".
+    stubs: () => `Found ${state.jiraIssues.length} synced issue(s), but none have a real PI yet — this usually means the Jira sync couldn't reach Jira and fell back to commit-derived stubs (no title/PI/status). See FAQ.md → "Where do the Epic/Story/Task numbers come from?".`,
+    filtered: () => 'No results for the selected filters',
+    unreleased: () => 'Found real-PI issues, but none are released to PROD yet.',
+};
+
+/** "7 items · 1 bug fix". */
+function notesCountsText(sprint){
+    const bugs = sprint.bugs.length;
+
+    return `${sprint.items.length} item${sprint.items.length === 1 ? '' : 's'}${bugs ? ` · ${bugs} bug fix${bugs === 1 ? '' : 'es'}` : ''}`;
 }
 
 function renderReleaseNotes(){
-    renderReleaseNotesSummary();
     const box = document.getElementById('releaseNotesBody');
-    const appFilter = document.getElementById('filterNotesApp').value;
-    const typeFilter = document.getElementById('filterNotesType').value;
-
-    // `state.jiraIssues` already only holds the currently-selected PI's issues (see `state.selectedPi`) —
-    // Service/Type are the only filters left to narrow which PI/sprint *groups* are considered at all;
-    // grouping still uses every real-PI issue in a matching group (not just released ones) so the "Fully
-    // released to PROD"/"In progress" badge below stays meaningful, even though only released issues are
-    // actually listed as rows.
-    const allRealPiIssues = state.jiraIssues.filter(i => isRealPi(i.pi));
-    const filteredIssues = allRealPiIssues.filter(i => {
-        if (appFilter && !applicationsForIssue(i).includes(appFilter)) {
-            return false;
-        }
-
-        return !typeFilter || i.type === typeFilter;
+    const { reason, groups } = releaseNotesModel({
+        app: document.getElementById('filterNotesApp').value,
+        type: document.getElementById('filterNotesType').value,
     });
-    const releasedCount = filteredIssues.filter(issueIsReleasedToProd).length;
 
-    document.getElementById('releaseNotesCount').innerHTML = ItemCount({ count: releasedCount });
-
-    if (!releasedCount) {
-        // Distinguish "nothing synced at all" / "synced, but every issue is a commit-derived stub" (no
-        // title/PI/status — see FAQ.md → "Where do the Epic/Story/Task numbers come from?") / "filters
-        // matched nothing" / "real data exists, but nothing here is live on PROD yet" — each is a
-        // different, more actionable thing to tell someone staring at an empty tab than one generic message.
-        // Also carries `.panel` — unlike every other `.empty` use in this file, #releaseNotesBody has no
-        // panel-styled ancestor of its own (not wrapped in a `.panel`/`.wi-table`/`.dh-panel`), so without
-        // it this would render as unstyled bare text instead of a proper card.
-        if (!state.jiraIssues.length) {
-            box.innerHTML = EmptyState({ message: 'No issues synced from Jira yet', panel: true });
-        } else if (!allRealPiIssues.length) {
-            box.innerHTML = EmptyState({ message: `Found ${state.jiraIssues.length} synced issue(s), but none have a real PI yet — this usually means the Jira sync couldn't reach Jira and fell back to commit-derived stubs (no title/PI/status). See FAQ.md → "Where do the Epic/Story/Task numbers come from?".`, panel: true });
-        } else if (!filteredIssues.length) {
-            box.innerHTML = EmptyState({ message: 'No results for the selected filters', panel: true });
-        } else {
-            box.innerHTML = EmptyState({ message: 'Found real-PI issues, but none are released to PROD yet.', panel: true });
-        }
+    if (reason) {
+        box.innerHTML = EmptyState({ message: EMPTY_NOTES_MESSAGES[reason](), panel: true });
         return;
     }
 
-    // Flat PI → Sprint grouping: the Service filter above narrows which issues are in `filteredIssues`, the
-    // result is one list, not one panel per application.
-    const byPi = new Map();
+    const selected = selectedNotesSprintOf(groups);
+    const groupsHtml = groups.map(g => DeliverySprintGroup({
+        label: incrementLabel(g.pi),
+        isCurrent: g.isCurrent,
+        features: g.features,
+        bugs: g.bugs,
+        cards: g.sprints.map(s => {
+            const at = s.lastProdAt === null ? null : new Date(s.lastProdAt);
 
-    filteredIssues.forEach(issue => {
-        if (!byPi.has(issue.pi)) {
-            byPi.set(issue.pi, new Map());
-        }
+            return DeliverySprintCard({
+                sprintKey: s.key,
+                day: at ? String(at.getDate()).padStart(2, '0') : '—',
+                month: at ? at.toLocaleDateString('en-US', { month: 'short' }).toUpperCase() : '',
+                title: s.sprint,
+                isCurrent: s.isCurrent,
+                countsText: notesCountsText(s),
+                active: s === selected,
+            });
+        }),
+    }));
 
-        const bySprint = byPi.get(issue.pi);
-        const sprintLabel = issue.sprint || 'Unassigned sprint';
-
-        if (!bySprint.has(sprintLabel)) {
-            bySprint.set(sprintLabel, []);
-        }
-
-        bySprint.get(sprintLabel).push(issue);
+    // The PROD pill stays on every row: issueIsReleasedToProd folds `released` (a flag confirms it is visible) and
+    // `deployed_code_only` (code shipped, no flag to confirm against) together, and nothing else here tells them apart.
+    const itemHtml = ({ issue, level, prodAt }) => DeliveryItem({
+        href: jiraIssueUrl(issue.key),
+        title: issue.title,
+        type: issue.type,
+        issueKey: issue.key,
+        pill: StatusPill({ cls: statusClass(level), label: statusLabel(level), title: statusLabelTooltip(level) }),
+        dateText: prodAt ? fmtDateShort(prodAt) : '',
     });
+    const released = selected.items.filter(i => i.level === RELEASE_LEVEL.RELEASED).length;
+    const last = selected.lastProdAt === null ? '' : `last on prod ${fmtDateShort(selected.lastProdAt)}`;
 
-    // TEST/QA breakdown still isn't shown here — "released" already implies "live on PROD" (see
-    // issueIsReleasedToProd above), so those two pills would just be redundant noise. The PROD pill
-    // itself is still worth showing, though: issueIsReleasedToProd folds two different real states
-    // together — `released` (a flag confirms it's visible) vs. `deployed_code_only` (code shipped, but
-    // there's no flag to confirm against) — and a reader here has no other way to tell which one a given
-    // item actually is.
-    const renderIssueRow = issue => {
-        const prodLevel = issueStatusForEnv(issue, ENVIRONMENT.PROD).level;
-        const prodAt = earliestProdDeployedAt(issue);
+    box.innerHTML = DeliveryLayout({
+        groups: groupsHtml,
+        panel: DeliverySprintPanel({
+            note: [selected.isCurrent ? 'Current sprint' : '', last].filter(Boolean).join(' · '),
+            title: selected.sprint,
+            stats: [
+                DeliveryStat({ value: selected.items.length, label: 'items on prod' }),
+                DeliveryStat({ value: released, label: 'released to users', tone: 'released' }),
+                DeliveryStat({ value: selected.items.length - released, label: 'code deployed, no flag', tone: 'code' }),
+                DeliveryStat({ value: selected.bugs.length, label: 'bugs fixed' }),
+            ],
+            sections: [
+                selected.features.length ? DeliverySection({ label: 'Features & improvements', tone: 'feature', items: selected.features.map(itemHtml) }) : '',
+                selected.bugs.length ? DeliverySection({ label: 'Bug fixes', tone: 'bug', items: selected.bugs.map(itemHtml) }) : '',
+            ],
+        }),
+    });
+}
 
-        return ReleaseNoteItem({
-            type: issue.type,
-            href: jiraIssueUrl(issue.key),
-            title: issue.title,
-            pill: StatusPill({ cls: statusClass(prodLevel), label: statusLabel(prodLevel), title: statusLabelTooltip(prodLevel) }),
-            issueKey: issue.key,
-            dateText: prodAt ? fmtDateShort(prodAt) : '',
-        });
+/**
+ * The selected sprint as Markdown, for pasting into a release announcement: a heading, then one list per
+ * section, each item with its Jira key (linked when Jira is connected), title, PROD status and first prod date.
+ *
+ * @returns {string} '' when there is nothing to copy
+ */
+function releaseNotesMarkdown(){
+    const { reason, groups } = releaseNotesModel({
+        app: document.getElementById('filterNotesApp').value,
+        type: document.getElementById('filterNotesType').value,
+    });
+    const sprint = reason ? null : selectedNotesSprintOf(groups);
+
+    if (!sprint) {
+        return '';
+    }
+
+    const line = ({ issue, level, prodAt }) => {
+        const url = jiraIssueUrl(issue.key);
+        const key = isSafeHttpsUrl(url) ? `[${issue.key}](${url})` : issue.key;
+
+        return `- ${key} ${issue.title} (${statusLabel(level)}${prodAt ? `, on prod ${fmtDateShort(prodAt)}` : ''})`;
     };
+    const section = (label, items) => (items.length ? [`### ${label}`, '', ...items.map(line), ''] : []);
 
-    // Splits a sprint's released issues into labeled sub-sections. Jira has no separate "Improvement"
-    // type to key off of, so this only reliably splits on Bug vs. everything else (Epic/Story/Task).
-    // A category with no issues renders nothing.
-    const renderCategorySections = releasedIssues => {
-        const categories = [
-            { label: 'Features & Improvements', list: releasedIssues.filter(i => i.type !== ISSUE_TYPE.BUG) },
-            { label: 'Bug Fixes', list: releasedIssues.filter(i => i.type === ISSUE_TYPE.BUG) },
-        ];
+    return [
+        `## ${sprint.sprint} (${incrementLabel(sprint.pi)})`, '',
+        ...section('Features & improvements', sprint.features),
+        ...section('Bug fixes', sprint.bugs),
+    ].join('\n').trimEnd() + '\n';
+}
 
-        return categories.filter(c => c.list.length).map(c => ReleaseNotesCategory({ label: c.label, items: c.list.map(renderIssueRow) }));
-    };
+/** Back to all services, all types and the newest sprint — after a PI switch (initGlobalPiSelect()). */
+function resetReleaseNotesFilters(){
+    const typeGroup = document.getElementById('filterNotesTypeGroup');
 
-    const pis = [...byPi.keys()].sort(compareVersionDesc);
-
-    // Every row rendered here already passed issueIsReleasedToProd (see releasedSprintIssues below) — a
-    // PI/sprint only shows up at all once it has at least one released issue, so there's no "still in
-    // progress" state left to call out: what's listed is, by definition, already live on prod.
-    const piSections = pis.map(pi => {
-        const bySprint = byPi.get(pi);
-        const sprints = [...bySprint.keys()].sort(compareVersionDesc);
-
-        const sprintSections = sprints.map(sprint => {
-            const releasedSprintIssues = bySprint.get(sprint).filter(issueIsReleasedToProd);
-
-            if (!releasedSprintIssues.length) {
-                return '';
-            }
-
-            return ReleaseNotesSprint({ title: sprint, categories: renderCategorySections(releasedSprintIssues) });
-        }).filter(Boolean);
-
-        if (!sprintSections.length) {
-            return '';
-        }
-
-        return ReleaseNotesPi({ pi, sprints: sprintSections });
-    }).filter(Boolean);
-
-    box.innerHTML = PanelBody({ children: piSections });
+    document.getElementById('filterNotesApp').value = '';
+    typeGroup.querySelectorAll('.segmented-btn').forEach(b => b.classList.toggle('active', b.dataset.value === ''));
+    document.getElementById('filterNotesType').value = '';
+    selectedNotesSprint = null;
+    renderReleaseNotes();
 }
 
 /**
@@ -213,11 +280,24 @@ function initReleaseNotesFilters(){
     });
 
     appSel.addEventListener('input', renderReleaseNotes);
-    document.getElementById('btnClearNotesFilters').onclick = () => {
-        appSel.value = '';
-        typeGroup.querySelectorAll('.segmented-btn').forEach(b => b.classList.remove('active'));
-        typeGroup.querySelector('.segmented-btn[data-value=""]').classList.add('active');
-        typeInput.value = '';
-        renderReleaseNotes();
-    };
+
+    // A sprint card selects that sprint; Copy as Markdown puts the selected one on the clipboard.
+    document.getElementById('releaseNotesBody').addEventListener('click', e => {
+        const card = e.target.closest('[data-sprint-key]');
+
+        if (card) {
+            selectedNotesSprint = card.dataset.sprintKey;
+            renderReleaseNotes();
+            return;
+        }
+
+        const copy = e.target.closest('[data-copy-notes]');
+
+        if (copy && typeof navigator !== 'undefined' && navigator.clipboard) {
+            navigator.clipboard.writeText(releaseNotesMarkdown()).then(() => {
+                copy.classList.add('copied');
+                setTimeout(() => copy.classList.remove('copied'), 1500);
+            }, () => {});
+        }
+    });
 }

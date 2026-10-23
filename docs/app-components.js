@@ -502,59 +502,78 @@ function FlagRow({ name, typeLabel, open, notes, states, details }){
     </div>`;
 }
 
-/* ---------- Release Notes ---------- */
+/* ---------- Delivery summary ---------- */
 
-/** One shipped item: type, linked title, PROD `pill`, then key + first-prod date. */
-function ReleaseNoteItem({ type, href, title, pill, issueKey, dateText = '' }){
+/** A sprint in the left-hand list: the day/month it last reached PROD, its name, a "current" mark and the counts
+ *  line. `sprintKey` identifies it for the click (`data-sprint-key`, read by app-release-notes.js). */
+function DeliverySprintCard({ sprintKey, day, month, title, isCurrent, countsText, active }){
     return html`
-        <div class="release-note-item">
-          <span class="issue-type">${type}</span>
-          <div class="release-note-main">
-            <div class="release-note-title-wrap">
-              ${ExternalLink({ href, cls: 'release-note-title', children: title })}
-              ${pill}
-            </div>
-            <div class="release-note-meta">${joinMeta([
-                Tag({ text: issueKey, cls: 'mono' }),
-                dateText ? MonoText({ text: dateText }) : null,
-            ])}</div>
+        <button type="button" class="${classNames('dn-sprint', active && 'active')}" data-sprint-key="${sprintKey}" aria-pressed="${active ? 'true' : 'false'}">
+          <span class="dn-sprint-date"><b>${day}</b><span>${month}</span></span>
+          <span class="dn-sprint-text">
+            <span class="dn-sprint-title">${title}${isCurrent ? html`<span class="dn-current">current</span>` : ''}</span>
+            <span class="dn-sprint-counts">${countsText}</span>
+          </span>
+        </button>`;
+}
+
+/** The sprint list of one increment: its label (with "current"), the feature/bug totals, the cards. */
+function DeliverySprintGroup({ label, isCurrent, features, bugs, cards }){
+    return html`
+        <div class="dn-group">
+          <div class="dn-group-head">
+            <span>${label}${isCurrent ? ' · current' : ''}</span>
+            <span><b>${features}</b> feature${features === 1 ? '' : 's'} · <b>${bugs}</b> bug${bugs === 1 ? '' : 's'}</span>
           </div>
+          ${cards}
         </div>`;
 }
 
-function ReleaseNotesCategory({ label, items }){
+/** One figure of the sprint panel; `tone` colours the number (`released`, `code`, or none). */
+function DeliveryStat({ value, label, tone = '' }){
+    return html`<div class="dn-stat"><span class="${classNames('dn-stat-value', tone && `dn-tone-${tone}`)}">${value}</span><span class="dn-stat-label">${label}</span></div>`;
+}
+
+/** A shipped item: linked title, type and key tags; on the right its PROD `pill` and first-prod date. */
+function DeliveryItem({ href, title, type, issueKey, pill, dateText = '' }){
     return html`
-          <div class="release-notes-category">
-            <div class="release-notes-category-label">${label}</div>
+            <div class="dn-item">
+              <div class="dn-item-main">
+                ${ExternalLink({ href, cls: 'dn-item-title', children: title })}
+                <div class="dn-item-tags">${Tag({ text: type, cls: 'dn-type' })}${Tag({ text: issueKey, cls: 'mono' })}</div>
+              </div>
+              <div class="dn-item-side">${pill}${dateText ? html`<span class="dn-item-date">on prod ${dateText}</span>` : ''}</div>
+            </div>`;
+}
+
+/** "Features & improvements" / "Bug fixes": a coloured mark (`tone`: `feature` or `bug`), the count, the items. */
+function DeliverySection({ label, tone, items }){
+    return html`
+          <div class="dn-section">
+            <div class="dn-section-head"><span class="dn-mark dn-mark-${tone}"></span>${label}<span class="dn-section-count">${items.length}</span></div>
             ${items}
           </div>`;
 }
 
-function ReleaseNotesSprint({ title, categories }){
+/** The selected sprint: PROD badge, when it last reached PROD, its name, Copy as Markdown, figures, sections. */
+function DeliverySprintPanel({ note, title, stats, sections }){
     return html`
-        <div class="release-notes-sprint">
-          <div class="release-notes-sprint-head">
-            <span class="release-notes-sprint-title">${title}</span>
+        <div class="dn-panel">
+          <div class="dn-panel-head">
+            <div class="dn-panel-heading">
+              <div class="dn-panel-meta"><span class="dn-prod">${barsIcon(3)}PROD</span><span class="mono">${note}</span></div>
+              <h2 class="dn-panel-title">${title}</h2>
+            </div>
+            <button type="button" class="dn-copy" data-copy-notes>${ICONS.copy}<span>Copy as Markdown</span></button>
           </div>
-          ${categories}
+          <div class="dn-stats">${stats}</div>
+          ${sections}
         </div>`;
 }
 
-function ReleaseNotesPi({ pi, sprints }){
-    return html`
-      <div class="release-notes-pi">
-        <div class="release-notes-pi-head">
-          <h2>${pi}</h2>
-        </div>
-        ${sprints}
-      </div>`;
-}
-
-function PanelBody({ children }){
-    return html`
-    <div class="panel">
-      <div class="panel-body">${children}</div>
-    </div>`;
+/** The two columns: sprint list and the selected sprint's panel. */
+function DeliveryLayout({ groups, panel }){
+    return html`<div class="dn-layout"><div class="dn-sprints">${groups}</div>${panel}</div>`;
 }
 
 /* ---------- Insights charts ---------- */

@@ -287,11 +287,13 @@ were added match on their own key until the next Jira sync. (`issueKeys()`, `dep
 
 ### What does it show?
 
-Issues that are live for users on PROD — `released` (deployed and its flag on) or deployed with no flag to wait for
-— grouped by increment and sprint (newest first) and split into "Features & Improvements" and "Bug Fixes".
-Unreleased issues are not listed. Each item shows a PROD status pill, its Jira key and the date it first reached
-PROD. The Service filter narrows the list to one application. (`docs/app-release-notes.js`,
-`issueIsReleasedToProd`, `earliestProdDeployedAt`.)
+Issues that are live for users on PROD — `released` (deployed and its flag on) or deployed with no flag to wait for.
+On the left, the sprints of each increment (newest first), each with the day it last shipped something to PROD and
+its item and bug-fix counts; on the right, the sprint you click (the newest by default): four figures — items on
+PROD, released to users (flag on), code deployed with no flag, bugs fixed — then "Features & improvements" and "Bug
+fixes". Each item shows its type, Jira key, PROD status pill and the date it first reached PROD. Unreleased issues
+are not listed. The Service and Type filters narrow the list; "Copy as Markdown" copies the selected sprint as a
+ready release note. (`docs/app-release-notes.js`, `issueIsReleasedToProd`, `earliestProdDeployedAt`.)
 
 ### Why is it empty although Jira is connected?
 
