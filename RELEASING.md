@@ -101,6 +101,20 @@ Rules:
 - **A released version is never changed.** Tags are not moved or deleted; a broken release is fixed by the next one.
 - **Removing a feature**: first a MINOR that marks it deprecated with its replacement, removal only in a later MAJOR.
 
+## The flags adapter's version in the FAQ
+
+The FAQ's example workflows (`FAQ.md`/`FAQ.pl.md`, "How do I try the flags adapter…" and "What does a complete
+workflow look like?") pin the adapter to a release: `adapters/flags@vX.Y.Z` and the release commit
+`@<sha> # vX.Y.Z`. Every release tags the whole repository, but most releases leave the adapter as it was; then the
+example still runs the same code and is not bumped.
+
+- After a release, check whether it changed the adapter since the version the FAQ shows:
+  `git log --oneline vFAQ..vNEW -- adapters/`. Nothing listed: leave the FAQ alone.
+- Something listed: in a `docs` PR, replace every `vFAQ` in both FAQ files with `vNEW` and the pinned SHA with the
+  release commit, `git ls-remote https://github.com/dbqm45/evdt-service-shipscope 'refs/tags/vNEW^{}'` (the tags are
+  annotated: without `^{}` you get the tag object). `test/faq-adapter-version.test.js` checks that both files name
+  one version and the pinned line carries it.
+
 ## Requirements on GitHub
 
 - *Settings → Actions → General → Workflow permissions*: the workflow declares `contents: write` for the jobs that
