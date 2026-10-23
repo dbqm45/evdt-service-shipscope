@@ -19,19 +19,17 @@
             <div class="brand-text">
                 <span class="brand-name">ShipScope</span>
                 <span class="brand-sep">/</span>
-                <span class="brand-page" id="tenantName">Settings</span>
+                <span class="brand-tenant" id="tenantName">Workspace</span>
+                <span class="brand-sep">/</span>
+                <span class="brand-page">Settings</span>
             </div>
         </div>
-        <nav class="header-right settings-nav">
-            <a href="./">Dashboard</a>
-            <a href="#getting-started">Getting started</a>
-            <a href="#workspace">Workspace</a>
-            <a href="#github">GitHub</a>
-            <a href="#jira">Jira</a>
-            <a href="#flags">Feature flags</a>
-        </nav>
+        <a class="btn settings-back" href="./"><svg class="settings-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>Back to dashboard</a>
     </header>
-    <main id="settingsRoot" aria-live="polite"><p class="settings-loading">Loading…</p></main>
+    <div class="settings-layout" id="settingsApp">
+        <aside class="settings-sidebar" id="settingsSidebar"></aside>
+        <main id="settingsRoot" aria-live="polite"><p class="settings-loading">Loading…</p></main>
+    </div>
 </div>
 <script src="/ui/app-html.js"></script>
 <script src="/ui/settings.js"></script>

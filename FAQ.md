@@ -38,8 +38,8 @@ The same rule for every environment; what differs is only which commit is deploy
 
 1. a GitHub **Release** pointing at that exact commit;
 2. a plain git **tag** on that commit;
-3. a **version file** in the deployed commit, when the repository has one set (Settings → GitHub → Tracked
-   repositories → Version file) — for repos whose QA/PROD deploy commits only contain a line like `version=v1.6.0`;
+3. a **version file** in the deployed commit, when the repository has one set (Settings → GitHub → the
+   repository's pencil button → Version file) — for repos whose QA/PROD deploy commits only contain a line like `version=v1.6.0`;
 4. a version-like string (`v1.2.3`, `1.2.3`) in the **commit message**;
 5. the shortened **commit SHA**.
 
@@ -65,7 +65,7 @@ How it is decided for each pair of environments:
 1. The two deployed commits' **git trees** are compared. The same tree means the same files: no marker, however many
    commits separate them (merges, squashes and deployment branches create new commits for identical code).
 2. Otherwise the file lists are compared by path and content. Paths the repository's settings exclude (deployment
-   plumbing such as `.github/`, `README.md`, `trigger.properties`; Settings → GitHub → Paths not counted as drift)
+   plumbing such as `.github/`, `README.md`, `trigger.properties`; Settings → GitHub → pencil → Paths not counted as drift)
    do not count. No differing file left: no marker.
 3. If the comparison cannot be trusted — a GitHub error, or a repository too large for one listing (100,000 entries
    / 7 MB) — the result is **Unknown**, never "no difference".
@@ -83,7 +83,7 @@ different pace. (`server/lib/env-drift.js`, `server/lib/tree-diff.js`.)
 ### How long are deployments kept, and when does a new one appear?
 
 ShipScope shows the current state; GitHub keeps the full history. Deployments older than the workspace's retention
-(Settings → Workspace, 7–730 days, default 90) are removed daily, except — per repository and environment — the
+(Settings → General, 7–730 days, default 90) are removed daily, except — per repository and environment — the
 latest deployment and the latest successful one, which are what "current version", drift and rollback need. Whether
 an issue ever shipped is remembered separately and survives this cleanup (the `issue_deployments` table). New
 deployments arrive with the periodic sync (every 15 minutes by default) or about 30 seconds after GitHub reports
@@ -159,7 +159,7 @@ Start with a dry run: it needs no ShipScope, no token, and shows the exact messa
 
    Run it from the Actions tab. The log shows the message (`newCheckout` on, `darkMode` off, `search` partial 25) and
    "Dry run: 3 flags for prod, nothing sent."; a value it cannot read fails the step and names the flag and the file.
-3. **Send for real.** In ShipScope, Settings → Feature flags: add a source (kind build) and copy its token. In the
+3. **Send for real.** In ShipScope, Settings → Sources: add a source (kind build) and copy its token. In the
    other repository add the secret `SHIPSCOPE_FLAGS_TOKEN` (the token) and the variable `SHIPSCOPE_URL` (the
    ShipScope address, e.g. the Render one; GitHub's runners cannot reach `localhost`). Replace `dry-run: true` with:
 
@@ -169,7 +169,7 @@ Start with a dry run: it needs no ShipScope, no token, and shows the exact messa
    ```
 
    The log ends with "ShipScope (<source>): 3 flags for prod, 3 changed, 0 removed, new: …".
-4. **Check in ShipScope.** The source shows "received" with the counts, the flags are in Settings → Feature flags
+4. **Check in ShipScope.** The source shows "received" with the counts, the flags are in Settings → Flags
    and on the dashboard (Technical view → flags). Running the workflow again changes nothing (0 changed); removing a
    flag from the file and running it marks that flag removed.
 5. **See a refusal.** Set the token to a wrong value: the step fails with 401. Give a flag a value like `"maybe"`:

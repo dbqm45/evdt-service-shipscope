@@ -33,64 +33,141 @@ const form = (fields, dataset = {}, section = 'jira') => ({
     closest: () => ({ id: section }),
 });
 const button = (dataset, section) => ({ dataset, closest: () => ({ id: section }) });
+// A button on a page whose section differs from its id (Members, Sources, ...): the message goes to the section.
+const pageButton = (dataset, page, section) => ({ dataset, closest: () => ({ id: page, dataset: { section } }) });
 
-test('settings page: the workspace section -- admins invite and remove, members only leave; every value escaped', () => {
+test('settings page: General, Members and Danger zone -- admins invite and remove, members only leave; every value escaped', () => {
     const workspace = {
         settings: { deploymentRetentionDays: 90 },
         members: [{ userId: 'u1', githubLogin: 'alice', role: 'admin' }, { userId: 'u2', githubLogin: '<img src=x onerror=alert(1)>', role: 'member' }],
         invitations: [{ id: 'i1', role: 'member', createdBy: 'alice', expiresAt: '2026-10-20T10:00:00Z' }],
     };
-    const admin = str(ui.renderWorkspace({ workspace, admin: true, meId: 'u1', once: {} }));
+    const general = str(ui.renderGeneral({ workspace, admin: true }));
+    assert.match(general, /<section class="settings-page" id="general" data-section="workspace">/);
+    assert.match(general, /name="deploymentRetentionDays" type="number" min="7" max="730" required value="90"/);
+    const memberGeneral = str(ui.renderGeneral({ workspace, admin: false }));
+    assert.match(memberGeneral, /only admins can change settings/);
+    assert.match(memberGeneral, /kept for 90 days/);
+    assert.ok(!/deploymentRetentionDays/.test(memberGeneral));
+    assert.match(str(ui.renderGeneral({ workspace: null, admin: true })), /Loading/);
+
+    const admin = str(ui.renderMembers({ workspace, admin: true, meId: 'u1', once: {} }));
+    assert.match(admin, /id="members" data-section="workspace"/);
     assert.match(admin, /data-action="remove-member" data-user-id="u1" data-self="1">Leave/);
     assert.match(admin, /data-action="remove-member" data-user-id="u2">Remove/);
     assert.match(admin, /data-action="create-invitation"/);
     assert.match(admin, /data-action="revoke-invitation" data-invitation-id="i1"/);
-    assert.match(admin, /name="deploymentRetentionDays" type="number" min="7" max="730" required value="90"/);
     assert.ok(!admin.includes('<img'), 'a GitHub login is escaped');
     assert.match(admin, /&lt;img src=x/);
-
-    const danger = str(ui.renderWorkspace({ workspace, admin: true, meId: 'u1', once: {}, tenantName: 'Acme <Corp>' }));
-    assert.match(danger, /data-action="delete-workspace"/);
-    assert.match(danger, /Type <strong>Acme &lt;Corp&gt;<\/strong> to confirm <input name="confirmName" required/, 'the name to type, escaped');
-    const member = str(ui.renderWorkspace({ workspace: { ...workspace, invitations: null }, admin: false, meId: 'u2', once: {}, tenantName: 'Acme' }));
-    assert.ok(!/delete-workspace/.test(member), 'only admins can delete the workspace');
+    const member = str(ui.renderMembers({ workspace: { ...workspace, invitations: null }, admin: false, meId: 'u2', once: {} }));
     assert.match(member, /only admins can change settings/);
-    assert.match(member, /kept for 90 days/);
-    assert.ok(!/create-invitation|data-user-id="u1"|deploymentRetentionDays/.test(member), 'a member sees no admin controls');
+    assert.ok(!/create-invitation|data-user-id="u1"/.test(member), 'a member sees no admin controls');
     assert.match(member, /data-user-id="u2" data-self="1">Leave/);
-
-    const once = str(ui.renderWorkspace({ workspace, admin: true, meId: 'u1', once: { inviteUrl: 'https://x/invitations/abc"><b>' } }));
+    const once = str(ui.renderMembers({ workspace, admin: true, meId: 'u1', once: { inviteUrl: 'https://x/invitations/abc"><b>' } }));
     assert.match(once, /shown only once/);
     assert.ok(once.includes('https://x/invitations/abc&quot;&gt;&lt;b&gt;'));
-    assert.match(str(ui.renderWorkspace({ workspace: null, admin: true, meId: 'u1', once: {} })), /Loading/);
+    assert.match(str(ui.renderMembers({ workspace: null, admin: true, meId: 'u1', once: {} })), /Loading/);
+
+    const danger = str(ui.renderDangerZone({ tenantName: 'Acme <Corp>' }));
+    assert.match(danger, /id="danger" data-section="workspace"/);
+    assert.match(danger, /data-action="delete-workspace"/);
+    assert.match(danger, /Type <strong>Acme &lt;Corp&gt;<\/strong> to confirm <input name="confirmName" required/, 'the name to type, escaped');
 });
 
-test('settings page: the GitHub section -- installations, their repositories to track, and per-repo settings', () => {
+test('settings page: GitHub -- installations, the tracked repositories table, the track picker and per-repo settings', () => {
     assert.match(str(ui.renderGitHub({ enabled: false, admin: true })), /not configured on this server/);
     assert.match(str(ui.renderGitHub({ enabled: true, github: null, admin: true })), /Loading/);
     const github = {
         installations: [{ installationId: 7, accountLogin: 'acme', accountType: 'Organization' }, { installationId: 8, accountLogin: 'solo', accountType: 'User' }],
-        repos: [{ repoId: 101, fullName: 'acme/web', installationId: 7, lastSyncedAt: null, lastSyncError: 'boom "quoted"', versionFile: 'trigger.properties', driftIgnorePaths: ['.github/', 'README.md'] }],
+        repos: [{ repoId: 101, fullName: 'acme/web-service-frontend', installationId: 7, lastSyncedAt: null, lastSyncError: 'boom "quoted"', versionFile: 'trigger.properties', driftIgnorePaths: ['.github/', 'README.md'] }],
     };
     const installationRepos = { 7: [{ id: 101, fullName: 'acme/web', private: true, tracked: true }, { id: 102, fullName: 'acme/api', private: false, tracked: false }], 8: 'loading' };
     const admin = str(ui.renderGitHub({ enabled: true, github, installationRepos, admin: true }));
-    assert.match(admin, new RegExp(`href="/tenants/${'null'}/github/install"|href="/tenants/[^/]+/github/install"`));
-    assert.match(admin, /data-action="track-repo" data-repo-id="102" data-installation-id="7">Track/);
-    assert.match(admin, /data-action="untrack-repo" data-repo-id="101" data-installation-id="7">Stop tracking/);
-    assert.match(admin, /Loading repositories/);
-    assert.match(admin, /name="versionFile" placeholder="e.g. trigger.properties" value="trigger.properties"/);
-    assert.match(admin, />\.github\/\nREADME\.md<\/textarea>/);
-    assert.match(admin, /title="boom &quot;quoted&quot;">sync failed/);
+    assert.match(admin, /data-action="open-track-picker">[\s\S]*Track repository<\/button>/);
+    assert.match(admin, /<strong>acme<\/strong><span class="settings-muted"> · Organization<\/span>/);
+    assert.match(admin, /GitHub App installed · 1 repository tracked · new deployments arrive with the periodic sync/);
+    assert.match(admin, /href="https:\/\/github\.com\/organizations\/acme\/settings\/installations\/7"/);
+    assert.match(admin, /href="https:\/\/github\.com\/settings\/installations\/8"/, 'a user account\'s installation');
     assert.match(admin, /data-action="unlink-installation" data-installation-id="8"/);
+    assert.match(admin, /<span class="settings-badge">FE<\/span><span><strong>web-service-frontend<\/strong><span class="settings-row-meta">acme<\/span>/);
+    assert.match(admin, /<td class="mono">trigger\.properties<\/td>\s*<td class="mono">\.github\/, README\.md<\/td>/);
+    assert.match(admin, /class="settings-sync fail" title="boom &quot;quoted&quot;">sync failed/);
+    assert.match(admin, /data-action="edit-repo" data-repo-id="101"/);
+    assert.match(admin, /data-action="untrack-repo" data-repo-id="101" data-installation-id="7" aria-label="Stop tracking acme\/web-service-frontend"/);
+    assert.ok(!/save-repo-settings|data-action="track-repo"/.test(admin), 'no edit form or picker until asked');
+
+    const picker = str(ui.renderGitHub({ enabled: true, github, installationRepos, admin: true, picker: true }));
+    assert.match(picker, /data-action="track-repo" data-repo-id="102" data-installation-id="7">Track/);
+    assert.match(picker, /data-action="untrack-repo" data-repo-id="101" data-installation-id="7">Stop tracking/);
+    assert.match(picker, /Loading repositories/);
+    assert.match(picker, /data-action="close-track-picker"/);
+    assert.match(picker, /href="\/tenants\/[^/]+\/github\/install">install the App on another account/);
+
+    const editing = str(ui.renderGitHub({ enabled: true, github, installationRepos: {}, admin: true, editing: 101 }));
+    assert.match(editing, /name="versionFile" placeholder="e.g. trigger.properties" value="trigger.properties"/);
+    assert.match(editing, />\.github\/\nREADME\.md<\/textarea>/);
+    assert.ok(!/<form[^>]*>(?:(?!<\/form>).)*<form/s.test(editing), 'no form inside another form');
+
     const paused = { ...github, repos: [{ ...github.repos[0], rateLimitedUntil: '2026-10-16T12:10:00.000Z' }] };
     assert.match(str(ui.renderGitHub({ enabled: true, github: paused, installationRepos: {}, admin: false })),
-        /class="state-tag warn" title="GitHub asked ShipScope to slow down[^"]*">paused by GitHub's rate limit until /, 'a pause, not a failure');
-
-    assert.match(admin, /every 15 minutes by default/);
-    assert.match(str(ui.renderGitHub({ enabled: true, webhooks: true, github, installationRepos: {}, admin: true })), /instant updates on/);
+        /class="settings-sync warn" title="GitHub asked ShipScope to slow down[^"]*">paused by GitHub's rate limit until /, 'a pause, not a failure');
+    const live = str(ui.renderGitHub({ enabled: true, webhooks: true, github, installationRepos: {}, admin: true }));
+    assert.match(live, /Instant updates on/);
+    assert.match(live, /a deployment shows up within a minute/);
+    const none = str(ui.renderGitHub({ enabled: true, github: { installations: [], repos: [] }, installationRepos: {}, admin: true }));
+    assert.match(none, /href="\/tenants\/[^/]+\/github\/install">[\s\S]*Install the GitHub App<\/a>/, 'nothing to track from yet: install first');
     const member = str(ui.renderGitHub({ enabled: true, github, installationRepos: {}, admin: false }));
     assert.ok(!/data-action=|github\/install/.test(member), 'read-only for members');
-    assert.match(member, /Version file: trigger\.properties · Ignored for drift: \.github\/, README\.md/);
+    assert.match(member, /trigger\.properties/);
+});
+
+test('settings page: repository badges and workspace initials', () => {
+    assert.deepStrictEqual(['enercity/evapl-service-frontend', 'enercity/evnm-service-charger-infrastructure', 'x/evboweb-service-bff', 'x/evsim-service-sim-adapter', 'x/backend', 'x/api', 'web']
+        .map(ui.repoBadge), ['FE', 'CH', 'BF', 'SI', 'BE', 'AP', 'WE']);
+    assert.deepStrictEqual(['eMobility Sparks', 'enercity', 'a-b'].map(ui.initials), ['ES', 'EN', 'AB']);
+});
+
+test('settings page: the hash picks the page; old links and members land somewhere sensible', () => {
+    const page = (hash, admin = true, setupDone = true) => ui.pageFromHash({ hash, admin, setupDone });
+    assert.strictEqual(page('#github'), 'github');
+    assert.strictEqual(page('#workspace'), 'general', 'the old section name');
+    assert.strictEqual(page('#getting-started'), 'getting-started');
+    assert.strictEqual(page('#getting-started', false), 'general', 'members have no checklist');
+    assert.strictEqual(page('#danger', false), 'general', 'nor a danger zone');
+    assert.strictEqual(page(''), 'general');
+    assert.strictEqual(page('', true, false), 'getting-started', 'an admin without a working dashboard starts with the checklist');
+    assert.strictEqual(page('#nope', false, false), 'general');
+});
+
+test('settings page: the sidebar -- pages by group with counts, the open one marked, the Setup card for admins', () => {
+    const steps = [
+        { id: 'github-app', state: 'done', optional: false, title: 'Install the GitHub App', href: '#github', cta: null },
+        { id: 'deployments', state: 'waiting', optional: false, title: 'First deployments arrive', href: null, cta: null },
+        { id: 'boards', state: 'waiting', optional: true, title: 'Choose Jira boards', href: '#jira', cta: 'Sync now' },
+        { id: 'flags', state: 'problem', optional: true, title: 'Send <flags>', href: '#sources', cta: null },
+        { id: 'team', state: 'unavailable', optional: true, title: 'Off', href: null, cta: null },
+    ];
+    const admin = str(ui.renderSidebar({ page: 'github', tenant: { name: 'eMobility <Sparks>', role: 'admin' }, admin: true, counts: { members: 3, github: 6, jira: 1, sources: 2 }, steps }));
+    assert.match(admin, /<span class="settings-avatar">ES<\/span>/);
+    assert.match(admin, /<strong>eMobility &lt;Sparks&gt;<\/strong><span>You are admin · 3 members<\/span>/);
+    assert.match(admin, /href="#github" class="settings-nav-item active" aria-current="page">[\s\S]*?<span class="settings-count">6<\/span>/, 'waiting on GitHub, not on the admin: a plain count');
+    assert.match(admin, /href="#jira"[\s\S]*?<span class="settings-count warn">1<\/span>/, 'a step waiting on the admin');
+    assert.match(admin, /href="#sources"[\s\S]*?<span class="settings-count fail">2<\/span>/);
+    assert.match(admin, /href="#flags" class="settings-nav-item" >[\s\S]*?Flags<\/span><\/a>/, 'no count before the list is loaded');
+    assert.match(admin, /href="#danger"/);
+    assert.match(admin, /<b>1<\/b> of 4 done/, 'steps off on this server are not counted');
+    assert.match(admin, /<li class="waiting">First deployments arrive — waiting for a GitHub Deployment<\/li>/);
+    assert.match(admin, /<li class="waiting">Choose Jira boards — sync pending<\/li>/);
+    assert.match(admin, /<li class="problem">Send &lt;flags&gt; — needs attention<\/li>/);
+    assert.match(admin, /href="#getting-started">View checklist/);
+
+    const member = str(ui.renderSidebar({ page: 'general', tenant: { name: 'Acme', role: 'member' }, admin: false, counts: { members: 1 }, steps: [] }));
+    assert.match(member, /You are member · 1 member</);
+    assert.ok(!/#danger|settings-setup|>Other</.test(member), 'no danger zone (nor its empty group) or setup card for members');
+
+    assert.strictEqual(str(ui.SetupCard({ steps: steps.map((st) => ({ ...st, state: st.state === 'unavailable' ? st.state : 'done' })) })), '', 'all done: no card');
+    assert.strictEqual(str(ui.SetupCard({ steps: [{ ...steps[0] }, { ...steps[2], state: 'todo' }], hidden: true })), '', 'hidden after the required steps');
+    assert.match(str(ui.SetupCard({ steps: [{ ...steps[0], state: 'todo' }], hidden: true })), /settings-setup/, 'hidden only once GitHub is done');
 });
 
 test('settings page: the Jira section -- connect, choose a site, pick boards and set each one\'s rhythm', () => {
@@ -145,8 +222,8 @@ test('settings page: the flags section -- each flag with its state and Jira link
         states: { prod: { 'runtime-be': { state: 'partial', rollout: 25, sourceName: 'LD' } }, test: { build: { state: 'on', rollout: null, sourceName: 'CI' } } },
         components: ['web'],
     }, { key: 'x"y', description: '', senderDescription: null, manualDescription: null, links: { sender: [], manual: [], jira: [] }, states: {}, components: [] }];
-    const member = str(ui.renderFlags({ flagList, sources: null, repos, admin: false, once: {}, origin: 'https://s', jiraUrl: 'https://acme.atlassian.net' }));
-    assert.match(member, /Only admins manage flag sources/);
+    const member = str(ui.renderFlags({ flagList, admin: false, jiraUrl: 'https://acme.atlassian.net' }));
+    assert.match(str(ui.renderSourcesPage({ sources: null, repos, admin: false, once: {}, origin: 'https://s' })), /Only admins manage flag sources/);
     assert.match(member, /<strong class="mono">newCheckout<\/strong>/);
     assert.match(member, /state-tag warn" title="LD">prod: partial 25%/);
     assert.match(member, /state-tag ok" title="CI">test: on/);
@@ -158,19 +235,21 @@ test('settings page: the flags section -- each flag with its state and Jira link
     assert.match(member, /x&quot;y/, 'a flag key is escaped');
     assert.ok(!/data-action="save-flag"/.test(member), 'members read only');
 
-    const admin = str(ui.renderFlags({ flagList, sources: [], repos, admin: true, once: {}, origin: 'https://s' }));
+    const admin = str(ui.renderFlags({ flagList, admin: true }));
     assert.match(admin, /data-action="save-flag" data-key="newCheckout"/);
     assert.match(admin, /name="description" maxlength="500" value="New checkout" placeholder="from LD"/);
     assert.match(admin, /name="jiraKeys" value="ABC-3"/);
     assert.match(admin, /ABC-1 <span/, 'without a Jira site URL, keys are plain text');
-    assert.match(admin, /No flag source yet/);
-    assert.match(str(ui.renderFlags({ flagList: [], sources: [], repos, admin: true, once: {}, origin: 'https://s' })), /No flags yet/);
-    assert.match(str(ui.renderFlags({ flagList: { error: 'boom' }, sources: [], repos, admin: true, once: {}, origin: 'https://s' })), /settings-error">boom/);
+    const sourcesPage = (sources, once = {}) => str(ui.renderSourcesPage({ sources, repos, admin: true, once, origin: 'https://s' }));
+    assert.match(sourcesPage([]), /No flag source yet/);
+    assert.match(sourcesPage([]), /id="sources" data-section="flags"/, 'its messages are the flags section\'s');
+    assert.match(str(ui.renderFlags({ flagList: [], admin: true })), /No flags yet/);
+    assert.match(str(ui.renderFlags({ flagList: { error: 'boom' }, admin: true })), /settings-error">boom/);
 
-    assert.match(str(ui.renderFlags({ flagList: [], sources: null, repos, admin: true, once: {}, origin: 'https://s' })), /Sources<\/h3><p class="settings-loading">Loading/);
+    assert.match(sourcesPage(null), /<p class="settings-loading">Loading/);
     const sources = [{ id: 's1', name: 'LaunchDarkly', kind: 'runtime', priority: 100, repoId: 101, tokens: [{ id: 't1', createdAt: '2026-10-01T10:00:00Z', lastUsedAt: null }] },
         { id: 's2', name: 'Build "files"', kind: 'build', priority: 0, repoId: null, tokens: [] }];
-    const out = str(ui.renderFlags({ flagList: [], sources, repos, admin: true, once: { token: 'sst_secret' }, origin: 'https://s' }));
+    const out = sourcesPage(sources, { token: 'sst_secret' });
     assert.match(out, /<code>sst_secret<\/code>/);
     assert.match(out, /POST https:\/\/s\/api\/flags\/ingest/);
     assert.match(out, /data-source-id="s1"[\s\S]*?<option value="runtime" selected>runtime[\s\S]*?<option value="101" selected>acme\/web/);
@@ -178,7 +257,7 @@ test('settings page: the flags section -- each flag with its state and Jira link
     assert.match(out, /data-action="revoke-token" data-token-id="t1"/);
     assert.match(out, /none — the source can&#39;t send anything/);
     assert.match(out, /data-action="create-source"/);
-    assert.match(str(ui.renderFlags({ flagList: [], sources: { error: 'nope' }, repos, admin: true, once: {}, origin: 'https://s' })), /settings-error">nope/);
+    assert.match(sourcesPage({ error: 'nope' }), /settings-error">nope/);
 });
 
 test('settings page: the Jira section offers the flag convention -- none, prefixed labels, or a field', () => {
@@ -326,6 +405,7 @@ test('settings page: actions send what the API expects, then reload their sectio
         [`GET ${base}/jira`]: { connected: false },
         [`GET ${base}/github`]: { installations: [], repos: [] },
         [`PUT ${base}/jira/boards/13`]: new Error('A PI template only applies to the "pi" or "auto" rhythm'),
+        [`DELETE ${base}/ingest-tokens/t8`]: new Error('Token not found'),
     });
     t.mock.method(global, 'fetch', fn);
 
@@ -347,9 +427,22 @@ test('settings page: actions send what the API expects, then reload their sectio
     await ui.runAction('sync-jira', button({}, 'jira'));
     assert.strictEqual(ui.settingsState.messages.jira.text, 'Synced 2 board(s), 9 issue(s); now: @now.');
 
+    ui.settingsState.github = { installations: [{ installationId: 7 }], repos: [] };
+    const { fn: picked } = fakeFetch({ [`GET ${base}/github/installations/7/repositories`]: { repositories: [{ id: 102, fullName: 'acme/api', tracked: false }] } });
+    global.fetch = picked;
+    await ui.runAction('open-track-picker', button({}, 'github'));
+    assert.strictEqual(ui.settingsState.trackPicker, true);
+    assert.deepStrictEqual(ui.settingsState.installationRepos[7], [{ id: 102, fullName: 'acme/api', tracked: false }], 'every installation\'s repositories, loaded on opening');
+    await ui.runAction('close-track-picker', button({}, 'github'));
+    assert.strictEqual(ui.settingsState.trackPicker, false);
+    global.fetch = fn;
+    await ui.runAction('edit-repo', button({ repoId: '101' }, 'github'));
+    assert.strictEqual(ui.settingsState.editingRepo, 101);
+
     calls.length = 0;
     await ui.runAction('save-repo-settings', form([['versionFile', '  '], ['driftIgnorePaths', ' .github/\n\nREADME.md\n.github/ ']], { repoId: '101' }, 'github'));
     assert.deepStrictEqual(calls[0], { method: 'PUT', url: `${base}/github/repos/101/settings`, body: { versionFile: null, driftIgnorePaths: ['.github/', 'README.md'] } });
+    assert.strictEqual(ui.settingsState.editingRepo, null, 'saved: the row closes');
 
     ui.settingsState.installationRepos[7] = [{ id: 102, fullName: 'acme/api', tracked: false }];
     calls.length = 0;
@@ -406,6 +499,8 @@ test('settings page: actions send what the API expects, then reload their sectio
     global.confirm = () => true;
     await ui.runAction('revoke-token', button({ tokenId: 't9' }, 'flags'));
     assert.deepStrictEqual(calls[0], { method: 'DELETE', url: `${base}/ingest-tokens/t9`, body: undefined });
+    await ui.runAction('revoke-token', pageButton({ tokenId: 't8' }, 'sources', 'flags'));
+    assert.deepStrictEqual(ui.settingsState.messages, { flags: { error: true, text: 'Token not found' } }, 'an error on the Sources page shows in its section');
     delete global.confirm;
 });
 

@@ -52,7 +52,7 @@ async function api(method, path, body){
 /** Page state: what each section was last loaded with, plus one-time values (a new link or token) to show once. */
 const settingsState = {
     tenantId: SETTINGS_TENANT_ID, me: null, tenant: null, features: { githubApp: false, jira: false },
-    workspace: null, github: null, installationRepos: {}, jira: null, boards: null, flagFields: null, flags: null, flagList: null,
+    workspace: null, github: null, installationRepos: {}, trackPicker: false, editingRepo: null, jira: null, boards: null, flagFields: null, flags: null, flagList: null,
     once: {}, messages: {},
 };
 
@@ -76,11 +76,79 @@ function sectionMessage(section){
     return html`<p class="${msg.error ? 'settings-error' : 'settings-ok'}" role="status">${msg.text}</p>`;
 }
 
-function Section({ id, title, hint, body }){
-    return html`<section class="panel settings-section" id="${id}">
-        <div class="panel-head"><h2>${title}</h2></div>
-        <div class="settings-body">${hint ? html`<p class="settings-hint">${hint}</p>` : ''}${sectionMessage(id)}${body}</div>
+// Line icons (24×24, stroke = currentColor), already raw() so they go into `html` as they are.
+const svg = (paths) => raw(`<svg class="settings-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths}</svg>`);
+const SETTINGS_ICONS = {
+    general: svg('<path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"/>'),
+    members: svg('<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/>'),
+    github: svg('<circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="8" r="3"/><path d="M6 9v6M18 11a6 6 0 0 1-6 6H9"/>'),
+    jira: svg('<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16M15 4v16"/>'),
+    flags: svg('<path d="M5 21V4h11l-2 4 2 4H5"/>'),
+    sources: svg('<path d="M12 3v12M7 10l5 5 5-5M5 21h14"/>'),
+    danger: svg('<path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/>'),
+    plus: svg('<path d="M12 5v14M5 12h14"/>'),
+    edit: svg('<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/>'),
+    close: svg('<path d="M18 6 6 18M6 6l12 12"/>'),
+};
+
+/** The settings pages, in the sidebar's groups; `section` is the loader (and message key) each one reads. */
+const PAGES = [
+    { group: 'Workspace', items: [{ id: 'general', label: 'General', section: 'workspace' }, { id: 'members', label: 'Members', section: 'workspace' }] },
+    { group: 'Integrations', items: [{ id: 'github', label: 'GitHub', section: 'github' }, { id: 'jira', label: 'Jira', section: 'jira' }] },
+    { group: 'Feature flags', items: [{ id: 'flags', label: 'Flags', section: 'flags' }, { id: 'sources', label: 'Sources', section: 'flags' }] },
+    { group: 'Other', items: [{ id: 'danger', label: 'Danger zone', section: 'workspace', admin: true }] },
+];
+// Links from before the pages (the dashboard's banner, bookmarks) still land somewhere sensible.
+const PAGE_ALIASES = { workspace: 'general' };
+
+/**
+ * The page a URL hash opens: a known page, an old section name, or — without one — the checklist while an admin's
+ * workspace still lacks what the dashboard needs, else General. A member never gets an admin-only page.
+ *
+ * @param {{ hash: string, admin: boolean, setupDone: boolean }} input
+ * @returns {string} a page id from PAGES, or 'getting-started'
+ */
+function pageFromHash({ hash, admin, setupDone }){
+    const name = (hash || '').replace(/^#/, '');
+    const id = PAGE_ALIASES[name] || name;
+    if (id === 'getting-started' && admin) {
+        return id;
+    }
+    const page = PAGES.flatMap((g) => g.items).find((p) => p.id === id && (admin || !p.admin));
+    if (page) {
+        return page.id;
+    }
+    return admin && !setupDone ? 'getting-started' : 'general';
+}
+
+/** One settings page: its title and hint, an optional action on the right, the section's last message, the body. */
+function Page({ id, section = id, title, hint, action = '', body }){
+    return html`<section class="settings-page" id="${id}" data-section="${section}">
+        <div class="settings-page-head"><div><h1>${title}</h1>${hint ? html`<p class="settings-page-hint">${hint}</p>` : ''}</div>${action}</div>
+        ${sectionMessage(section)}${body}
     </section>`;
+}
+
+/** A panel inside a page; `title` optional. */
+function Card({ title = '', body, cls = '' }){
+    return html`<div class="${cls ? `settings-card ${cls}` : 'settings-card'}">${title ? html`<h2>${title}</h2>` : ''}${body}</div>`;
+}
+
+/** "eMobility Sparks" -> "ES", "enercity" -> "EN". */
+function initials(name){
+    const words = String(name || '').trim().split(/[^\p{L}\p{N}]+/u).filter(Boolean);
+    const letters = words.length > 1 ? words[0][0] + words[1][0] : (words[0] || '?').slice(0, 2);
+    return letters.toUpperCase();
+}
+
+/** A repository's two-letter badge from what follows "service" in the usual "team-service-what" names, else its
+ *  last word: "charger" -> CH, "frontend"/"backend" read as two words -> FE/BE. */
+function repoBadge(fullName){
+    const parts = String(fullName || '').split('/').pop().split(/[-_.]/).filter(Boolean);
+    const at = parts.indexOf('service');
+    const word = ((at >= 0 && parts[at + 1]) || parts[parts.length - 1] || '?').toLowerCase();
+    const end = /^(front|back)end$/.exec(word);
+    return (end ? `${end[1][0]}e` : word.slice(0, 2)).toUpperCase();
 }
 
 function SecretBox({ label, value, note }){
@@ -178,28 +246,28 @@ function onboardingSteps({ features, github, jira, boards, sources, flagList, wo
     if (sources === null || flagList === null) {
         steps.push(step('flags', 'Send feature flags', true, 'loading', ''));
     } else if (sources.error || flagList.error) {
-        steps.push(step('flags', 'Send feature flags', true, 'problem', sources.error || flagList.error, '#flags'));
+        steps.push(step('flags', 'Send feature flags', true, 'problem', sources.error || flagList.error, '#sources'));
     } else if (flagList.length) {
         steps.push(step('flags', 'Send feature flags', true, 'done', `${flagList.length} flag(s) received.`, '#flags'));
     } else if (sources.some(sourceRefused)) {
         const refused = sources.filter(sourceRefused);
         steps.push(step('flags', 'Send feature flags', true, 'problem',
-            `Message refused: ${refused.map((src) => `${src.name} — ${src.lastError.message}`).join('; ')}`, '#flags'));
+            `Message refused: ${refused.map((src) => `${src.name} — ${src.lastError.message}`).join('; ')}`, '#sources'));
     } else if (sources.some((src) => src.tokens.length)) {
         steps.push(step('flags', 'Send feature flags', true, 'waiting',
-            `Waiting for the first message from ${sources.filter((src) => src.tokens.length).map((src) => src.name).join(', ')} (POST /api/flags/ingest with its token).`, '#flags'));
+            `Waiting for the first message from ${sources.filter((src) => src.tokens.length).map((src) => src.name).join(', ')} (POST /api/flags/ingest with its token).`, '#sources'));
     } else {
-        steps.push(step('flags', 'Send feature flags', true, 'todo', 'Name where your flags live (a build step, a flag service) and give it a token; it then pushes their state.', '#flags', 'Add a source'));
+        steps.push(step('flags', 'Send feature flags', true, 'todo', 'Name where your flags live (a build step, a flag service) and give it a token; it then pushes their state.', '#sources', 'Add a source'));
     }
 
     if (!workspace) {
         steps.push(step('team', 'Invite your team', true, 'loading', ''));
     } else if (workspace.members.length > 1) {
-        steps.push(step('team', 'Invite your team', true, 'done', `${workspace.members.length} members.`, '#workspace'));
+        steps.push(step('team', 'Invite your team', true, 'done', `${workspace.members.length} members.`, '#members'));
     } else if (workspace.invitations && workspace.invitations.length) {
-        steps.push(step('team', 'Invite your team', true, 'waiting', 'Invitation link created; waiting for it to be accepted.', '#workspace'));
+        steps.push(step('team', 'Invite your team', true, 'waiting', 'Invitation link created; waiting for it to be accepted.', '#members'));
     } else {
-        steps.push(step('team', 'Invite your team', true, 'todo', 'Create an invitation link per person; members see everything, admins can change settings.', '#workspace', 'Invite'));
+        steps.push(step('team', 'Invite your team', true, 'todo', 'Create an invitation link per person; members see everything, admins can change settings.', '#members', 'Invite'));
     }
     return steps;
 }
@@ -244,35 +312,121 @@ function renderGettingStarted({ steps, hidden = false }){
         ? 'All set: everything is connected.'
         : requiredDone ? `${done} of ${counted.length} done — the dashboard is ready; the optional steps add Jira, flags and your team.`
             : `${done} of ${counted.length} done.`;
-    return Section({
+    return Page({
         id: 'getting-started',
         title: 'Getting started',
         hint: summary,
-        body: html`<ol class="checklist">${items}</ol>${requiredDone ? html`<div class="settings-actions"><a class="btn" href="./">Open the dashboard</a>
-            <button type="button" class="btn" data-action="hide-checklist">Hide this checklist</button></div>` : ''}`,
+        body: Card({ body: html`<ol class="checklist">${items}</ol>${requiredDone ? html`<div class="settings-actions"><a class="btn" href="./">Open the dashboard</a>
+            <button type="button" class="btn" data-action="hide-checklist">Hide this checklist</button></div>` : ''}` }),
     });
 }
 
-/** @param {{ workspace: { settings: object, members: object[], invitations: object[]|null }, admin: boolean, meId: string, once: object, tenantName?: string }} props */
-function renderWorkspace({ workspace, admin, meId, once, tenantName = '' }){
-    if (!workspace) {
-        return Section({ id: 'workspace', title: 'Workspace', body: html`<p class="settings-loading">Loading…</p>` });
+// What the sidebar's Setup card says after a step's name, for the steps still open.
+const STEP_SHORT = {
+    'deployments.waiting': 'waiting for a GitHub Deployment',
+    'boards.waiting': 'sync pending',
+    'flags.waiting': 'waiting for the first message',
+    'team.waiting': 'invitation not accepted yet',
+};
+const STATE_SHORT = { todo: 'to do', waiting: 'waiting', problem: 'needs attention' };
+
+/**
+ * The sidebar's Setup card: progress over the steps this server offers and the ones still open. Nothing once every
+ * step is done, or when the admin hid the checklist after the required ones.
+ *
+ * @param {{ steps: object[], hidden?: boolean }} props
+ */
+function SetupCard({ steps, hidden = false }){
+    const counted = steps.filter((st) => st.state !== 'unavailable');
+    const done = counted.filter((st) => st.state === 'done').length;
+    const requiredDone = steps.filter((st) => !st.optional && st.state !== 'unavailable').every((st) => st.state === 'done');
+    const open = counted.filter((st) => ['todo', 'waiting', 'problem'].includes(st.state));
+    if ((hidden && requiredDone) || done === counted.length) {
+        return html``;
     }
-    const { settings, members, invitations } = workspace;
+    return html`<div class="settings-setup">
+        <div class="settings-setup-head"><strong>Setup</strong><span><b>${done}</b> of ${counted.length} done</span></div>
+        <div class="settings-progress" role="progressbar" aria-label="Setup progress" aria-valuemin="0" aria-valuemax="${counted.length}" aria-valuenow="${done}"><span style="width:${Math.round((done / counted.length) * 100)}%"></span></div>
+        <ul>${open.map((st) => html`<li class="${st.state}">${st.title} — ${STEP_SHORT[`${st.id}.${st.state}`] || STATE_SHORT[st.state]}</li>`)}</ul>
+        <a class="btn" href="#getting-started">View checklist</a>
+    </div>`;
+}
+
+// Which checklist steps a sidebar entry answers for: its count turns amber while one of them waits on the admin
+// (a step with a button), red when one has a problem.
+const PAGE_STEPS = { members: ['team'], github: ['github-app', 'repos', 'deployments'], jira: ['jira', 'boards'], sources: ['flags'] };
+
+/**
+ * The sidebar: the workspace, the pages by group with their counts, and the Setup card for admins.
+ *
+ * @param {{ page: string, tenant: { name: string, role: string }, admin: boolean, counts: Object<string, number|undefined>, steps: object[], hidden?: boolean }} props
+ */
+function renderSidebar({ page, tenant, admin, counts, steps, hidden = false }){
+    const tone = (id) => {
+        const own = steps.filter((st) => (PAGE_STEPS[id] || []).includes(st.id));
+        if (own.some((st) => st.state === 'problem')) {
+            return 'fail';
+        }
+        return own.some((st) => st.state !== 'done' && st.href && st.cta) ? 'warn' : '';
+    };
+    const count = (id) => (typeof counts[id] === 'number'
+        ? html`<span class="${tone(id) ? `settings-count ${tone(id)}` : 'settings-count'}">${counts[id]}</span>` : '');
+    const groups = PAGES.map((g) => {
+        const items = g.items.filter((p) => admin || !p.admin);
+        if (!items.length) {
+            return '';
+        }
+        return html`<div class="settings-nav-group"><div class="settings-nav-label">${g.group}</div>
+            ${items.map((p) => html`<a href="#${p.id}" class="${p.id === page ? 'settings-nav-item active' : 'settings-nav-item'}" ${p.id === page ? raw('aria-current="page"') : ''}>${SETTINGS_ICONS[p.id]}<span>${p.label}</span>${count(p.id)}</a>`)}
+        </div>`;
+    });
+    const members = counts.members;
+    return html`<div class="settings-workspace">
+            <span class="settings-avatar">${initials(tenant.name)}</span>
+            <div><strong>${tenant.name}</strong><span>You are ${tenant.role}${typeof members === 'number' ? ` · ${members} member${members === 1 ? '' : 's'}` : ''}</span></div>
+        </div>
+        <nav class="settings-nav" aria-label="Settings">${groups}</nav>
+        ${admin ? SetupCard({ steps, hidden }) : ''}`;
+}
+
+const MEMBER_HINT = 'You are a member: only admins can change settings.';
+
+/** @param {{ workspace: { settings: object }|null, admin: boolean }} props */
+function renderGeneral({ workspace, admin }){
+    const page = (body) => Page({ id: 'general', section: 'workspace', title: 'General', hint: admin ? 'How long ShipScope keeps this workspace\'s history.' : MEMBER_HINT, body });
+    if (!workspace) {
+        return page(html`<p class="settings-loading">Loading…</p>`);
+    }
+    const days = workspace.settings.deploymentRetentionDays;
+    return page(Card({
+        title: 'Deployment history',
+        body: admin
+            ? html`<p class="settings-hint">Older deployments are removed daily; each environment's latest and latest successful deployment always stay.</p>
+                <form class="settings-form" data-action="save-retention">
+                <label>Keep deployment history (days, 7–730) <input name="deploymentRetentionDays" type="number" min="7" max="730" required value="${days}"></label>
+                <button type="submit" class="btn">Save</button></form>`
+            : html`<p class="settings-hint">Deployment history is kept for ${days} days.</p>`,
+    }));
+}
+
+/** @param {{ workspace: { members: object[], invitations: object[]|null }|null, admin: boolean, meId: string, once: object }} props */
+function renderMembers({ workspace, admin, meId, once }){
+    const page = (body) => Page({ id: 'members', section: 'workspace', title: 'Members', hint: admin ? 'Members see everything; admins can change settings.' : MEMBER_HINT, body });
+    if (!workspace) {
+        return page(html`<p class="settings-loading">Loading…</p>`);
+    }
+    const { members, invitations } = workspace;
     const memberRows = members.map((m) => {
         const self = m.userId === meId;
         const action = self
             ? html`<button type="button" class="btn btn-danger" data-action="remove-member" data-user-id="${m.userId}" data-self="1">Leave</button>`
             : admin ? html`<button type="button" class="btn btn-danger" data-action="remove-member" data-user-id="${m.userId}">Remove</button>` : '';
-        return html`<tr><td>${m.githubLogin}${self ? html` <span class="state-tag">you</span>` : ''}</td><td>${m.role}</td><td class="actions">${action}</td></tr>`;
+        return html`<tr><td><span class="settings-repo"><span class="settings-badge">${initials(m.githubLogin)}</span><span>${m.githubLogin}${self ? html` <span class="state-tag">you</span>` : ''}</span></span></td>
+            <td>${m.role}</td><td class="actions">${action}</td></tr>`;
     });
-    const retention = admin
-        ? html`<form class="settings-form" data-action="save-retention">
-            <label>Keep deployment history (days, 7–730) <input name="deploymentRetentionDays" type="number" min="7" max="730" required value="${settings.deploymentRetentionDays}"></label>
-            <button type="submit" class="btn">Save</button></form>`
-        : html`<p class="settings-hint">Deployment history is kept for ${settings.deploymentRetentionDays} days.</p>`;
-    const inviteBlock = admin ? html`<h3>Invitations</h3>
-        ${once.inviteUrl ? SecretBox({ label: 'Invitation link — shown only once', value: once.inviteUrl, note: 'Send it to the person you invite; it works once and expires in 7 days.' }) : ''}
+    const inviteBlock = admin ? Card({
+        title: 'Invitations',
+        body: html`${once.inviteUrl ? SecretBox({ label: 'Invitation link — shown only once', value: once.inviteUrl, note: 'Send it to the person you invite; it works once and expires in 7 days.' }) : ''}
         <form class="settings-form" data-action="create-invitation">
             <label>Role <select name="role"><option value="member">member</option><option value="admin">admin</option></select></label>
             <button type="submit" class="btn">Create invitation link</button>
@@ -280,86 +434,135 @@ function renderWorkspace({ workspace, admin, meId, once, tenantName = '' }){
         ${invitations && invitations.length ? html`<table class="settings-table"><thead><tr><th>Role</th><th>Created by</th><th>Expires</th><th></th></tr></thead><tbody>
             ${invitations.map((i) => html`<tr><td>${i.role}</td><td>${i.createdBy}</td><td>${fmtDateTime(i.expiresAt)}</td>
                 <td class="actions"><button type="button" class="btn btn-danger" data-action="revoke-invitation" data-invitation-id="${i.id}">Revoke</button></td></tr>`)}
-            </tbody></table>` : html`<p class="settings-hint">No pending invitations.</p>`}` : '';
-    return Section({
-        id: 'workspace',
-        title: 'Workspace',
-        hint: admin ? null : 'You are a member: only admins can change settings.',
-        body: html`${retention}<h3>Members</h3>
-            <table class="settings-table"><thead><tr><th>GitHub user</th><th>Role</th><th></th></tr></thead><tbody>${memberRows}</tbody></table>
-            ${inviteBlock}${admin ? DeleteWorkspace(tenantName) : ''}`,
+            </tbody></table>` : html`<p class="settings-hint">No pending invitations.</p>`}`,
+    }) : '';
+    return page(html`${Card({ cls: 'flush', body: html`<table class="settings-table"><thead><tr><th>GitHub user</th><th>Role</th><th></th></tr></thead><tbody>${memberRows}</tbody></table>` })}${inviteBlock}`);
+}
+
+/** The danger zone: deleting the workspace needs its name typed back (the server checks it too). Admins only. */
+function renderDangerZone({ tenantName = '' }){
+    return Page({
+        id: 'danger',
+        section: 'workspace',
+        title: 'Danger zone',
+        hint: 'Changes here cannot be undone.',
+        body: Card({
+            cls: 'danger',
+            title: 'Delete workspace',
+            body: html`<p class="settings-hint">Deletes this workspace and everything ShipScope holds for it: members, invitations, tracked
+            repositories and their deployments, the Jira connection and its issues, flag sources and values. This cannot be undone.
+            ShipScope's Jira webhook is removed; the GitHub App stays installed on GitHub — uninstall it there
+            (organization or account Settings → GitHub Apps) if nothing else uses it.</p>
+            <form class="settings-form" data-action="delete-workspace">
+                <label>Type <strong>${tenantName}</strong> to confirm <input name="confirmName" required maxlength="200" autocomplete="off"></label>
+                <button type="submit" class="btn btn-danger">Delete workspace</button>
+            </form>`,
+        }),
     });
 }
 
-/** The danger zone: deleting the workspace needs its name typed back (the server checks it too). */
-function DeleteWorkspace(tenantName){
-    return html`<h3>Delete workspace</h3>
-        <p class="settings-hint">Deletes this workspace and everything ShipScope holds for it: members, invitations, tracked
-        repositories and their deployments, the Jira connection and its issues, flag sources and values. This cannot be undone.
-        ShipScope's Jira webhook is removed; the GitHub App stays installed on GitHub — uninstall it there
-        (organization or account Settings → GitHub Apps) if nothing else uses it.</p>
-        <form class="settings-form" data-action="delete-workspace">
-            <label>Type <strong>${tenantName}</strong> to confirm <input name="confirmName" required maxlength="200" autocomplete="off"></label>
-            <button type="submit" class="btn btn-danger">Delete workspace</button>
-        </form>`;
-}
-
-function syncTag(repo){
+/** A tracked repository's last sync: a coloured dot and when, or why not. */
+function syncStatus(repo){
     if (repo.rateLimitedUntil) {
-        return html`<span class="state-tag warn" title="GitHub asked ShipScope to slow down for this installation; other workspaces are not affected">paused by GitHub's rate limit until ${fmtDateTime(repo.rateLimitedUntil)}</span>`;
+        return html`<span class="settings-sync warn" title="GitHub asked ShipScope to slow down for this installation; other workspaces are not affected">paused by GitHub's rate limit until ${fmtDateTime(repo.rateLimitedUntil)}</span>`;
     }
     if (repo.lastSyncError) {
-        return html`<span class="state-tag fail" title="${repo.lastSyncError}">sync failed</span>`;
+        return html`<span class="settings-sync fail" title="${repo.lastSyncError}">sync failed</span>`;
     }
-    return repo.lastSyncedAt ? html`<span class="state-tag ok">synced ${fmtDateTime(repo.lastSyncedAt)}</span>` : html`<span class="state-tag warn">not synced yet</span>`;
+    return repo.lastSyncedAt ? html`<span class="settings-sync ok">${fmtDateTime(repo.lastSyncedAt)}</span>` : html`<span class="settings-sync warn">not synced yet</span>`;
 }
 
-/** @param {{ enabled: boolean, webhooks: boolean, github: { installations: object[], repos: object[] }|null, installationRepos: object, admin: boolean }} props */
-function renderGitHub({ enabled, webhooks, github, installationRepos, admin }){
-    if (!enabled) {
-        return Section({ id: 'github', title: 'GitHub', body: html`<p class="settings-hint">The GitHub App is not configured on this server (GITHUB_APP_* variables).</p>` });
-    }
-    if (!github) {
-        return Section({ id: 'github', title: 'GitHub', body: html`<p class="settings-loading">Loading…</p>` });
-    }
-    const install = admin ? html`<p><a class="btn btn-primary" href="${tenantPath('/github/install')}">Install the GitHub App on an account or organization</a></p>` : '';
-    const installations = github.installations.map((inst) => {
+/** GitHub's own page for an installation, where its owner picks repositories or uninstalls it. */
+function installationSettingsUrl(inst){
+    return inst.accountType === 'Organization'
+        ? `https://github.com/organizations/${encodeURIComponent(inst.accountLogin)}/settings/installations/${Number(inst.installationId)}`
+        : `https://github.com/settings/installations/${Number(inst.installationId)}`;
+}
+
+/** One installation: the account, how many of its repositories are tracked, how fast deployments arrive. */
+function InstallationCard(inst, { tracked, webhooks, admin }){
+    return html`<div class="settings-card settings-installation">
+        <span class="settings-avatar">${initials(inst.accountLogin)}</span>
+        <div class="settings-installation-text"><div><strong>${inst.accountLogin}</strong>${inst.accountType ? html`<span class="settings-muted"> · ${inst.accountType}</span>` : ''}</div>
+            <div class="settings-row-meta">GitHub App installed · ${tracked} ${tracked === 1 ? 'repository' : 'repositories'} tracked · ${webhooks
+                ? 'a deployment shows up within a minute' : 'new deployments arrive with the periodic sync (every 15 minutes by default)'}</div></div>
+        <div class="settings-installation-actions">
+            ${webhooks ? html`<span class="settings-pill ok">Instant updates on</span>`
+                : html`<span class="settings-pill" title="Set GITHUB_APP_WEBHOOK_SECRET on the server for instant updates">Periodic sync</span>`}
+            <a class="btn" href="${installationSettingsUrl(inst)}" target="_blank" rel="noopener">Manage on GitHub</a>
+            ${admin ? html`<button type="button" class="btn btn-danger" data-action="unlink-installation" data-installation-id="${inst.installationId}">Unlink</button>` : ''}
+        </div>
+    </div>`;
+}
+
+/** "Track repository": each installation's repositories, tracked or not (loaded on opening). */
+function TrackPicker(installations, installationRepos){
+    const lists = installations.map((inst) => {
         const list = installationRepos[inst.installationId];
-        let repos = html``;
-        if (list === 'loading') {
-            repos = html`<p class="settings-loading">Loading repositories…</p>`;
-        } else if (list && list.error) {
-            repos = html`<p class="settings-error">${list.error}</p>`;
+        let body = html`<p class="settings-loading">Loading repositories…</p>`;
+        if (list && list.error) {
+            body = html`<p class="settings-error">${list.error}</p>`;
         } else if (Array.isArray(list)) {
-            repos = list.length ? html`<table class="settings-table"><tbody>${list.map((r) => html`<tr><td>${r.fullName}${r.private ? html` <span class="state-tag">private</span>` : ''}</td>
+            body = list.length ? html`<table class="settings-table"><tbody>${list.map((r) => html`<tr><td>${r.fullName}${r.private ? html` <span class="state-tag">private</span>` : ''}</td>
                 <td class="actions">${r.tracked
                     ? html`<button type="button" class="btn" data-action="untrack-repo" data-repo-id="${r.id}" data-installation-id="${inst.installationId}">Stop tracking</button>`
                     : html`<button type="button" class="btn btn-primary" data-action="track-repo" data-repo-id="${r.id}" data-installation-id="${inst.installationId}">Track</button>`}</td></tr>`)}</tbody></table>`
                 : html`<p class="settings-hint">The App can't see any repository of this installation; choose repositories on GitHub.</p>`;
         }
-        return html`<tr><td>${inst.accountLogin} <span class="settings-row-meta">${inst.accountType || ''}</span>${repos}</td>
-            <td class="actions">${admin ? html`<button type="button" class="btn" data-action="load-installation-repos" data-installation-id="${inst.installationId}">Repositories</button>
-                <button type="button" class="btn btn-danger" data-action="unlink-installation" data-installation-id="${inst.installationId}">Unlink</button>` : ''}</td></tr>`;
+        return html`<h3>${inst.accountLogin}</h3>${body}`;
     });
-    const tracked = github.repos.map((r) => html`<tr><td><strong>${r.fullName}</strong> ${syncTag(r)}
-        ${admin ? html`<form class="settings-form" data-action="save-repo-settings" data-repo-id="${r.repoId}">
+    return Card({
+        cls: 'settings-picker',
+        body: html`<div class="settings-card-head"><h2>Track a repository</h2>
+            <button type="button" class="btn btn-icon" data-action="close-track-picker" aria-label="Close" title="Close">${SETTINGS_ICONS.close}</button></div>
+            ${lists}<p class="settings-hint">Missing one? Give the App access to it on GitHub, or <a href="${tenantPath('/github/install')}">install the App on another account</a>.</p>`,
+    });
+}
+
+/** @param {{ enabled: boolean, webhooks: boolean, github: { installations: object[], repos: object[] }|null, installationRepos: object, admin: boolean, picker?: boolean, editing?: number|null }} props */
+function renderGitHub({ enabled, webhooks, github, installationRepos, admin, picker = false, editing = null }){
+    const hint = 'ShipScope reads deployments, releases and tags of the repositories you track, through the GitHub App.';
+    const page = (body, action) => Page({ id: 'github', title: 'GitHub', hint, action, body });
+    if (!enabled) {
+        return page(html`<p class="settings-hint">The GitHub App is not configured on this server (GITHUB_APP_* variables).</p>`);
+    }
+    if (!github) {
+        return page(html`<p class="settings-loading">Loading…</p>`);
+    }
+    let action = '';
+    if (admin) {
+        action = github.installations.length
+            ? html`<button type="button" class="btn btn-primary btn-lg" data-action="open-track-picker">${SETTINGS_ICONS.plus}Track repository</button>`
+            : html`<a class="btn btn-primary btn-lg" href="${tenantPath('/github/install')}">${SETTINGS_ICONS.plus}Install the GitHub App</a>`;
+    }
+    const cards = github.installations.map((inst) => InstallationCard(inst, {
+        tracked: github.repos.filter((r) => r.installationId === inst.installationId).length, webhooks, admin,
+    }));
+    const rows = github.repos.map((r) => {
+        const [owner, name] = r.fullName.includes('/') ? r.fullName.split('/') : ['', r.fullName];
+        const row = html`<tr>
+            <td><span class="settings-repo"><span class="settings-badge">${repoBadge(r.fullName)}</span><span><strong>${name}</strong><span class="settings-row-meta">${owner}</span></span></span></td>
+            <td class="mono">${r.versionFile || '—'}</td>
+            <td class="mono">${(r.driftIgnorePaths || []).join(', ') || '—'}</td>
+            <td class="mono">${syncStatus(r)}</td>
+            ${admin ? html`<td class="actions">
+                <button type="button" class="btn btn-icon" data-action="edit-repo" data-repo-id="${r.repoId}" aria-label="Edit ${r.fullName}" title="Version file and drift">${SETTINGS_ICONS.edit}</button>
+                <button type="button" class="btn btn-icon btn-danger" data-action="untrack-repo" data-repo-id="${r.repoId}" data-installation-id="${r.installationId}" aria-label="Stop tracking ${r.fullName}" title="Stop tracking">${SETTINGS_ICONS.close}</button>
+            </td>` : ''}</tr>`;
+        if (!admin || editing !== r.repoId) {
+            return row;
+        }
+        return html`${row}<tr class="settings-edit-row"><td colspan="5"><form class="settings-form" data-action="save-repo-settings" data-repo-id="${r.repoId}">
             <label>Version file <input name="versionFile" placeholder="e.g. trigger.properties" value="${r.versionFile || ''}" maxlength="200"></label>
             <label>Paths not counted as drift (one per line) <textarea name="driftIgnorePaths" placeholder=".github/&#10;README.md">${(r.driftIgnorePaths || []).join('\n')}</textarea></label>
-            <button type="submit" class="btn">Save</button></form>`
-        : html`<div class="settings-row-meta">Version file: ${r.versionFile || '—'} · Ignored for drift: ${(r.driftIgnorePaths || []).join(', ') || '—'}</div>`}</td>
-        <td class="actions">${admin ? html`<button type="button" class="btn btn-danger" data-action="untrack-repo" data-repo-id="${r.repoId}" data-installation-id="${r.installationId}">Stop tracking</button>` : ''}</td></tr>`);
-    return Section({
-        id: 'github',
-        title: 'GitHub',
-        hint: 'ShipScope reads deployments, releases and tags of the repositories you track, through the GitHub App.',
-        body: html`<p class="settings-hint">${webhooks
-            ? html`<span class="state-tag ok">instant updates on</span> A deployment shows up within a minute of finishing.`
-            : 'New deployments arrive with the periodic sync (every 15 minutes by default); set GITHUB_APP_WEBHOOK_SECRET for instant updates.'}</p>
-            ${install}<h3>Installations</h3>
-            ${installations.length ? html`<table class="settings-table"><tbody>${installations}</tbody></table>` : html`<p class="settings-hint">No installation linked yet.</p>`}
-            <h3>Tracked repositories</h3>
-            ${tracked.length ? html`<table class="settings-table"><tbody>${tracked}</tbody></table>` : html`<p class="settings-hint">No repository tracked yet.</p>`}`,
+            <button type="submit" class="btn btn-primary">Save</button>
+            <button type="button" class="btn" data-action="edit-repo" data-repo-id="${r.repoId}">Cancel</button></form></td></tr>`;
     });
+    const table = rows.length
+        ? Card({ cls: 'flush', body: html`<table class="settings-table settings-repos"><thead><tr><th>Repository</th><th>Version file</th><th>Ignored for drift</th><th>Last sync</th>${admin ? html`<th></th>` : ''}</tr></thead><tbody>${rows}</tbody></table>` })
+        : Card({ body: html`<p class="settings-hint">No repository tracked yet.${admin && github.installations.length ? ' Click Track repository to choose one.' : ''}</p>` });
+    return page(html`${cards.length ? cards : Card({ body: html`<p class="settings-hint">No installation linked yet.</p>` })}
+        ${admin && picker && github.installations.length ? TrackPicker(github.installations, installationRepos) : ''}${table}`, action);
 }
 
 function BoardRow(board, admin){
@@ -417,7 +620,7 @@ function FlagLinkForm(flagLink, fields){
 
 /** @param {{ enabled: boolean, webhooks: boolean, jira: object|null, boards: object[]|null|{ error: string }, admin: boolean, flagFields?: object[]|null|{ error: string } }} props */
 function renderJira({ enabled, webhooks, jira, boards, admin, flagFields = null }){
-    const section = (body, hint) => Section({ id: 'jira', title: 'Jira', hint, body });
+    const section = (body) => Page({ id: 'jira', title: 'Jira', hint: 'Read-only access through Atlassian: issues, boards and sprints of the boards you choose.', body: Card({ body }) });
     if (!enabled) {
         return section(html`<p class="settings-hint">Jira is not configured on this server (ATLASSIAN_* variables and TOKEN_ENCRYPTION_KEY).</p>`);
     }
@@ -426,8 +629,7 @@ function renderJira({ enabled, webhooks, jira, boards, admin, flagFields = null 
     }
     const connect = html`<a class="btn btn-primary" href="${tenantPath('/jira/connect')}">${jira.connected ? 'Reconnect Jira' : 'Connect Jira'}</a>`;
     if (!jira.connected) {
-        return section(admin ? html`<p>${connect}</p>` : html`<p class="settings-hint">Jira is not connected; an admin can connect it.</p>`,
-            'Read-only access through Atlassian: issues, boards and sprints of the boards you choose.');
+        return section(admin ? html`<p>${connect}</p>` : html`<p class="settings-hint">Jira is not connected; an admin can connect it.</p>`);
     }
     const status = html`<p>${jira.site ? html`Connected to <strong>${jira.site.name}</strong> <span class="settings-row-meta">${jira.site.url}</span>` : 'Connected — choose a site.'}
         ${jira.lastError ? html` <span class="state-tag fail">${jira.lastError}</span>` : ''}
@@ -499,8 +701,7 @@ function renderSources({ flags, repos, once, origin }){
             <button type="button" class="btn-link btn" data-action="revoke-token" data-token-id="${t.id}">revoke</button></span>`) : 'none — the source can\'t send anything'}</div>
         </td><td class="actions"><button type="button" class="btn" data-action="new-token" data-source-id="${s.id}">New token</button>
         <button type="button" class="btn btn-danger" data-action="delete-source" data-source-id="${s.id}">Delete</button></td></tr>`);
-    return html`<p class="settings-hint">ShipScope never reads your flags: each source (a build step, a flag service, a cron job)
-        sends their full state to the ingest URL with its own token.</p>${once.token ? SecretBox({
+    return html`${once.token ? SecretBox({
         label: 'Ingest token — shown only once',
         value: once.token,
         note: `The source sends POST ${origin}/api/flags/ingest with the header "Authorization: Bearer <token>".`,
@@ -543,8 +744,8 @@ function FlagRow(flag, { admin, jiraUrl }){
         ${edit}</td></tr>`;
 }
 
-/** @param {{ flagList: object[]|null|{ error: string }, sources: object[]|null|{ error: string }, repos: object[], admin: boolean, once: object, origin: string, jiraUrl?: string|null }} props */
-function renderFlags({ flagList, sources, repos, admin, once, origin, jiraUrl = null }){
+/** @param {{ flagList: object[]|null|{ error: string }, admin: boolean, jiraUrl?: string|null }} props */
+function renderFlags({ flagList, admin, jiraUrl = null }){
     let list = html`<p class="settings-loading">Loading…</p>`;
     if (flagList && flagList.error) {
         list = html`<p class="settings-error">${flagList.error}</p>`;
@@ -553,35 +754,64 @@ function renderFlags({ flagList, sources, repos, admin, once, origin, jiraUrl = 
             ? html`<table class="settings-table"><tbody>${flagList.map((f) => FlagRow(f, { admin, jiraUrl }))}</tbody></table>`
             : html`<p class="settings-hint">No flags yet: a flag shows up once a source sends it.</p>`;
     }
-    return Section({
+    return Page({
         id: 'flags',
-        title: 'Feature flags',
+        title: 'Flags',
         hint: 'Each flag can be linked to Jira issues three ways, all shown on the dashboard: by its source, by your Jira issues themselves (see Jira → Feature flags in Jira), or here by hand.',
-        body: html`<h3>Flags</h3>${list}<h3>Sources</h3>${admin ? renderSources({ flags: sources, repos, once, origin }) : html`<p class="settings-hint">Only admins manage flag sources.</p>`}`,
+        body: Card({ cls: Array.isArray(flagList) && flagList.length ? 'flush' : '', body: list }),
     });
 }
 
+/** @param {{ sources: object[]|null|{ error: string }, repos: object[], admin: boolean, once: object, origin: string }} props */
+function renderSourcesPage({ sources, repos, admin, once, origin }){
+    return Page({
+        id: 'sources',
+        section: 'flags',
+        title: 'Sources',
+        hint: 'ShipScope never reads your flags: each source (a build step, a flag service, a cron job) sends their full state to the ingest URL with its own token.',
+        body: Card({ body: admin ? renderSources({ flags: sources, repos, once, origin }) : html`<p class="settings-hint">Only admins manage flag sources.</p>` }),
+    });
+}
 
+/** The page the hash names, and the sidebar beside it. */
 function renderSettings(){
     const s = settingsState;
     const admin = isAdmin();
-    const checklist = admin ? renderGettingStarted({
-        steps: onboardingSteps({ features: s.features, github: s.github, jira: s.jira, boards: s.boards, sources: s.flags, flagList: s.flagList, workspace: s.workspace }),
-        hidden: checklistHidden(),
-    }) : '';
-    return html`${checklist}${renderWorkspace({ workspace: s.workspace, admin, meId: s.me && s.me.user.id, once: s.once, tenantName: s.tenant && s.tenant.name })}
-        ${renderGitHub({ enabled: s.features.githubApp, webhooks: s.features.githubWebhooks, github: s.github, installationRepos: s.installationRepos, admin })}
-        ${renderJira({ enabled: s.features.jira, webhooks: s.features.jiraWebhooks, jira: s.jira, boards: s.boards, admin, flagFields: s.flagFields })}
-        ${renderFlags({
-        flagList: s.flagList, sources: s.flags, repos: (s.github && s.github.repos) || [], admin, once: s.once, origin: location.origin,
-        jiraUrl: s.jira && s.jira.site ? s.jira.site.url : null,
-    })}`;
+    const steps = admin ? onboardingSteps({ features: s.features, github: s.github, jira: s.jira, boards: s.boards, sources: s.flags, flagList: s.flagList, workspace: s.workspace }) : [];
+    const hidden = admin && checklistHidden();
+    const setupDone = steps.filter((st) => !st.optional && st.state !== 'unavailable').every((st) => st.state === 'done' || st.state === 'loading');
+    const page = pageFromHash({ hash: typeof location !== 'undefined' ? location.hash : '', admin, setupDone });
+    const repos = (s.github && s.github.repos) || [];
+    const pages = {
+        'getting-started': () => renderGettingStarted({ steps }),
+        general: () => renderGeneral({ workspace: s.workspace, admin }),
+        members: () => renderMembers({ workspace: s.workspace, admin, meId: s.me && s.me.user.id, once: s.once }),
+        github: () => renderGitHub({ enabled: s.features.githubApp, webhooks: s.features.githubWebhooks, github: s.github, installationRepos: s.installationRepos, admin, picker: s.trackPicker, editing: s.editingRepo }),
+        jira: () => renderJira({ enabled: s.features.jira, webhooks: s.features.jiraWebhooks, jira: s.jira, boards: s.boards, admin, flagFields: s.flagFields }),
+        flags: () => renderFlags({ flagList: s.flagList, admin, jiraUrl: s.jira && s.jira.site ? s.jira.site.url : null }),
+        sources: () => renderSourcesPage({ sources: s.flags, repos, admin, once: s.once, origin: location.origin }),
+        danger: () => renderDangerZone({ tenantName: s.tenant && s.tenant.name }),
+    };
+    const counts = {
+        members: s.workspace ? s.workspace.members.length : undefined,
+        github: s.github ? repos.length : undefined,
+        jira: Array.isArray(s.boards) ? s.boards.filter((b) => b.selected).length : undefined,
+        flags: Array.isArray(s.flagList) ? s.flagList.length : undefined,
+        sources: Array.isArray(s.flags) ? s.flags.length : undefined,
+    };
+    return {
+        page: pages[page](),
+        sidebar: renderSidebar({ page, tenant: s.tenant, admin, counts, steps, hidden }),
+    };
 }
 
 function rerender(){
     const root = document.getElementById('settingsRoot');
-    if (root) {
-        root.innerHTML = renderSettings();
+    const side = document.getElementById('settingsSidebar');
+    if (root && side) {
+        const { page, sidebar } = renderSettings();
+        root.innerHTML = page;
+        side.innerHTML = sidebar;
     }
 }
 
@@ -704,12 +934,24 @@ const actions = {
         await api('DELETE', tenantPath(`/invitations/${data.invitationId}`));
         return { section: 'workspace', ok: 'Invitation revoked.' };
     },
-    'load-installation-repos': async (el, data) => {
-        const id = data.installationId;
-        settingsState.installationRepos[id] = 'loading';
+    'open-track-picker': async () => {
+        settingsState.trackPicker = true;
+        const ids = settingsState.github ? settingsState.github.installations.map((i) => i.installationId) : [];
+        ids.forEach((id) => { settingsState.installationRepos[id] = 'loading'; });
         rerender();
-        settingsState.installationRepos[id] = await api('GET', tenantPath(`/github/installations/${id}/repositories`))
-            .then((r) => r.repositories, (err) => ({ error: err.message }));
+        await Promise.all(ids.map(async (id) => {
+            settingsState.installationRepos[id] = await api('GET', tenantPath(`/github/installations/${id}/repositories`))
+                .then((r) => r.repositories, (err) => ({ error: err.message }));
+        }));
+        return { section: null };
+    },
+    'close-track-picker': async () => {
+        settingsState.trackPicker = false;
+        return { section: null };
+    },
+    'edit-repo': async (el, data) => {
+        const id = Number(data.repoId);
+        settingsState.editingRepo = settingsState.editingRepo === id ? null : id;
         return { section: null };
     },
     'track-repo': async (el, data) => {
@@ -739,6 +981,7 @@ const actions = {
             versionFile: values.versionFile.trim() || null,
             driftIgnorePaths: [...new Set(values.driftIgnorePaths.split('\n').map((p) => p.trim()).filter(Boolean))],
         });
+        settingsState.editingRepo = null;
         return { section: 'github', ok: 'Saved; drift is recomputed with the next sync.' };
     },
     'choose-site': async (form) => {
@@ -837,7 +1080,8 @@ async function runAction(name, el){
         return;
     }
     const data = { ...el.dataset };
-    const section = (el.closest && el.closest('section') && el.closest('section').id) || null;
+    const page = el.closest && el.closest('section');
+    const section = (page && ((page.dataset && page.dataset.section) || page.id)) || null;
     // Only the outcome of this action is shown; an earlier one's message would read as current.
     settingsState.messages = {};
     try {
@@ -908,34 +1152,29 @@ async function initSettings(){
         root.innerHTML = html`<p class="settings-error">You are not a member of this workspace.</p>`;
         return;
     }
-    document.getElementById('tenantName').textContent = `${settingsState.tenant.name} · Settings`;
+    document.getElementById('tenantName').textContent = settingsState.tenant.name;
     document.title = `ShipScope — ${settingsState.tenant.name} settings`;
-    wireEvents(root);
-    // Asking for the checklist (the nav link, the dashboard's "finish setting up") brings it back if it was hidden.
-    const showChecklistOnRequest = () => {
+    wireEvents(document.getElementById('settingsApp'));
+    // Each page is a hash (#github, ...): switching re-renders from what is loaded. Asking for the checklist (the
+    // Setup card, the dashboard's "finish setting up") brings it back if it was hidden.
+    const onHash = () => {
         if (location.hash === '#getting-started' && checklistHidden()) {
             setChecklistHidden(false);
-            rerender();
-            const target = document.getElementById('getting-started');
-            if (target) {
-                target.scrollIntoView();
-            }
         }
+        settingsState.messages = {};
+        rerender();
+        window.scrollTo(0, 0);
     };
-    showChecklistOnRequest();
-    window.addEventListener('hashchange', showChecklistOnRequest);
+    window.addEventListener('hashchange', onHash);
+    if (location.hash === '#getting-started') {
+        setChecklistHidden(false);
+    }
     rerender();
     await load();
-    if (location.hash) {
-        const target = document.getElementById(location.hash.slice(1));
-        if (target) {
-            target.scrollIntoView();
-        }
-    }
 }
 
 if (typeof module !== 'undefined') {
-    module.exports = { onboardingSteps, SourceStatus, renderGettingStarted, renderWorkspace, renderGitHub, renderJira, renderFlags, FlagRow, formValues, actions, settingsState, runAction, load, api, ApiError };
+    module.exports = { onboardingSteps, SourceStatus, renderGettingStarted, SetupCard, renderSidebar, pageFromHash, repoBadge, initials, renderGeneral, renderMembers, renderDangerZone, renderGitHub, renderJira, renderFlags, renderSourcesPage, FlagRow, formValues, actions, settingsState, runAction, load, api, ApiError };
 } else if (SETTINGS_TENANT_ID) {
     initSettings();
 }

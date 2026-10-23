@@ -190,8 +190,13 @@ emptied. `sync_requests` (webhook queue) is the one non-RLS table; it holds no t
   `/api/tenants/<tenantId>/dashboard-data` (`lib/dashboard-data.js`, the same `data/*.json` shapes) and never to
   `FALLBACK`. Settings live in `server/ui/` (`settings.html`/`settings.js` at `/t/<tenantId>/settings`, `start.html`
   at `/start` for a first workspace, assets at `/ui/<name>` from an allowlist that also reuses `docs/style.css` and
-  `docs/app-html.js`). `settings.js` is a classic script on `html` with pure `render*` sections and `data-action`
-  buttons/forms calling the JSON routes (which enforce roles), tested in `server/test/settings-ui.test.js`. Admins
+  `docs/app-html.js`). `settings.js` is a classic script on `html` with pure `render*` pages and `data-action`
+  buttons/forms calling the JSON routes (which enforce roles), tested in `server/test/settings-ui.test.js`. One page
+  at a time by hash (`PAGES`, `pageFromHash()`: `#general`, `#members`, `#github`, `#jira`, `#flags`, `#sources`,
+  `#danger` for admins, `#getting-started`; old `#workspace` = General), beside a sidebar (`renderSidebar()`: the
+  workspace, the pages with counts, amber/red when a checklist step waits on the admin or has a problem, and the
+  admins' Setup card). GitHub lists installations as cards and tracked repositories as a table; "Track repository"
+  opens a picker over every installation's repositories, the pencil opens a row's version file/drift form. Admins
   get a Getting started checklist (`onboardingSteps()`); an empty dashboard links to it (`#setupBanner`); the
   header's `#settingsLink` (a gear icon after the status badge) shows only in API mode. Every page and asset is
   served with `DASHBOARD_HEADERS` (`web.js`), including a Content-Security-Policy with `script-src 'self'` (no inline

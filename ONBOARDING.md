@@ -16,9 +16,9 @@ else (`staging`, `uat`) is skipped.
 Sign in with GitHub and create a workspace at `/start`. Its Settings page (`/t/<workspace>/settings`) opens with a
 **Getting started** checklist that shows where you are; admins can hide it. The steps:
 
-1. **Install the GitHub App** on the GitHub organization or account you deploy from (Settings → GitHub → Install).
+1. **Install the GitHub App** on the GitHub organization or account you deploy from (Settings → GitHub → Install the GitHub App).
    GitHub brings you back; the installation is linked only if your own GitHub account can see it.
-2. **Choose repositories to track** — Track next to each repository whose deployments you want to see. Optional
+2. **Choose repositories to track** — Track repository, then Track next to each repository whose deployments you want to see. Optional
    per repository: a version file (for QA/PROD deploys whose commits only hold a line like `version=v1.6.0`) and
    paths not counted as drift (e.g. `.github/`, `README.md`).
 3. **First deployments arrive** — within 15 minutes (the default sync interval), or within about 30 seconds when
@@ -42,7 +42,7 @@ ShipScope never reads your flags: whatever holds them sends their state to ShipS
 keeps it independent of where flags live — a file in the repository, an endpoint of the application, AWS AppConfig,
 a flag service. Each such place is one **flag source**:
 
-1. In Settings → Feature flags, add a source: a name, the kind — **build** (the value is baked into the build, e.g. a
+1. In Settings → Sources, add a source: a name, the kind — **build** (the value is baked into the build, e.g. a
    file in the repository) or **runtime** (switched live, e.g. AppConfig or a flag service) — a priority (when several
    sources of one kind report the same flag, the higher wins) and, optionally, the component (tracked repository)
    its flags belong to. The dashboard shows a flag's runtime value when there is one, otherwise its build value.
@@ -131,7 +131,7 @@ tool can trigger the pipeline. Sending the same state again changes nothing.
 1. **Look at your flags.** Where are they, one file per environment or one file for all, and what shape (an object
    `{ key: value }`, objects per flag, a list)? Does a flag ever switch without a deploy? Then it is a runtime source,
    otherwise build.
-2. **Create the source.** Settings → Feature flags → Add a source (name, kind, optionally the component) and copy the
+2. **Create the source.** Settings → Sources → Add a source (name, kind, optionally the component) and copy the
    token. One source per place your flags live.
 3. **Store the credentials** where the pipeline runs: the token as a secret (`SHIPSCOPE_FLAGS_TOKEN`), the ShipScope
    address as a variable (`SHIPSCOPE_URL`).
@@ -140,7 +140,7 @@ tool can trigger the pipeline. Sending the same state again changes nothing.
    every flag and environment, and lists skipped files. Check that the keys, values and environments are right.
 6. **Send for real:** remove `dry-run` and add `shipscope-url` and `token`. The log ends with what ShipScope did
    (`3 flags for prod, 3 changed, 0 removed`).
-7. **Check in ShipScope:** the source shows "received" with the counts, the flags are in Settings → Feature flags and
+7. **Check in ShipScope:** the source shows "received" with the counts, the flags are in Settings → Flags and
    on the dashboard. From now on a refused message shows there too, with the reason.
 
 **Choosing the options** — what your files look like decides them:
@@ -343,6 +343,6 @@ send_flags() {  # usage: <flag map on stdin> send_flags <env>
   ```
 
 When something does not show up, the answer of the post says why (`400` with the field, `401` for the token).
-Settings → Feature flags shows the same per source: when its last message was received and what it changed, or that
+Settings → Sources shows the same per source: when its last message was received and what it changed, or that
 it was refused and why, and when each token was last used. A message with an unknown token belongs to no source and
 only gets its 401.
