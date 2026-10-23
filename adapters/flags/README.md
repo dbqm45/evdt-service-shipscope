@@ -106,7 +106,7 @@ flag's name and the file. Flag keys must match ShipScope's rule (letters, digits
 Every problem stops the run with one line naming the reason (exit code 1; in the Action an error annotation): a file
 or pattern that matches nothing, a value that cannot be read, an answer that is not 2xx, and ShipScope's own 400 with
 the failing field or 401 for the token. Nothing is sent unless the whole message could be built. A message ShipScope refuses is also shown under the source in
-Settings → Feature flags, with the reason.
+Settings → Sources, with the reason.
 
 Tests: `test/flags-adapter.test.js` (root `npm test`), and `server/test/flags.test.js` posts the adapter's message
 through the real route.

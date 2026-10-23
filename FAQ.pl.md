@@ -39,8 +39,8 @@ trafienie:
 
 1. **Release** na GitHubie wskazujący dokładnie ten commit;
 2. zwykły **tag** gita na tym commicie;
-3. **plik wersji** we wdrożonym commicie, jeśli repozytorium ma go ustawionego (Settings → GitHub → Tracked
-   repositories → Version file) — dla repozytoriów, których commity wdrażane na QA/PROD zawierają tylko linię w
+3. **plik wersji** we wdrożonym commicie, jeśli repozytorium ma go ustawionego (Settings → GitHub →
+   ołówek przy repozytorium → Version file) — dla repozytoriów, których commity wdrażane na QA/PROD zawierają tylko linię w
    rodzaju `version=v1.6.0`;
 4. ciąg wyglądający na wersję (`v1.2.3`, `1.2.3`) w **opisie commita**;
 5. skrócony **SHA commita**.
@@ -68,8 +68,8 @@ Jak to jest ustalane dla każdej pary środowisk:
    niezależnie od liczby commitów między nimi (merge, squash i gałęzie wdrożeniowe tworzą nowe commity dla
    identycznego kodu).
 2. W przeciwnym razie listy plików są porównywane po ścieżce i treści. Ścieżki wyłączone w ustawieniach
-   repozytorium (elementy wdrożenia, np. `.github/`, `README.md`, `trigger.properties`; Settings → GitHub → Paths not
-   counted as drift) się nie liczą. Jeśli nie zostaje żaden różniący się plik — brak znacznika.
+   repozytorium (elementy wdrożenia, np. `.github/`, `README.md`, `trigger.properties`; Settings → GitHub → ołówek → Paths
+   not counted as drift) się nie liczą. Jeśli nie zostaje żaden różniący się plik — brak znacznika.
 3. Jeśli porównaniu nie da się ufać — błąd GitHuba albo repozytorium za duże na jedną listę (100 000 pozycji /
    7 MB) — wynik to **Unknown**, nigdy „brak różnicy”.
 
@@ -86,7 +86,7 @@ nie to samo wydanie w innym tempie. (`server/lib/env-drift.js`, `server/lib/tree
 ### Jak długo trzymane są deploymenty i kiedy pojawia się nowy?
 
 ShipScope pokazuje stan bieżący; pełną historię ma GitHub. Deploymenty starsze niż okres przechowywania workspace'u
-(Settings → Workspace, 7–730 dni, domyślnie 90) są codziennie usuwane, z wyjątkiem — dla każdego repozytorium i
+(Settings → General, 7–730 dni, domyślnie 90) są codziennie usuwane, z wyjątkiem — dla każdego repozytorium i
 środowiska — najnowszego deploymentu i najnowszego udanego, których potrzebują „bieżąca wersja”, drift i rollback.
 To, czy zadanie kiedykolwiek trafiło na środowisko, jest zapamiętywane osobno i przeżywa to sprzątanie (tabela
 `issue_deployments`). Nowe deploymenty przychodzą z okresową synchronizacją (domyślnie co 15 minut) albo ok.
@@ -165,7 +165,7 @@ adapter by wysłał.
    Uruchom go z zakładki Actions. W logu zobaczysz wiadomość (`newCheckout` on, `darkMode` off, `search` partial 25)
    i „Dry run: 3 flags for prod, nothing sent.”; wartość, której adapter nie umie odczytać, kończy krok błędem z nazwą
    flagi i pliku.
-3. **Wysyłka naprawdę.** W ShipScope, Settings → Feature flags: dodaj źródło (rodzaj build) i skopiuj jego token.
+3. **Wysyłka naprawdę.** W ShipScope, Settings → Sources: dodaj źródło (rodzaj build) i skopiuj jego token.
    W innym repozytorium dodaj sekret `SHIPSCOPE_FLAGS_TOKEN` (token) i zmienną `SHIPSCOPE_URL` (adres ShipScope, np. ten
    z Rendera; runnery GitHuba nie dosięgną `localhost`). Zamiast `dry-run: true` wpisz:
 
@@ -175,7 +175,7 @@ adapter by wysłał.
    ```
 
    Log kończy się linią „ShipScope (<źródło>): 3 flags for prod, 3 changed, 0 removed, new: …”.
-4. **Sprawdź w ShipScope.** Przy źródle widać „received” z liczbami, flagi są w Settings → Feature flags i na
+4. **Sprawdź w ShipScope.** Przy źródle widać „received” z liczbami, flagi są w Settings → Flags i na
    dashboardzie (Technical view → flagi). Ponowne uruchomienie niczego nie zmienia (0 changed); usunięcie flagi z pliku
    i uruchomienie oznacza ją jako usuniętą.
 5. **Zobacz odrzucenie.** Wpisz zły token: krok kończy się błędem 401. Daj fladze wartość w rodzaju `"maybe"`: adapter

@@ -17,9 +17,9 @@ Zaloguj się przez GitHuba i utwórz workspace pod adresem `/start`. Jego strona
 zaczyna się listą kontrolną **Getting started**, która pokazuje, na jakim etapie jesteś; admin może ją ukryć. Kroki:
 
 1. **Install the GitHub App** — zainstaluj aplikację na organizacji albo koncie GitHub, z którego wdrażasz
-   (Settings → GitHub → Install). GitHub odeśle cię z powrotem; instalacja zostaje połączona tylko wtedy, gdy twoje
+   (Settings → GitHub → Install the GitHub App). GitHub odeśle cię z powrotem; instalacja zostaje połączona tylko wtedy, gdy twoje
    własne konto GitHub ją widzi.
-2. **Choose repositories to track** — kliknij Track przy każdym repozytorium, którego deploymenty chcesz widzieć.
+2. **Choose repositories to track** — kliknij Track repository, a potem Track przy każdym repozytorium, którego deploymenty chcesz widzieć.
    Opcjonalnie dla każdego repozytorium: plik wersji (dla wdrożeń QA/PROD, których commity zawierają tylko linię w
    rodzaju `version=v1.6.0`) i ścieżki, które nie liczą się jako drift (np. `.github/`, `README.md`).
 3. **First deployments arrive** — w ciągu 15 minut (domyślny odstęp synchronizacji) albo ok. 30 sekund, jeśli
@@ -45,7 +45,7 @@ ShipScope nigdy nie czyta twoich flag: to, co je przechowuje, wysyła ich stan d
 w repozytorium, pod adresem aplikacji, w AWS AppConfig czy w serwisie flag. Każde takie miejsce to jedno
 **źródło flag** (flag source):
 
-1. W Settings → Feature flags dodaj źródło: nazwę, rodzaj — **build** (wartość wbudowana przy budowaniu, np. plik
+1. W Settings → Sources dodaj źródło: nazwę, rodzaj — **build** (wartość wbudowana przy budowaniu, np. plik
    w repozytorium) albo **runtime** (przełączana na żywo, np. AppConfig albo serwis flag) — priorytet (gdy kilka źródeł
    jednego rodzaju podaje tę samą flagę, wygrywa wyższy) i opcjonalnie komponent (śledzone repozytorium), do którego
    należą jego flagi. Dashboard pokazuje wartość runtime, jeśli jest, inaczej build.
@@ -136,7 +136,7 @@ narzędzie umie uruchomić potok. Ponowne wysłanie tego samego stanu niczego ni
 1. **Przyjrzyj się flagom.** Gdzie są, jeden plik na środowisko czy jeden na wszystkie, i jaki mają kształt (obiekt
    `{ klucz: wartość }`, obiekt na flagę, lista)? Czy flaga bywa przełączana bez wdrożenia? Wtedy to źródło runtime,
    inaczej build.
-2. **Utwórz źródło.** Settings → Feature flags → dodaj źródło (nazwa, rodzaj, opcjonalnie komponent) i skopiuj token.
+2. **Utwórz źródło.** Settings → Sources → dodaj źródło (nazwa, rodzaj, opcjonalnie komponent) i skopiuj token.
    Jedno źródło na jedno miejsce, w którym są flagi.
 3. **Zapisz dane dostępu** tam, gdzie działa potok: token jako sekret (`SHIPSCOPE_FLAGS_TOKEN`), adres ShipScope jako
    zmienną (`SHIPSCOPE_URL`).
@@ -145,7 +145,7 @@ narzędzie umie uruchomić potok. Ponowne wysłanie tego samego stanu niczego ni
    wszystkimi flagami i środowiskami oraz pominięte pliki. Sprawdź klucze, wartości i środowiska.
 6. **Wyślij naprawdę:** usuń `dry-run`, dodaj `shipscope-url` i `token`. Log kończy się tym, co zrobił ShipScope
    (`3 flags for prod, 3 changed, 0 removed`).
-7. **Sprawdź w ShipScope:** przy źródle widać „received” z liczbami, flagi są w Settings → Feature flags i na
+7. **Sprawdź w ShipScope:** przy źródle widać „received” z liczbami, flagi są w Settings → Flags i na
    dashboardzie. Od teraz odrzucona wiadomość też jest tam widoczna, z powodem.
 
 **Dobór opcji** — decyduje o nich wygląd twoich plików:
@@ -349,6 +349,6 @@ send_flags() {  # użycie: <mapa flag na stdin> send_flags <środowisko>
   ```
 
 Gdy coś się nie pokazuje, odpowiedź na wysyłkę mówi dlaczego (`400` ze wskazaniem pola, `401` przy tokenie).
-Settings → Feature flags pokazuje to samo przy każdym źródle: kiedy przyszła jego ostatnia wiadomość i co zmieniła albo
+Settings → Sources pokazuje to samo przy każdym źródle: kiedy przyszła jego ostatnia wiadomość i co zmieniła albo
 że została odrzucona i dlaczego, oraz kiedy każdy token był ostatnio użyty. Wiadomość z nieznanym tokenem nie należy
 do żadnego źródła i dostaje tylko swoje 401.

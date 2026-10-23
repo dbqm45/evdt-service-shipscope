@@ -199,7 +199,7 @@ deployment itself is ready to go when wanted: `render.yaml` and the step-by-step
   (Distribution settings) and expected by GitHub for a public App.
 - **GDPR**: ShipScope processes customers' Jira/GitHub data as a processor -- a DPA (data processing agreement), a
   list of subprocessors (Render, the payment provider), data retention and deletion rules.
-- **Deleting a workspace and its data** -- built (2026-10-16): `DELETE /tenants/:tenantId` and Settings → Workspace →
+- **Deleting a workspace and its data** -- built (2026-10-16): `DELETE /tenants/:tenantId` and Settings → Danger zone →
   Delete workspace. Still to decide at this stage: deleting automatically when a subscription ends (after a grace
   period), and how long Render's database backups keep deleted data.
 
