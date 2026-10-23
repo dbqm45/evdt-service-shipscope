@@ -199,7 +199,9 @@ emptied. `sync_requests` (webhook queue) is the one non-RLS table; it holds no t
 
 ## Dashboard data (what `GET /api/tenants/:id/dashboard-data` returns)
 
-`lib/dashboard-data.js` keeps the shapes of the file-based `data/*.json` the frontend was written for:
+`lib/dashboard-data.js` keeps the shapes of the file-based `data/*.json` the frontend was written for (pinned by
+`server/test/dashboard-contract.test.js`: both syncs against fake APIs, the real routes, the real `docs/app-*.js`
+reading it through `loadData()` in a `vm`; `server-test.yml` also runs on `docs/app-*.js` changes for it):
 `deployments`, `flagsMeta`, `flagStates`, `flagStateHistory`, `jiraIndex`, `issueStatusIndex`, `issueDeployments`,
 `componentsOrder` (the tracked repos), `lastSyncedAt`, `jiraBrowseUrl`. The `FALLBACK` sample data has the same shape.
 
