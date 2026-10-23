@@ -48,6 +48,18 @@ function anyDeploymentForIssue(issue, env){
 
     return live || keys.some(k => !!state.issueDeployments[k]?.[env]);
 }
+/** True when an issue with no deployment of its own is blocked by issues (`blockedByKeys`, from the Jira sync) that
+ *  are all deployed on `env` — its code shipped in what blocks it (a bug fixed in a Story's sub-task). One level
+ *  only; a blocker is matched on its own key plus its sub-tasks' when it is among the loaded issues. */
+function deployedViaBlockers(issue, env){
+    const keys = Array.isArray(issue.blockedByKeys) ? issue.blockedByKeys : [];
+
+    return keys.length > 0 && keys.every(key => {
+        const blocker = (state.jiraIssues || []).find(i => i.key === key) || { key };
+
+        return anyDeploymentForIssue(blocker, env);
+    });
+}
 function issueLinks(issue){
     const flags = flagsForIssue(issue.key);
     const pairs = [];
@@ -77,7 +89,7 @@ function issueStatusForEnv(issue, env){
         // referencing this issue actually ship to this environment? This is
         // strictly less precise (we can't know if a flag is hiding it), but
         // far more honest than always showing "none".
-        const deployedHere = anyDeploymentForIssue(issue, env);
+        const deployedHere = anyDeploymentForIssue(issue, env) || deployedViaBlockers(issue, env);
 
         return { level: deployedHere ? RELEASE_LEVEL.DEPLOYED_CODE_ONLY : RELEASE_LEVEL.NONE, blocked:false, results:[] };
     }
