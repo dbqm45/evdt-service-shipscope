@@ -98,7 +98,8 @@ hand that file to the adapter (see ONBOARDING.md).
 
 Anything else — another word, a number outside 0–100 such as a port caught by a loose `prefix` — stops with the
 flag's name and the file. Flag keys must match ShipScope's rule (letters, digits and
-`_ . : -`, starting with a letter or `_`, case-sensitive).
+`_ . : -`, starting with a letter or `_`, case-sensitive; not a name every JavaScript object has, such as
+`constructor` or `toString`).
 
 ## Errors
 

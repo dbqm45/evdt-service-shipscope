@@ -80,6 +80,13 @@ test('flagMap: path, value path and prefix', () => {
     assert.throws(() => flagMap({ a: { on: true } }, { valuePath: 'enabled' }, 'f'), /f, flag a: no "enabled" in it/);
 });
 
+test('flagMap: a key every object already has is an error, not a flag silently lost', () => {
+    for (const text of ['{ "__proto__": true }', '{ "toString": "on" }', '{ "flags": [{ "name": "valueOf", "enabled": true }] }']) {
+        const doc = JSON.parse(text);
+        assert.throws(() => flagMap(doc, text.includes('flags') ? { path: 'flags' } : {}, 'flags.json'), /cannot be a flag key/, text);
+    }
+});
+
 test('mergeStates: files merge; the same flag with two values is an error naming both files', () => {
     assert.deepEqual(mergeStates([{ where: 'a', flags: { x: true } }, { where: 'b', flags: { x: 'on', y: 25 } }]),
         { x: { state: 'on' }, y: { state: 'partial', rollout: 25 } });
@@ -98,7 +105,7 @@ test('buildPayload: full state of each environment given, in env then key order;
     assert.equal(buildPayload({ byEnv: { qa: {} }, complete: false }).complete, false);
     assert.throws(() => buildPayload({ byEnv: { staging: {} } }), /environment "staging" must be one of test, qa, prod/);
     assert.throws(() => buildPayload({ byEnv: {} }), /no environment to send/);
-    for (const key of ['1a', 'a b', '__proto__', '']) assert.throws(() => buildPayload({ byEnv: { qa: { [key]: { state: 'on' } } } }), /is not a valid flag key/);
+    for (const key of ['1a', 'a b', '__proto__', '', 'toString', 'hasOwnProperty']) assert.throws(() => buildPayload({ byEnv: { qa: { [key]: { state: 'on' } } } }), /is not a valid flag key/);
 });
 
 test('expandFiles: plain paths and patterns, sorted; a pattern matching nothing is an error', () => {

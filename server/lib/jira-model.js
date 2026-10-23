@@ -5,6 +5,7 @@
  * board being synced, so the file-based Team-field and label heuristics are not needed.
  */
 
+const { isReservedKey } = require('./flags-logic');
 const DEFAULT_PI_PATTERN = /(\d+\.\d+)\.\d+/;
 const TEMPLATE_MAX_LENGTH = 100;
 // The dashboard's "Now" increment: every selected board's current one together (teams in different rhythms --
@@ -335,7 +336,7 @@ function extractFlagKeys(fields, flagLink) {
             return text.split(/[\s,;]+/);
         });
     }
-    return [...new Set(candidates.filter((k) => FLAG_KEY.test(k)))].slice(0, MAX_FLAGS_PER_ISSUE);
+    return [...new Set(candidates.filter((k) => FLAG_KEY.test(k) && !isReservedKey(k)))].slice(0, MAX_FLAGS_PER_ISSUE);
 }
 
 const ISSUE_KEY = /^[A-Z][A-Z0-9_]*-\d+$/;

@@ -26,6 +26,8 @@ test('checkPayload: normalizes, derives covered environments, bounds the sender\
     bad({ observations: [obs('a', 'prod', 'on', { changedAt: '2026-10-09T11:59:00Z' })] }, /more than 7 days old/);
     bad({ environments: ['qa'], observations: [obs('a', 'prod', 'on')] }, /prod is not in "environments"/);
     bad({ observations: [obs('__proto__', 'prod', 'on')] }, /not a valid flag key/);
+    for (const key of ['toString', 'valueOf', 'hasOwnProperty', 'constructor']) bad({ observations: [obs(key, 'prod', 'on')] }, /not a valid flag key/);
+    bad({ observations: [obs('a', 'prod', 'on')], flags: [{ key: 'toString' }] }, /not a valid flag key/);
     bad({ observations: [obs('a', 'prod', 'on')], flags: [{ key: 'b' }] }, /b has no observations/);
     bad({ observations: [obs('a', 'prod', 'on')], flags: [{ key: 'a' }, { key: 'a' }] }, /listed twice/);
 });

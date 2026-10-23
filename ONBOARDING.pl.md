@@ -74,7 +74,8 @@ w repozytorium, pod adresem aplikacji, w AWS AppConfig czy w serwisie flag. Każ
 }
 ```
 
-- `observations` — jeden wpis na flagę i środowisko: `key` (wielkość liter ma znaczenie; litery, cyfry i `_ . : -`),
+- `observations` — jeden wpis na flagę i środowisko: `key` (wielkość liter ma znaczenie; litery, cyfry i `_ . : -`; nie nazwa, którą ma
+  każdy obiekt JavaScript, np. `constructor` czy `toString`),
   `env` (`test`, `qa` albo `prod`: swoje nazwy mapujesz sam, np. `staging` → `qa`, `production` → `prod`), `state`
   (`on`, `off` albo `partial` — włączona dla części użytkowników, z opcjonalnym procentem `rollout`) i opcjonalny
   `changedAt` (ISO 8601), gdy wysyłasz z opóźnieniem; musi mieścić się w ostatnich 7 dniach, a starsza wartość nigdy
