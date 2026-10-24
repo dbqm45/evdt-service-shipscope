@@ -179,13 +179,14 @@ function BreakdownRow({ component, flagKey, envs }){
     return html`<tr>
               <td><b>${component}</b></td>
               <td class="mono">${flagKey}</td>
-              ${envs.map(e => html`${DotCell({ yes: e.deployed, yesLabel: 'deployed', noLabel: 'not found' })}${DotCell({ yes: e.flagOn, yesLabel: 'ON', noLabel: 'OFF' })}`)}
+              ${envs.map(e => html`${DotCell({ yes: e.deployed, yesLabel: 'deployed', noLabel: 'not found' })}${DotCell({ yes: e.flagOn, yesLabel: 'ON', noLabel: e.flagPartial ? 'PARTIAL' : 'OFF' })}`)}
             </tr>`;
 }
 
 /** Expanded per-component code/flag breakdown under an open issue row. `rows` are `BreakdownRow` props;
- *  with none, `noFlagReason` explains why instead. `dependency` is `{ note }` or null. */
-function IssueBreakdown({ issueKey, rows, noFlagReason, dependency = null }){
+ *  with none, `noFlagReason` explains why instead. `dependency` is `{ note }` or null; `uncertain` = services the
+ *  code reached that nobody said anything about flags for. */
+function IssueBreakdown({ issueKey, rows, noFlagReason, dependency = null, uncertain = [] }){
     return html`<div class="breakdown">
         ${rows.length ? html`
         <table class="breakdown-table">
@@ -196,6 +197,7 @@ function IssueBreakdown({ issueKey, rows, noFlagReason, dependency = null }){
         </table>
         <div class="breakdown-hint">"Not found" means no successful deployment of that component carried a commit referencing ${issueKey} yet.</div>
         ` : html`<div class="breakdown-row" style="justify-content:flex-start;">No flag linked to ${issueKey} — ${noFlagReason}</div>`}
+        ${uncertain.length ? html`<div class="breakdown-row"><span>Not sure</span><span>${uncertain.join(', ')}: no flag source covers it and it is not marked as having no flags (Settings → GitHub)</span></div>` : ''}
         ${dependency ? html`<div class="breakdown-row"><span>Blocking dependency</span><span style="color:var(--blocked)">${dependency.note}</span></div>` : ''}
     </div>`;
 }

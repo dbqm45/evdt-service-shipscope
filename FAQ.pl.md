@@ -106,6 +106,31 @@ runtime). Gdy kilka źródeł jednego rodzaju zgłasza tę samą flagę, wygrywa
 wartość, dashboard pokazuje runtime, a niezgodność jest oznaczana (zob. niżej). (`server/lib/flags.js`, reguły w
 `server/lib/flags-logic.js`.)
 
+Źródło dotyczy serwisów (śledzonych repozytoriów), które admin dla niego zaznaczy. Każdy serwis ma własną wartość
+flagi: w obrębie serwisu runtime wygrywa z build, potem wyższy priorytet, potem nowsza zmiana; wartość ze źródła
+backendu nigdy nie rozstrzyga o frontendzie. W Settings → GitHub repozytorium można też oznaczyć jako bez feature
+flag. (`flagStatesByComponent`, `componentsOrder[].flagCoverage` w danych dashboardu.)
+
+### Jak ustalany jest status zadania (Released, Deployed (hidden), Partial, Code deployed)?
+
+Tylko z serwisów, do których kod zadania trafił na danym środowisku
+(`issueStatusForEnv()` w `docs/app-model.js`; ADR-003):
+
+- **Bramka per serwis.** Każdy taki serwis z flagą powiązaną z zadaniem jest bramką:
+  - wszystkie jego powiązane flagi on → on;
+  - wszystkie off → off;
+  - inaczej → partial, także przy rolloucie poniżej 100%.
+
+  Serwis bez powiązanej flagi jest neutralny.
+- **Status z bramek.**
+  - Wszystkie bramki on → **Released**.
+  - Wszystkie off → **Deployed (hidden)**.
+  - Mieszanka → **Partial**. Tak samo, gdy serwis ma powiązaną flagę, ale jeszcze nie ma kodu zadania.
+  - Brak bramek → **Code deployed** (nie ma flagi do sprawdzenia).
+- **„?” po statusie.** Co najmniej jeden serwis, do którego trafił kod, nie ma źródła flag i nie jest oznaczony jako
+  bez flag. Poziom zostaje, ale ShipScope nie ma pewności, a podpowiedź i rozwinięty wiersz nazywają ten serwis.
+  Oznacz go w Settings → GitHub (ołówek → Feature flags) albo zaznacz go przy jego źródle flag, a „?” zniknie.
+
 ### Do których zadań Jiry należy flaga?
 
 Z trzech miejsc, połączonych: klucze dołączane przez źródło, klucze ustawione ręcznie przez admina w Settings

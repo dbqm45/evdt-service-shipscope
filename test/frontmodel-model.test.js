@@ -100,7 +100,7 @@ test('a deployment naming only a sub-task counts for its parent (subtaskKeys)', 
     assert.equal(run(`anyDeploymentForIssue(${story},"prod")`), true);
     assert.equal(run(`anyDeploymentForIssue(${story},"qa")`), true);
     assert.equal(run('anyDeploymentForIssue({key:"S-1"},"prod")'), false, 'without subtaskKeys (synced before the field) only the own key');
-    assert.deepEqual(j(`issueStatusForEnv(${story},"prod")`), { level: 'deployed_code_only', blocked: false, results: [] });
+    assert.deepEqual(j(`issueStatusForEnv(${story},"prod")`), { level: 'deployed_code_only', blocked: false, results: [], uncertain: [] });
 });
 
 test('an issue with no deployment of its own counts as deployed where all its blockers are (blockedByKeys)', () => {
@@ -111,7 +111,7 @@ test('an issue with no deployment of its own counts as deployed where all its bl
         deployments: [dep('c', 'test', { relatedIssues: ['B-3', 'B-2'] }), dep('c', 'qa', { relatedIssues: ['B-3'] })],
         jiraIssues: [{ key: 'B-1', subtaskKeys: ['B-3'] }],
     });
-    assert.deepEqual(j('issueStatusForEnv({key:"BUG-1",blockedByKeys:["B-1"]},"qa")'), { level: 'deployed_code_only', blocked: false, results: [] },
+    assert.deepEqual(j('issueStatusForEnv({key:"BUG-1",blockedByKeys:["B-1"]},"qa")'), { level: 'deployed_code_only', blocked: false, results: [], uncertain: [] },
         'the blocker is matched on its sub-task\'s key');
     assert.equal(run('issueStatusForEnv({key:"BUG-1",blockedByKeys:["B-1"]},"prod").level'), 'none');
     assert.equal(run('issueStatusForEnv({key:"BUG-2",blockedByKeys:["B-1","B-2"]},"test").level'), 'deployed_code_only');
@@ -125,8 +125,8 @@ test('issueStatusForEnv without linked flags: raw deployment presence', () => {
     const { j, setState } = loadApp();
 
     setState({ deployments: [dep('c', 'prod', { relatedIssues: ['K-1'] })] });
-    assert.deepEqual(j('issueStatusForEnv({key:"K-1"},"prod")'), { level: 'deployed_code_only', blocked: false, results: [] });
-    assert.deepEqual(j('issueStatusForEnv({key:"K-1"},"qa")'), { level: 'none', blocked: false, results: [] });
+    assert.deepEqual(j('issueStatusForEnv({key:"K-1"},"prod")'), { level: 'deployed_code_only', blocked: false, results: [], uncertain: [] });
+    assert.deepEqual(j('issueStatusForEnv({key:"K-1"},"qa")'), { level: 'none', blocked: false, results: [], uncertain: [] });
 });
 
 test('issueStatusForEnv with flags: none / released / deployed / partial / blocked', () => {
@@ -149,7 +149,7 @@ test('issueStatusForEnv with flags: none / released / deployed / partial / block
     assert.equal(run('issueStatusForEnv({key:"K-1"},"prod").level'), 'deployed');
     setState({ ...base, deployments: [dep('a', 'prod', { relatedIssues: ['K-1'] })], flagStates: { f1: { qa: { build: { enabled: true } } } } });
     assert.deepEqual(j('issueStatusForEnv({key:"K-1"},"prod").results[0]'), {
-        deployed: true, released: false, deployment: j('state.deployments[0]'), flagOn: false, flagChangedAt: null, component: 'a', flagKey: 'f1' });
+        deployed: true, released: false, deployment: j('state.deployments[0]'), flagOn: false, flagPartial: false, flagChangedAt: null, component: 'a', flagKey: 'f1' });
     setState({ ...base, deployments: [dep('a', 'prod', { relatedIssues: ['K-1'] })] });
     assert.equal(run('issueStatusForEnv({key:"K-1"},"prod").level'), 'deployed');
 
@@ -168,6 +168,57 @@ test('issueStatusForEnv with flags: none / released / deployed / partial / block
     assert.deepEqual(j('(({level, blocked}) => ({level, blocked}))(issueStatusForEnv({key:"K-1", dependencyBlocked:true},"qa"))'), { level: 'released', blocked: false });
     setState({ ...base, deployments: [dep('a', 'prod', { relatedIssues: ['K-1'] })], flagStates: { f1: flagState(false, daysAgo(2)) } });
     assert.equal(run('issueStatusForEnv({key:"K-1", dependencyBlocked:true},"prod").blocked'), false);
+});
+
+test('issueStatusForEnv per service (ADR-003): own state per service, neutral services, partial rollouts, "?" for untracked', () => {
+    const { j, run, setState } = loadApp();
+    const at = daysAgo(2);
+    const v = (stateName, rollout = null) => ({ state: stateName, rollout, enabled: stateName === 'on', changedAt: at });
+    const comps = (coverage) => Object.entries(coverage).map(([name, flagCoverage]) => ({ name, flagCoverage }));
+    const deps = (...cs) => cs.map(c => dep(c, 'prod', { relatedIssues: ['K-1'] }));
+    const flagsMeta = { fe: { jiraKeys: ['K-1'], components: ['web'] }, be: { jiraKeys: ['K-1'], components: ['api'] } };
+    const level = () => run('issueStatusForEnv({key:"K-1"},"prod").level');
+
+    // FE on in code, BE off at runtime: each service keeps its own value (the old model let BE win for both).
+    setState({ flagsMeta, deployments: deps('web', 'api'), componentsOrder: comps({ web: 'tracked', api: 'tracked' }),
+        flagStatesByComponent: { fe: { prod: { web: v('on') } }, be: { prod: { api: v('off') } } } });
+    assert.equal(level(), 'partial');
+    setState({ flagsMeta, deployments: deps('web', 'api'), componentsOrder: comps({ web: 'tracked', api: 'tracked' }),
+        flagStatesByComponent: { fe: { prod: { web: v('on') } }, be: { prod: { api: v('on') } } } });
+    assert.equal(level(), 'released');
+    setState({ flagsMeta, deployments: deps('web', 'api'), componentsOrder: comps({ web: 'tracked', api: 'tracked' }),
+        flagStatesByComponent: { fe: { prod: { web: v('off') } }, be: { prod: { api: v('off') } } } });
+    assert.equal(level(), 'deployed');
+
+    // A rollout below 100% is partial, never released.
+    setState({ flagsMeta: { fe: flagsMeta.fe }, deployments: deps('web'), componentsOrder: comps({ web: 'tracked' }),
+        flagStatesByComponent: { fe: { prod: { web: v('partial', 25) } } } });
+    assert.equal(level(), 'partial');
+    assert.equal(run('issueStatusForEnv({key:"K-1"},"prod").results[0].flagPartial'), true);
+
+    // A service the code reached without a linked flag is neutral: it neither releases nor holds back.
+    setState({ flagsMeta: { fe: flagsMeta.fe }, deployments: deps('web', 'worker'), componentsOrder: comps({ web: 'tracked', worker: 'none' }),
+        flagStatesByComponent: { fe: { prod: { web: v('on') } } } });
+    assert.deepEqual(j('(({level, uncertain}) => ({level, uncertain}))(issueStatusForEnv({key:"K-1"},"prod"))'), { level: 'released', uncertain: [] });
+
+    // ... but when nobody said whether it has flags, the level stays and the service is listed as uncertain.
+    setState({ flagsMeta: { fe: flagsMeta.fe }, deployments: deps('web', 'worker'), componentsOrder: comps({ web: 'tracked', worker: 'unknown' }),
+        flagStatesByComponent: { fe: { prod: { web: v('on') } } } });
+    assert.deepEqual(j('(({level, uncertain}) => ({level, uncertain}))(issueStatusForEnv({key:"K-1"},"prod"))'), { level: 'released', uncertain: ['worker'] });
+    setState({ deployments: deps('worker'), componentsOrder: comps({ worker: 'unknown' }), flagStatesByComponent: {} });
+    assert.deepEqual(j('(({level, uncertain}) => ({level, uncertain}))(issueStatusForEnv({key:"K-1"},"prod"))'), { level: 'deployed_code_only', uncertain: ['worker'] });
+    assert.deepEqual(j('issueStatusForEnv({key:"K-1"},"qa").uncertain'), [], 'nothing deployed: nothing to doubt');
+
+    // A flag reported only through flagStatesByComponent still links its service; a service without the
+    // issue's code leaves the issue partial.
+    setState({ flagsMeta: { fe: { jiraKeys: ['K-1'], components: [] } }, deployments: deps('api'), componentsOrder: comps({ web: 'tracked', api: 'tracked' }),
+        flagStatesByComponent: { fe: { prod: { web: v('on') } } } });
+    assert.equal(level(), 'partial');
+    assert.deepEqual(j('issueLinks({key:"K-1"})'), [{ component: 'web', flagKey: 'fe' }]);
+
+    // Legacy data (no flagStatesByComponent): a partial value is no longer "on".
+    setState({ flagsMeta: { fe: flagsMeta.fe }, deployments: deps('web'), flagStates: { fe: { prod: { build: { enabled: true, state: 'partial', rollout: 5 } } } } });
+    assert.equal(level(), 'partial');
 });
 
 test('prodStatusBucket maps levels to buckets', () => {

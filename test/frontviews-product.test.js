@@ -256,6 +256,28 @@ test('issueBreakdownHtml: table for linked issues, hint text when unlinked, depe
     assert.ok(out.includes('unresolved'));
 });
 
+test('a service nobody said anything about puts a "?" on the pill and a note in the breakdown; a partial rollout reads PARTIAL', () => {
+    const { run, setState, ctx } = loadApp();
+
+    setState({
+        deployments: [dep({ component: 'web', relatedIssues: ['U-1'] }), dep({ id: 2, component: 'worker', relatedIssues: ['U-1'] })],
+        flagsMeta: { f: { jiraKeys: ['U-1'], components: ['web'] } },
+        flagStatesByComponent: { f: { prod: { web: { state: 'partial', rollout: 20, enabled: false, changedAt: ago(0) } } } },
+        componentsOrder: [{ name: 'web', flagCoverage: 'tracked' }, { name: 'worker', flagCoverage: 'unknown' }],
+    });
+    inCtx(ctx, 'u1', issue('U-1'));
+    const row = String(run('issueRowHtml(u1, true, false)'));
+
+    assert.match(row, /title="Partially visible[^"]*\. Not sure: worker has no flag source and is not marked as having no flags">Partial\?<\/span>/);
+    const breakdown = String(run('issueBreakdownHtml(u1)'));
+
+    assert.match(breakdown, /PARTIAL/);
+    assert.match(breakdown, /Not sure<\/span><span>worker: no flag source covers it/);
+
+    run('state.componentsOrder[1].flagCoverage = "none"');
+    assert.match(String(run('issueRowHtml(u1, true, false)')), />Partial<\/span>/, 'declared flag-free: no doubt');
+});
+
 test('issueRowHtml: standard row, ghost flag, badges, hostile fields and expansion', () => {
     const { run, setState, ctx } = loadApp();
 

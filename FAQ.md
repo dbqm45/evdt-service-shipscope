@@ -103,6 +103,31 @@ When several sources of one kind report the same flag, the higher priority wins.
 runtime wins on the dashboard and a disagreement is marked (see below). (`server/lib/flags.js`, rules in
 `server/lib/flags-logic.js`.)
 
+A source applies to the services (tracked repositories) an admin ticks for it. Each service keeps its own value
+of a flag: inside one service runtime beats build, then the higher priority, then the later change; a value from the
+backend's source never decides the frontend's. In Settings → GitHub a repository can also be marked as having no
+feature flags. (`flagStatesByComponent`, `componentsOrder[].flagCoverage` in the dashboard data.)
+
+### How is the release status of an issue (Released, Deployed (hidden), Partial, Code deployed) decided?
+
+Only from the services the issue's code reached on that environment
+(`issueStatusForEnv()` in `docs/app-model.js`; ADR-003):
+
+- **Gate per service.** Each such service with a flag linked to the issue is a gate:
+  - all its linked flags on → on;
+  - all off → off;
+  - anything else → partial, including a rollout below 100%.
+
+  A service with no linked flag is neutral.
+- **Status from the gates.**
+  - All gates on → **Released**.
+  - All off → **Deployed (hidden)**.
+  - A mix → **Partial**. So does a service that has a linked flag but not the issue's code yet.
+  - No gate at all → **Code deployed** (no flag to check).
+- **"?" after the status.** At least one service the code reached has no flag source and is not marked as having no
+  flags. The level stays, but ShipScope cannot be sure, and the tooltip and the open row name that service. Mark it in
+  Settings → GitHub (pencil → Feature flags), or tick it on its flag source, and the "?" goes away.
+
 ### Which Jira issues does a flag belong to?
 
 From three places, merged: the keys the sending source attaches, keys an admin sets by hand in Settings (never
