@@ -5,8 +5,38 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const {
     slotOf, enabledFrom, mergeJiraKeys, sameValue, planIngestWrites, sourceDescriptors, pickWinningValues, visibleFlagsMeta, historyRecords,
-    isReservedKey,
+    isReservedKey, freshnessOf, freshnessByComponent, STALE_AFTER_MINUTES,
 } = require('../lib/flags-logic');
+
+test('freshnessOf: error over everything newer, unknown without a confirmation, stale past the threshold', () => {
+    const now = new Date('2026-10-02T12:00:00Z');
+    const ago = (minutes) => new Date(now - minutes * 60_000);
+    assert.equal(freshnessOf({ observedAt: null, errorAt: null, staleAfterMinutes: 60, now }), 'unknown');
+    assert.equal(freshnessOf({ observedAt: ago(10), errorAt: null, staleAfterMinutes: 60, now }), 'fresh');
+    assert.equal(freshnessOf({ observedAt: ago(60), errorAt: null, staleAfterMinutes: 60, now }), 'fresh', 'exactly the threshold is still fresh');
+    assert.equal(freshnessOf({ observedAt: ago(61), errorAt: null, staleAfterMinutes: 60, now }), 'stale');
+    assert.equal(freshnessOf({ observedAt: ago(100_000), errorAt: null, staleAfterMinutes: null, now }), 'fresh', 'no threshold: never stale');
+    assert.equal(freshnessOf({ observedAt: ago(10), errorAt: ago(5), staleAfterMinutes: 60, now }), 'error');
+    assert.equal(freshnessOf({ observedAt: ago(5), errorAt: ago(10), staleAfterMinutes: 60, now }), 'fresh', 'a later confirmation clears the error');
+    assert.equal(freshnessOf({ observedAt: null, errorAt: ago(10), staleAfterMinutes: 60, now }), 'error');
+    assert.deepEqual(STALE_AFTER_MINUTES, { runtime: 1440, build: null });
+});
+
+test('freshnessByComponent: per service and env, every covering source and the worst state with the oldest confirmation', () => {
+    const at = (iso) => new Date(iso);
+    const out = freshnessByComponent([
+        { name: 'Code', components: ['web'], envs: [{ env: 'prod', state: 'fresh', observedAt: at('2026-10-02T10:00:00Z') }] },
+        { name: 'Endpoint', components: ['web', 'api'], envs: [
+            { env: 'prod', state: 'stale', observedAt: at('2026-10-01T10:00:00Z') }, { env: 'qa', state: 'error', observedAt: null },
+        ] },
+        { name: 'Nowhere', components: [], envs: [{ env: 'prod', state: 'error', observedAt: null }] },
+    ]);
+    assert.deepEqual(out.web.prod, { state: 'stale', observedAt: '2026-10-01T10:00:00.000Z', sources: [
+        { name: 'Code', state: 'fresh', observedAt: '2026-10-02T10:00:00.000Z' }, { name: 'Endpoint', state: 'stale', observedAt: '2026-10-01T10:00:00.000Z' },
+    ] });
+    assert.deepEqual(out.api.qa, { state: 'error', observedAt: null, sources: [{ name: 'Endpoint', state: 'error', observedAt: null }] });
+    assert.deepEqual(Object.keys(out).sort(), ['api', 'web'], 'a source covering no service adds nothing');
+});
 
 test('isReservedKey: every name an object already has, plus prototype; ordinary keys pass', () => {
     for (const key of ['__proto__', 'constructor', 'prototype', 'toString', 'valueOf', 'hasOwnProperty', '__defineGetter__', 'isPrototypeOf']) {

@@ -50,7 +50,7 @@ test('runMigrations: applies cleanly from empty and creates the expected tables'
         '015_sync_fairness.sql',
         '016_flag_source_status.sql',
         '017_ingest_token_limits.sql',
-        '018_flag_source_scope.sql',
+        '018_flag_source_scope.sql', '019_flag_source_freshness.sql',
     ]);
 });
 

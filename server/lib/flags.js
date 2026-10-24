@@ -3,6 +3,7 @@ const { withScope, setScope } = require('./scope');
 const { assertAdmin, roleOf, TenantNotFoundError } = require('./tenants');
 const {
     IngestPayloadError, checkPayload, planIngestWrites, sourceDescriptors, pickWinningValues, visibleFlagsMeta, historyRecords,
+    STALE_AFTER_MINUTES, freshnessOf, freshnessByComponent,
 } = require('./flags-logic');
 
 /**
@@ -84,10 +85,33 @@ function toSource(row, repoIds = []) {
         id: row.id, name: row.name, kind: row.kind, priority: row.priority, repoIds, repoId: repoIds[0] ?? null, createdAt: row.created_at,
         lastIngestAt: row.last_ingest_at, lastIngest: row.last_ingest,
         lastError: row.last_error_at ? { at: row.last_error_at, message: row.last_error } : null,
+        staleAfterMinutes: row.stale_after_minutes ?? null,
+        effectiveStaleAfterMinutes: row.stale_after_minutes ?? STALE_AFTER_MINUTES[row.kind],
     };
 }
 
-const SOURCE_COLUMNS = 'id, name, kind, priority, repo_id, created_at, last_ingest_at, last_ingest, last_error, last_error_at';
+const SOURCE_COLUMNS = 'id, name, kind, priority, repo_id, created_at, last_ingest_at, last_ingest, last_error, last_error_at, stale_after_minutes';
+
+/** source id -> its environments' freshness (freshnessOf()), by environment name. */
+async function sourceEnvironments(client, tenantId, sourceRows, now) {
+    const { rows } = await client.query(
+        'SELECT source_id, environment, last_observed_at, last_error_at FROM flag_source_envs WHERE tenant_id = $1 ORDER BY environment',
+        [tenantId]
+    );
+    const byId = new Map(sourceRows.map((s) => [s.id, s]));
+    const out = new Map(sourceRows.map((s) => [s.id, []]));
+    for (const r of rows) {
+        const s = byId.get(r.source_id);
+        if (!s) continue;
+        const errorAt = [r.last_error_at, s.last_error_at].filter(Boolean).sort((a, b) => b - a)[0] || null;
+        out.get(r.source_id).push({
+            env: r.environment,
+            observedAt: r.last_observed_at,
+            state: freshnessOf({ observedAt: r.last_observed_at, errorAt, staleAfterMinutes: s.stale_after_minutes ?? STALE_AFTER_MINUTES[s.kind], now }),
+        });
+    }
+    return out;
+}
 // A refused message's reason is kept for Settings up to this length.
 const MAX_ERROR_LENGTH = 500;
 // A new token lasts this long unless the admin picks another lifetime or none ("never").
@@ -106,20 +130,20 @@ const LOCK_NOT_AVAILABLE = '55P03';
  * Creates a flag source with its first token. Admins only. The token is returned once and never stored.
  *
  * @param {import('pg').Pool} pool
- * @param {{ tenantId: string, actorUserId: string, name: string, kind: 'build'|'runtime', priority?: number, repoIds?: number[], repoId?: number|null, tokenExpiresInDays?: number|null, tokenEnvironments?: string[]|null }} input
- *   the first token's lifetime and environments, as for createIngestToken()
+ * @param {{ tenantId: string, actorUserId: string, name: string, kind: 'build'|'runtime', priority?: number, repoIds?: number[], repoId?: number|null, tokenExpiresInDays?: number|null, tokenEnvironments?: string[]|null, staleAfterMinutes?: number|null }} input
+ *   the first token's lifetime and environments, as for createIngestToken(); `staleAfterMinutes` null = the kind's default
  * @returns {Promise<{ source: FlagSource, token: { id: string, token: string, expiresAt: Date|null, environments: string[]|null } }>}
  * @throws {FlagSourceNotFoundError} a repo in its scope isn't tracked
  * @throws {FlagSourceConflictError} the name is taken
  */
-async function createFlagSource(pool, { tenantId, actorUserId, name, kind, priority, repoIds, repoId, tokenExpiresInDays, tokenEnvironments = null }) {
+async function createFlagSource(pool, { tenantId, actorUserId, name, kind, priority, repoIds, repoId, tokenExpiresInDays, tokenEnvironments = null, staleAfterMinutes = null }) {
     return withScope(pool, { tenantId }, async (client) => {
         await assertAdmin(client, { tenantId, userId: actorUserId });
         const scope = scopeOf({ repoIds, repoId });
         await assertTrackedRepos(client, tenantId, scope);
         let row = await saveSource(client, () => client.query(
-            `INSERT INTO flag_sources (tenant_id, name, kind, priority) VALUES ($1, $2, $3, $4) RETURNING ${SOURCE_COLUMNS}`,
-            [tenantId, name, kind, priority ?? DEFAULT_PRIORITY[kind]]
+            `INSERT INTO flag_sources (tenant_id, name, kind, priority, stale_after_minutes) VALUES ($1, $2, $3, $4, $5) RETURNING ${SOURCE_COLUMNS}`,
+            [tenantId, name, kind, priority ?? DEFAULT_PRIORITY[kind], staleAfterMinutes]
         ));
         await setSourceScope(client, tenantId, row.id, scope);
         row = { ...row, repo_id: scope[0] ?? null };
@@ -160,22 +184,24 @@ async function saveSource(client, query) {
 }
 
 /**
- * Changes a source's name, kind, priority or the services it covers (`repoIds`; the older `repoId` sets one). Admins
- * only.
+ * Changes a source's name, kind, priority, the services it covers (`repoIds`; the older `repoId` sets one) or its
+ * freshness threshold (`staleAfterMinutes`; left out = unchanged, null = the kind's default). Admins only.
  *
  * @param {import('pg').Pool} pool
- * @param {{ tenantId: string, actorUserId: string, sourceId: string, name: string, kind: 'build'|'runtime', priority: number, repoIds?: number[], repoId?: number|null }} input
+ * @param {{ tenantId: string, actorUserId: string, sourceId: string, name: string, kind: 'build'|'runtime', priority: number, repoIds?: number[], repoId?: number|null, staleAfterMinutes?: number|null }} input
  * @returns {Promise<FlagSource>}
  * @throws {FlagSourceNotFoundError|FlagSourceConflictError}
  */
-async function updateFlagSource(pool, { tenantId, actorUserId, sourceId, name, kind, priority, repoIds, repoId }) {
+async function updateFlagSource(pool, { tenantId, actorUserId, sourceId, name, kind, priority, repoIds, repoId, staleAfterMinutes }) {
     return withScope(pool, { tenantId }, async (client) => {
         await assertAdmin(client, { tenantId, userId: actorUserId });
         const scope = scopeOf({ repoIds, repoId });
         await assertTrackedRepos(client, tenantId, scope);
         const row = await saveSource(client, () => client.query(
-            `UPDATE flag_sources SET name = $3, kind = $4, priority = $5, repo_id = $6 WHERE tenant_id = $1 AND id = $2 RETURNING ${SOURCE_COLUMNS}`,
-            [tenantId, sourceId, name, kind, priority, scope[0] ?? null]
+            `UPDATE flag_sources SET name = $3, kind = $4, priority = $5, repo_id = $6,
+                 stale_after_minutes = CASE WHEN $7 THEN $8::integer ELSE stale_after_minutes END
+             WHERE tenant_id = $1 AND id = $2 RETURNING ${SOURCE_COLUMNS}`,
+            [tenantId, sourceId, name, kind, priority, scope[0] ?? null, staleAfterMinutes !== undefined, staleAfterMinutes ?? null]
         ));
         if (!row) throw new FlagSourceNotFoundError('No such flag source');
         await setSourceScope(client, tenantId, sourceId, scope);
@@ -199,24 +225,26 @@ async function deleteFlagSource(pool, { tenantId, actorUserId, sourceId }) {
 }
 
 /**
- * The tenant's flag sources with their status (last accepted message, last refused one) and their tokens (never the
- * tokens themselves). Admins only.
+ * The tenant's flag sources with their status (last accepted message, last refused one, each environment's
+ * freshness) and their tokens (never the tokens themselves). Admins only.
  *
  * @param {import('pg').Pool} pool
  * @param {{ tenantId: string, actorUserId: string }} input
  * @returns {Promise<Array<FlagSource & { tokens: Array<{ id: string, createdAt: Date, lastUsedAt: Date|null, expiresAt: Date|null, environments: string[]|null }> }>>}
  */
-async function listFlagSources(pool, { tenantId, actorUserId }) {
+async function listFlagSources(pool, { tenantId, actorUserId, now = new Date() }) {
     return withScope(pool, { tenantId }, async (client) => {
         await assertAdmin(client, { tenantId, userId: actorUserId });
         const { rows: sources } = await client.query(`SELECT ${SOURCE_COLUMNS} FROM flag_sources WHERE tenant_id = $1 ORDER BY name`, [tenantId]);
         const scopes = await sourceScopes(client, tenantId);
+        const envs = await sourceEnvironments(client, tenantId, sources, now);
         const { rows: tokens } = await client.query(
             'SELECT id, source_id, created_at, last_used_at, expires_at, environments FROM ingest_tokens WHERE tenant_id = $1 ORDER BY created_at',
             [tenantId]
         );
         return sources.map((s) => ({
             ...toSource(s, scopes.get(s.id) || []),
+            environments: envs.get(s.id),
             tokens: tokens.filter((t) => t.source_id === s.id).map((t) => ({
                 id: t.id, createdAt: t.created_at, lastUsedAt: t.last_used_at, expiresAt: t.expires_at, environments: t.environments,
             })),
@@ -345,68 +373,93 @@ async function applyIngest(pool, { token, payload, now, lockTimeoutMs }) {
             throw new IngestScopeError(`This token may only send ${found.environments.join(', ')}, not ${outside.join(', ')}`);
         }
         const changedBy = payload.changedBy || source.name;
-        const keys = [...new Set(observations.map((o) => o.key))];
-
-        const { rows: existing } = await client.query(
-            `SELECT key, environment, state, rollout, changed_at, removed_at FROM flag_values
-             WHERE tenant_id = $1 AND source_id = $2 AND (environment = ANY($3) OR key = ANY($4))`,
-            [tenantId, sourceId, environments, keys]
-        );
-        const { rows: inserted } = await client.query(
-            `INSERT INTO flags (tenant_id, key, created_at) SELECT $1, k, $3 FROM unnest($2::text[]) AS k
-             ON CONFLICT (tenant_id, key) DO NOTHING RETURNING key`,
-            [tenantId, keys, now]
-        );
-        if (metaByKey.size) {
-            // One statement for every described flag; a field the sender left out keeps its stored value.
-            const meta = [...metaByKey].map(([key, m]) => ({
-                key, has_description: 'description' in m, description: m.description ?? null, has_jira_keys: 'jiraKeys' in m, jira_keys: m.jiraKeys || [],
-            }));
-            await client.query(
-                `UPDATE flags f SET description = CASE WHEN m.has_description THEN m.description ELSE f.description END,
-                                    jira_keys = CASE WHEN m.has_jira_keys THEN ARRAY(SELECT jsonb_array_elements_text(m.jira_keys)) ELSE f.jira_keys END
-                 FROM jsonb_to_recordset($2::jsonb) AS m(key text, has_description boolean, description text, has_jira_keys boolean, jira_keys jsonb)
-                 WHERE f.tenant_id = $1 AND f.key = m.key`,
-                [tenantId, JSON.stringify(meta)]
-            );
-        }
-
-        const { writes, removals, stale } = planIngestWrites({ observations, existing, complete, environments });
-
-        if (writes.length) {
-            const cols = [writes.map((w) => w.key), writes.map((w) => w.env), writes.map((w) => w.state), writes.map((w) => w.rollout), writes.map((w) => w.changedAt)];
-            await client.query(
-                `INSERT INTO flag_values (tenant_id, source_id, key, environment, state, rollout, changed_at, changed_by, removed_at)
-                 SELECT $1, $2, k, e, s, r, c, $8, NULL FROM unnest($3::text[], $4::text[], $5::text[], $6::numeric[], $7::timestamptz[]) AS t(k, e, s, r, c)
-                 ON CONFLICT (tenant_id, source_id, key, environment) DO UPDATE SET state = EXCLUDED.state, rollout = EXCLUDED.rollout,
-                     changed_at = EXCLUDED.changed_at, changed_by = EXCLUDED.changed_by, removed_at = NULL`,
-                [tenantId, sourceId, ...cols, changedBy]
-            );
-            await client.query(
-                `INSERT INTO flag_value_history (tenant_id, source_id, key, environment, state, rollout, changed_at, changed_by)
-                 SELECT $1, $2, k, e, s, r, c, $8 FROM unnest($3::text[], $4::text[], $5::text[], $6::numeric[], $7::timestamptz[]) AS t(k, e, s, r, c)`,
-                [tenantId, sourceId, ...cols, changedBy]
-            );
-        }
-        if (removals.length) {
-            const cols = [removals.map((r) => r.key), removals.map((r) => r.environment)];
-            await client.query(
-                `UPDATE flag_values v SET removed_at = $5, changed_by = $6 FROM unnest($3::text[], $4::text[]) AS t(k, e)
-                 WHERE v.tenant_id = $1 AND v.source_id = $2 AND v.key = t.k AND v.environment = t.e`,
-                [tenantId, sourceId, ...cols, now, changedBy]
-            );
-            await client.query(
-                `INSERT INTO flag_value_history (tenant_id, source_id, key, environment, removed, changed_at, changed_by)
-                 SELECT $1, $2, k, e, true, $5, $6 FROM unnest($3::text[], $4::text[]) AS t(k, e)`,
-                [tenantId, sourceId, ...cols, now, changedBy]
-            );
-        }
+        const result = await applyObservations(client, { tenantId, sourceId, observations, metaByKey, complete, environments, changedBy, now });
         await client.query('UPDATE ingest_tokens SET last_used_at = $3 WHERE tenant_id = $1 AND id = $2', [tenantId, tokenId, now]);
-        const summary = { flags: keys.length, changed: writes.length, removed: removals.length, stale };
+        const summary = { flags: result.flags, changed: result.changed, removed: result.removed, stale: result.stale };
         await client.query('UPDATE flag_sources SET last_ingest_at = $3, last_ingest = $4 WHERE tenant_id = $1 AND id = $2', [tenantId, sourceId, now, summary]);
 
-        return { source: source.name, ...summary, created: inserted.map((r) => r.key).sort() };
+        return { source: source.name, ...summary, created: result.created };
     });
+}
+
+/**
+ * Inside withScope, under the tenant's ingest lock: writes one source's observations, whatever brought them (a
+ * pushed message today; a file read at a deployed commit or a polled endpoint later, ADR-003). Values that changed
+ * get a history entry, an older observation never undoes a newer one, and with `complete` every stored value of a
+ * covered environment that is not listed is marked removed and the environment counts as confirmed now
+ * (`flag_source_envs.last_observed_at`).
+ *
+ * @param {import('pg').PoolClient} client
+ * @param {{ tenantId: string, sourceId: string, observations: Array<{ key: string, env: string, state: string, rollout: number|null, changedAt: Date }>, metaByKey: Map<string, object>, complete: boolean, environments: string[], changedBy: string, now: Date }} input
+ * @returns {Promise<{ flags: number, changed: number, removed: number, stale: number, created: string[] }>}
+ */
+async function applyObservations(client, { tenantId, sourceId, observations, metaByKey, complete, environments, changedBy, now }) {
+    const keys = [...new Set(observations.map((o) => o.key))];
+
+    const { rows: existing } = await client.query(
+        `SELECT key, environment, state, rollout, changed_at, removed_at FROM flag_values
+         WHERE tenant_id = $1 AND source_id = $2 AND (environment = ANY($3) OR key = ANY($4))`,
+        [tenantId, sourceId, environments, keys]
+    );
+    const { rows: inserted } = await client.query(
+        `INSERT INTO flags (tenant_id, key, created_at) SELECT $1, k, $3 FROM unnest($2::text[]) AS k
+         ON CONFLICT (tenant_id, key) DO NOTHING RETURNING key`,
+        [tenantId, keys, now]
+    );
+    if (metaByKey.size) {
+        // One statement for every described flag; a field the sender left out keeps its stored value.
+        const meta = [...metaByKey].map(([key, m]) => ({
+            key, has_description: 'description' in m, description: m.description ?? null, has_jira_keys: 'jiraKeys' in m, jira_keys: m.jiraKeys || [],
+        }));
+        await client.query(
+            `UPDATE flags f SET description = CASE WHEN m.has_description THEN m.description ELSE f.description END,
+                                jira_keys = CASE WHEN m.has_jira_keys THEN ARRAY(SELECT jsonb_array_elements_text(m.jira_keys)) ELSE f.jira_keys END
+             FROM jsonb_to_recordset($2::jsonb) AS m(key text, has_description boolean, description text, has_jira_keys boolean, jira_keys jsonb)
+             WHERE f.tenant_id = $1 AND f.key = m.key`,
+            [tenantId, JSON.stringify(meta)]
+        );
+    }
+
+    const { writes, removals, stale } = planIngestWrites({ observations, existing, complete, environments });
+
+    if (writes.length) {
+        const cols = [writes.map((w) => w.key), writes.map((w) => w.env), writes.map((w) => w.state), writes.map((w) => w.rollout), writes.map((w) => w.changedAt)];
+        await client.query(
+            `INSERT INTO flag_values (tenant_id, source_id, key, environment, state, rollout, changed_at, changed_by, removed_at)
+             SELECT $1, $2, k, e, s, r, c, $8, NULL FROM unnest($3::text[], $4::text[], $5::text[], $6::numeric[], $7::timestamptz[]) AS t(k, e, s, r, c)
+             ON CONFLICT (tenant_id, source_id, key, environment) DO UPDATE SET state = EXCLUDED.state, rollout = EXCLUDED.rollout,
+                 changed_at = EXCLUDED.changed_at, changed_by = EXCLUDED.changed_by, removed_at = NULL`,
+            [tenantId, sourceId, ...cols, changedBy]
+        );
+        await client.query(
+            `INSERT INTO flag_value_history (tenant_id, source_id, key, environment, state, rollout, changed_at, changed_by)
+             SELECT $1, $2, k, e, s, r, c, $8 FROM unnest($3::text[], $4::text[], $5::text[], $6::numeric[], $7::timestamptz[]) AS t(k, e, s, r, c)`,
+            [tenantId, sourceId, ...cols, changedBy]
+        );
+    }
+    if (removals.length) {
+        const cols = [removals.map((r) => r.key), removals.map((r) => r.environment)];
+        await client.query(
+            `UPDATE flag_values v SET removed_at = $5, changed_by = $6 FROM unnest($3::text[], $4::text[]) AS t(k, e)
+             WHERE v.tenant_id = $1 AND v.source_id = $2 AND v.key = t.k AND v.environment = t.e`,
+            [tenantId, sourceId, ...cols, now, changedBy]
+        );
+        await client.query(
+            `INSERT INTO flag_value_history (tenant_id, source_id, key, environment, removed, changed_at, changed_by)
+             SELECT $1, $2, k, e, true, $5, $6 FROM unnest($3::text[], $4::text[]) AS t(k, e)`,
+            [tenantId, sourceId, ...cols, now, changedBy]
+        );
+    }
+    if (complete && environments.length) {
+        await client.query(
+            `INSERT INTO flag_source_envs (tenant_id, source_id, environment, last_observed_at)
+             SELECT $1, $2, e, $4 FROM unnest($3::text[]) AS e
+             ON CONFLICT (tenant_id, source_id, environment) DO UPDATE SET last_observed_at = EXCLUDED.last_observed_at`,
+            [tenantId, sourceId, environments, now]
+        );
+    }
+
+    return { flags: keys.length, changed: writes.length, removed: removals.length, stale, created: inserted.map((r) => r.key).sort() };
 }
 
 /** flag key -> issue keys whose Jira issue names that flag (jira_issues.data.featureFlags, migration 014). */
@@ -493,10 +546,12 @@ async function setFlagDetails(pool, { tenantId, actorUserId, key, description, j
  * Also `flagStatesByComponent` (key -> env -> service -> the value that service runs, pickWinningValues()) and the
  * set of services some source covers (`coveredComponents`).
  *
- * @returns {Promise<{ flagsMeta: object, flagStates: object, flagStatesByComponent: object, flagStateHistory: object[], coveredComponents: Set<string> }>}
+ * And `flagFreshness` (service -> env -> how sure its values are, freshnessByComponent()).
+ *
+ * @returns {Promise<{ flagsMeta: object, flagStates: object, flagStatesByComponent: object, flagFreshness: object, flagStateHistory: object[], coveredComponents: Set<string> }>}
  */
-async function readDashboardFlags(client, { tenantId, componentOf }) {
-    const { rows: sourceRows } = await client.query('SELECT id, name, kind, priority FROM flag_sources WHERE tenant_id = $1', [tenantId]);
+async function readDashboardFlags(client, { tenantId, componentOf, now = new Date() }) {
+    const { rows: sourceRows } = await client.query('SELECT id, name, kind, priority, stale_after_minutes, last_error_at FROM flag_sources WHERE tenant_id = $1', [tenantId]);
     const sources = sourceDescriptors(sourceRows, componentOf, await sourceScopes(client, tenantId));
     const { rows: flags } = await client.query(
         'SELECT key, description, jira_keys, manual_description, manual_jira_keys, created_at FROM flags WHERE tenant_id = $1',
@@ -516,7 +571,9 @@ async function readDashboardFlags(client, { tenantId, componentOf }) {
     const { flagStates, byComponent, slotsOf, componentsOf } = pickWinningValues(values, sources);
     const flagsMeta = visibleFlagsMeta(flags, { slotsOf, componentsOf }, fromJira);
     const coveredComponents = new Set([...sources.values()].flatMap((s) => s.components));
-    return { flagsMeta, flagStates, flagStatesByComponent: byComponent, flagStateHistory: historyRecords(history, sources), coveredComponents };
+    const envs = await sourceEnvironments(client, tenantId, sourceRows, now);
+    const flagFreshness = freshnessByComponent([...sources].map(([id, s]) => ({ name: s.name, components: s.components, envs: envs.get(id) })));
+    return { flagsMeta, flagStates, flagStatesByComponent: byComponent, flagFreshness, flagStateHistory: historyRecords(history, sources), coveredComponents };
 }
 
 module.exports = {

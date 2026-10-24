@@ -100,7 +100,7 @@ async function buildDashboardData(pool, { tenantId, actorUserId }) {
         });
 
         const { jiraIndex, issueStatusIndex } = await readDashboardJira(client, { tenantId });
-        const { flagsMeta, flagStates, flagStatesByComponent, flagStateHistory, coveredComponents } = await readDashboardFlags(client, {
+        const { flagsMeta, flagStates, flagStatesByComponent, flagFreshness, flagStateHistory, coveredComponents } = await readDashboardFlags(client, {
             tenantId, componentOf: (repoId) => names.get(repoId),
         });
 
@@ -115,6 +115,7 @@ async function buildDashboardData(pool, { tenantId, actorUserId }) {
             flagsMeta,
             flagStates,
             flagStatesByComponent,
+            flagFreshness,
             flagStateHistory,
             jiraIndex,
             issueStatusIndex,

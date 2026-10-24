@@ -95,7 +95,7 @@ changelog entry by hand outside a `chore(release)` PR.
 
 Deployed to Render per `context/foundation/infrastructure.md`: `render.yaml` builds both the Web Service and the
 Background Worker from the repo root (`npm ci --prefix server`, `node server/web.js`), not `rootDir: server`, which
-would hide `docs/` from the Web Service. Migrations (`server/migrations/001`–`018`, applied by the hand-rolled
+would hide `docs/` from the Web Service. Migrations (`server/migrations/001`–`019`, applied by the hand-rolled
 `lib/migrate.js`) run as each service's `preDeployCommand` under an advisory lock (`test/render-blueprint.test.js`).
 Dependencies, all in `server/package.json`: `pg`, `fastify`, `@fastify/cookie`. Fastify runs with
 `removeAdditional: false, coerceTypes: false`: unknown fields and wrong types are a 400, never silently fixed.
@@ -110,7 +110,7 @@ errors to HTTP codes, shared constants) and registers one plugin per area from `
 New rules go into the pure file; the I/O file orchestrates.
 
 **Tenant isolation (RLS).** Every query on an RLS table — the list is `RLS_TABLES` in `lib/scope.js` (memberships,
-invitations, github_installations, tracked_repos, deployments, issue_deployments, flag_sources, flag_source_repos, ingest_tokens, flags,
+invitations, github_installations, tracked_repos, deployments, issue_deployments, flag_sources, flag_source_repos, flag_source_envs, ingest_tokens, flags,
 flag_values, flag_value_history, jira_connections, jira_boards, jira_pis, jira_issues) — must run inside
 `withScope()`, which sets `app.current_tenant_id`/`app.current_user_id` with transaction-local
 `set_config(..., true)`. An unscoped read returns zero rows; an unscoped write is an RLS error.
@@ -169,7 +169,11 @@ emptied. `sync_requests` (webhook queue) is the one non-RLS table; it holds no t
   `ONBOARDING.md`. Each source keeps its status (migration `016`): the last accepted message's summary
   (`last_ingest_at`/`last_ingest`) and the last refused one's reason (`last_error`/`last_error_at`, recorded by
   `recordIngestError()` after the rollback, schema refusals included via `attachValidation`), shown in Settings and
-  the Getting started checklist.
+  the Getting started checklist. Freshness (ADR-003, migration `019`): every write goes through `applyObservations()`
+  (`lib/flags.js`, pinned by `server/test/flags-ingest-characterization.test.js`); a complete message stamps
+  `flag_source_envs.last_observed_at` for each environment it covers, and `freshnessOf()` (`lib/flags-logic.js`)
+  gives `fresh`/`stale`/`error`/`unknown` per source and environment against the source's `stale_after_minutes`
+  (default `STALE_AFTER_MINUTES`: runtime a day, build never) and its last refusal.
   Sources of one kind fold into the dashboard's `build`/`runtime-be` slot by priority. Flags link to Jira issues
   from three origins merged in `readDashboardFlags()`: the sender's `jira_keys`, hand-set
   `manual_jira_keys`/`manual_description` (`PUT /tenants/:tenantId/flags/:key`, never overwritten by a sender), and
@@ -220,7 +224,7 @@ emptied. `sync_requests` (webhook queue) is the one non-RLS table; it holds no t
 `server/test/dashboard-contract.test.js`: both syncs against fake APIs, the real routes, the real `docs/app-*.js`
 reading it through `loadData()` in a `vm`; `server-test.yml` also runs on `docs/app-*.js` changes for it):
 `deployments`, `flagsMeta`, `flagStates`, `flagStateHistory`, `jiraIndex`, `issueStatusIndex`, `issueDeployments`,
-`flagStatesByComponent`, `componentsOrder` (the tracked repos), `lastSyncedAt`, `jiraBrowseUrl`. The `FALLBACK` sample data has the same shape.
+`flagStatesByComponent`, `flagFreshness`, `componentsOrder` (the tracked repos), `lastSyncedAt`, `jiraBrowseUrl`. The `FALLBACK` sample data has the same shape.
 
 - **Deployment record**: `component`, environment (`test`/`qa`/`prod`; `mapEnvironment()` maps by substring,
   `production` → `prod`, `dev` → `test`, `preprod` never `prod`, anything else is skipped), status, `deployedAt`,
@@ -238,6 +242,8 @@ reading it through `loadData()` in a `vm`; `server-test.yml` also runs on `docs/
   `issueStatusForEnv()`): `flagStatesByComponent` key → env → component → `{ state, rollout, enabled (strictly on),
   changedAt, changedBy, sourceName, kind, overridden[] }` from the sources covering that service (runtime over build,
   then priority, then the later change), and `componentsOrder[].flagCoverage` `tracked`/`none`/`unknown`.
+  `flagFreshness` component → env → `{ state, observedAt (the oldest), sources: [{ name, state, observedAt }] }`, the
+  worst state of the sources covering it (`freshnessByComponent()`).
 - **Jira**: `jiraIndex` = `{ currentPi, pis: [{ pi, file, kind?, includes?, sprints: [{ name, startDate, endDate }] }] }`
   (an "increment" — PI, sprint, release or month — keeps the name `pi` in the data); issues of one increment come from
   `GET /api/tenants/:id/jira-issues`. Issue fields: `key`, `type`, `title`, `pi`, `sprint`, `status`,

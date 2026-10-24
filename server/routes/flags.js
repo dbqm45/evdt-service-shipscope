@@ -68,6 +68,8 @@ function registerFlagRoutes(app, ctx) {
             // The services the source covers; the older single `repoId` sets one (or none with null).
             repoIds: { type: 'array', maxItems: 200, uniqueItems: true, items: { type: 'integer', minimum: 1 } },
             repoId: { anyOf: [{ type: 'null' }, { type: 'integer', minimum: 1 }] },
+            // Minutes a confirmation of the full state stays fresh; null = the kind's default.
+            staleAfterMinutes: { anyOf: [{ type: 'null' }, { type: 'integer', minimum: 5, maximum: 43200 }] },
             ...extra,
         },
     });
