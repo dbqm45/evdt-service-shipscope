@@ -7,6 +7,12 @@ dashboard, nie publikowany pakiet), dlatego wpisy są pogrupowane według dat. I
 ShipScope, znajdują się w `README.pl.md`, pełne techniczne odniesienie w `CLAUDE.md` (po angielsku), a
 wyjaśnienie sposobu liczenia poszczególnych wartości/badge'y w `FAQ.pl.md`.
 
+## [0.2.20] - 2026-10-24
+
+### Nowe
+
+- **SHP:** compute release status per service with a ? for untracked (#77)
+
 ## [0.2.19] - 2026-10-24
 
 ### Nowe

@@ -7,6 +7,12 @@ dashboard, not a published package), so entries are grouped by date instead. See
 ShipScope is, `CLAUDE.md` for the technical reference, and `FAQ.md` for how specific numbers/badges are
 calculated.
 
+## [0.2.20] - 2026-10-24
+
+### Added
+
+- **SHP:** compute release status per service with a ? for untracked (#77)
+
 ## [0.2.19] - 2026-10-24
 
 ### Added
