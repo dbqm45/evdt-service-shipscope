@@ -7,6 +7,12 @@ dashboard, nie publikowany pakiet), dlatego wpisy są pogrupowane według dat. I
 ShipScope, znajdują się w `README.pl.md`, pełne techniczne odniesienie w `CLAUDE.md` (po angielsku), a
 wyjaśnienie sposobu liczenia poszczególnych wartości/badge'y w `FAQ.pl.md`.
 
+## [0.2.17] - 2026-10-24
+
+### Nowe
+
+- **SHP:** guard the flags ingest with a rate limit and a lock wait limit (#73)
+
 ## [0.2.16] - 2026-10-23
 
 ### Nowe

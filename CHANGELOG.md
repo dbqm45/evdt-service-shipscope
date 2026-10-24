@@ -7,6 +7,12 @@ dashboard, not a published package), so entries are grouped by date instead. See
 ShipScope is, `CLAUDE.md` for the technical reference, and `FAQ.md` for how specific numbers/badges are
 calculated.
 
+## [0.2.17] - 2026-10-24
+
+### Added
+
+- **SHP:** guard the flags ingest with a rate limit and a lock wait limit (#73)
+
 ## [0.2.16] - 2026-10-23
 
 ### Added
