@@ -1,6 +1,7 @@
 # TODO
 
 Dług techniczny i otwarte sprawy, które nie są nowymi funkcjami (te są w [FEATURES.pl.md](FEATURES.pl.md)).
+Zdecydowane prace na przyszłość, w kolejności: [ROADMAP.md](ROADMAP.md).
 Każdy punkt sprawdzony z kodem 2026-10-17.
 
 ## Testy — czego jeszcze brakuje poza kodem

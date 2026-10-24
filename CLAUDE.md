@@ -5,9 +5,11 @@ history of how they came about is in git and `CHANGELOG.md`. Related documents:
 
 - `docs/GLOSSARY.md` — terms that have more than one name (component / tracked repo, PI / increment, source / slot).
 - `design-docs/REPORT_ARCH.md` — architecture and DDD analysis (2026-10-17, written while the file-based sync was
-  still here); `ADR-001` (flags are pushed from outside), `ADR-002` (the three memory policies);
-  `FEATURES(.pl).md` — undecided ideas; `TODO.md` — technical debt; `SECURITY.md` — security decisions (actions
-  pinned to a commit SHA, Dependabot) and the settings still to set by hand.
+  still here); `ADR-001` (flags are pushed from outside), `ADR-002` (the three memory policies), `ADR-003`
+  (flag sources ShipScope reads itself, state per service, explicit freshness; replaces ADR-001's "never reads");
+  `ROADMAP.md` — decided future work, in order; `FEATURES(.pl).md` — undecided ideas; `TODO.md` — technical debt;
+  `SECURITY.md` — security decisions (actions pinned to a commit SHA, Dependabot) and the settings still to set by
+  hand.
 - `FAQ.md` — how each number and badge on the dashboard is computed; `ONBOARDING.md` — setting up a workspace;
   `server/README.md` — routes, security model, local setup; `RELEASING.md` — versions.
 
@@ -146,7 +148,9 @@ emptied. `sync_requests` (webhook queue) is the one non-RLS table; it holds no t
   repository on github.com. `manual` (needs the App's Actions read permission) and
   the creator's display name come from `lib/deployment-people.js`: display-only, cached per tenant per pass, never
   failing the sync.
-- **Feature flags** — pushed from outside, never read by ShipScope (`ADR-001`). An admin names the tenant's flag
+- **Feature flags** — today pushed from outside, never read by ShipScope (`ADR-001`); `ADR-003` decides the
+  next model (flags in code read at the deployed commit, polled endpoints, per-service state, freshness), built in
+  the increments of `design-docs/ROADMAP.md`. An admin names the tenant's flag
   sources (kind `build`/`runtime`, priority, optional component); each sends the full state of its flags per
   environment with its own token to `POST /api/flags/ingest` (`schemaVersion: 2`: `off`/`on`/`partial` + rollout,
   the sender's `changedAt`, flags no longer listed are marked removed, an older message never undoes a newer one).

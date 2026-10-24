@@ -1,6 +1,7 @@
 # ADR-001: Flagi są wypychane z zewnątrz — ShipScope ich nie czyta
 
-- **Status**: przyjęta
+- **Status**: przyjęta; zasada „ShipScope nigdy nie czyta flag" zastąpiona przez
+  [ADR-003](ADR-003-flag-sources.md) (2026-10-24), kontrakt `schemaVersion: 2` obowiązuje dalej
 - **Data**: 2026-10-16 (decyzja wcześniejsza, udokumentowana wprost w `CLAUDE.md`; ten ADR ją tylko wyodrębnia
   z prozy, nie zmienia jej treści — zob. `design-docs/REPORT_ARCH.md`, II.2, krawędź 4)
 
