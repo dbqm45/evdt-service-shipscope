@@ -162,13 +162,14 @@ function buildFallbackData(){
     ];
 
     const componentsOrder = [
-        { name: FE, description: 'EV Admin Panel — frontend', serviceType: SERVICE_TYPE.FE, featureFlagsIncluded: true, application: ['EVAPL'] },
-        { name: CH, description: 'Charger infrastructure management', serviceType: SERVICE_TYPE.BE, featureFlagsIncluded: true, application: ['EVNM'] },
-        { name: BO, description: 'Back-office web — frontend', serviceType: SERVICE_TYPE.FE, featureFlagsIncluded: true, application: ['EBO'] },
-        // false (not null) on purpose — shows the ⚑? "flags not tracked here" icon next to this row.
-        { name: BF, description: 'Back-office web — BFF', serviceType: SERVICE_TYPE.BE, featureFlagsIncluded: false, application: ['EBO'] },
-        { name: SI, description: 'SIM adapter service', serviceType: SERVICE_TYPE.BE, featureFlagsIncluded: null, application: ['EVSIM'] },
-        { name: HO, description: 'Asset management host', serviceType: SERVICE_TYPE.BE, featureFlagsIncluded: null, application: ['EVAM'] },
+        { name: FE, description: 'EV Admin Panel — frontend', serviceType: SERVICE_TYPE.FE, featureFlagsIncluded: true, application: ['EVAPL'], flagCoverage: 'tracked' },
+        { name: CH, description: 'Charger infrastructure management', serviceType: SERVICE_TYPE.BE, featureFlagsIncluded: true, application: ['EVNM'], flagCoverage: 'tracked' },
+        { name: BO, description: 'Back-office web — frontend', serviceType: SERVICE_TYPE.FE, featureFlagsIncluded: true, application: ['EBO'], flagCoverage: 'tracked' },
+        // false (not null) on purpose — shows the ⚑? "flags not tracked here" icon next to this row; flagCoverage
+        // 'unknown' (nobody said whether it has flags) puts a "?" on the status of issues whose code reached it.
+        { name: BF, description: 'Back-office web — BFF', serviceType: SERVICE_TYPE.BE, featureFlagsIncluded: false, application: ['EBO'], flagCoverage: 'unknown' },
+        { name: SI, description: 'SIM adapter service', serviceType: SERVICE_TYPE.BE, featureFlagsIncluded: null, application: ['EVSIM'], flagCoverage: 'none' },
+        { name: HO, description: 'Asset management host', serviceType: SERVICE_TYPE.BE, featureFlagsIncluded: null, application: ['EVAM'], flagCoverage: 'none' },
     ];
 
     // Release Notes-only history: a batch of already-released issues across several PIs/sprints, purely

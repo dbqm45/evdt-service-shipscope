@@ -102,6 +102,7 @@ function issueBreakdownHtml(issue){
         rows,
         noFlagReason: anyCodeDeployed ? 'code found in deployment history, but no flag tracks it yet' : 'check flags-meta.json (jiraKeys)',
         dependency: issue.dependencyBlocked ? { note: issue.dependencyNote || 'unresolved' } : null,
+        uncertain: [...new Set(ENVIRONMENTS.flatMap(env => issueStatusForEnv(issue, env).uncertain))],
     });
 }
 
@@ -116,7 +117,13 @@ function issueRowHtml(issue, indent, showSprintBadge){
     const prodDate = issueEnvDate(issue, ENVIRONMENT.PROD);
     const isOpen = expandedIssue === issue.key;
     const envCell = (env, status, date) => StatusCell({
-        pill: StatusPill({ cls: statusClass(status.level), label: statusLabel(status.level), title: statusLabelTooltip(status.level) }),
+        pill: StatusPill({
+            cls: statusClass(status.level),
+            label: status.uncertain.length ? `${statusLabel(status.level)}?` : statusLabel(status.level),
+            title: status.uncertain.length
+                ? `${statusLabelTooltip(status.level)}. Not sure: ${status.uncertain.join(', ')} has no flag source and is not marked as having no flags`
+                : statusLabelTooltip(status.level),
+        }),
         dateText: date ? relTime(date.toISOString()) : '—',
     });
     const prodCell = prod.blocked

@@ -60,38 +60,87 @@ function deployedViaBlockers(issue, env){
         return anyDeploymentForIssue(blocker, env);
     });
 }
+/** A flag's value in one service on one environment (ADR-003): the server's `flagStatesByComponent`, or — for data
+ *  without it (the sample data, older payloads) — the legacy per-key state applied to each component the flag
+ *  lists, as before. `on` is strict: a partial rollout is not on. Null when the service has no value there. */
+function flagStateFor(flagKey, component, env){
+    if (state.flagStatesByComponent) {
+        return state.flagStatesByComponent[flagKey]?.[env]?.[component] || null;
+    }
+
+    const fs = effectiveFlagState(state.flagStates[flagKey] ? state.flagStates[flagKey][env] : null);
+
+    if (!fs) {
+        return null;
+    }
+
+    const flagState = fs.state || (fs.enabled ? 'on' : 'off');
+
+    return { ...fs, state: flagState, rollout: fs.rollout ?? null, enabled: flagState === 'on' };
+}
+/** The (component, flag) pairs of an issue: every service a linked flag is reported for. */
 function issueLinks(issue){
     const flags = flagsForIssue(issue.key);
     const pairs = [];
 
-    flags.forEach(f => (f.components || []).forEach(c => pairs.push({component:c, flagKey:f.key})));
+    flags.forEach(f => {
+        const byEnv = state.flagStatesByComponent ? state.flagStatesByComponent[f.key] || {} : {};
+        const fromStates = Object.values(byEnv).flatMap(byComponent => Object.keys(byComponent));
+
+        [...new Set([...(f.components || []), ...fromStates])].forEach(c => pairs.push({ component: c, flagKey: f.key }));
+    });
 
     return pairs;
 }
 function linkStatus(link, issue, env){
     const dep = issueDeployedOnComponent(link.component, issue, env);
-    const envEntry = state.flagStates[link.flagKey] ? state.flagStates[link.flagKey][env] : null;
-    const fs = effectiveFlagState(envEntry);
-    const flagOn = fs ? !!fs.enabled : false;
+    const fs = flagStateFor(link.flagKey, link.component, env);
+    const flagOn = !!fs && fs.state === 'on';
     const deployed = !!dep;
     const released = deployed && flagOn;
 
-    return { deployed, released, deployment: dep, flagOn, flagChangedAt: fs ? fs.changedAt : null };
+    return { deployed, released, deployment: dep, flagOn, flagPartial: !!fs && fs.state === 'partial', flagChangedAt: fs ? fs.changedAt : null };
 }
+/** Services whose deployments on `env` carry this issue's code (its key or a sub-task's), live or from
+ *  `issueDeployments`. */
+function componentsReached(issue, env){
+    const keys = issueKeys(issue);
+    const live = state.deployments
+        .filter(d => d.environment === env && d.status === 'success' && deploymentNamesAny(d, keys))
+        .map(d => d.component);
+    const kept = keys.flatMap(k => Object.keys(state.issueDeployments[k]?.[env] || {}));
+
+    return [...new Set([...live, ...kept])];
+}
+/** A service's stance on flags (`componentsOrder[].flagCoverage`): tracked, none or unknown; undefined in data
+ *  that predates it, which is then never counted as uncertain. */
+function componentFlagCoverage(component){
+    const entry = (state.componentsOrder || []).find(c => c.name === component);
+
+    return entry ? entry.flagCoverage : undefined;
+}
+/**
+ * One issue's release status on one environment (ADR-003), from the services its code reached:
+ * - each such service with a flag linked to the issue is a gate: all its flags on = on, all off = off, else
+ *   partial (a rollout below 100% included); a service with no linked flag is neutral;
+ * - a service with a linked flag but without the issue's code here leaves the issue Partial;
+ * - every gate on = Released, every gate off = Deployed (hidden), anything else = Partial, no gate = Code deployed;
+ * - a reached service nobody covers or declared flag-free (`flagCoverage: 'unknown'`) does not change the level,
+ *   it is listed in `uncertain` and the pill gets a "?".
+ *
+ * @returns {{ level: string, blocked: boolean, results: object[], uncertain: string[] }}
+ */
 function issueStatusForEnv(issue, env){
     const pairs = issueLinks(issue);
+    const reached = componentsReached(issue, env);
+    const flagged = new Set(pairs.map(p => p.component));
+    const uncertain = reached.filter(c => !flagged.has(c) && componentFlagCoverage(c) === 'unknown');
 
     if (!pairs.length) {
-        // No flag is linked to this issue (either nobody has wired jiraKeys
-        // yet, or — for deployment-derived fallback stubs — there's no flag
-        // to link at all). Rather than reporting a blanket "not deployed",
-        // fall back to raw deployment presence: did any component's code
-        // referencing this issue actually ship to this environment? This is
-        // strictly less precise (we can't know if a flag is hiding it), but
-        // far more honest than always showing "none".
-        const deployedHere = anyDeploymentForIssue(issue, env) || deployedViaBlockers(issue, env);
+        // No flag is linked to this issue: did its code reach this environment at all (or ship in what blocks it)?
+        const deployedHere = reached.length > 0 || deployedViaBlockers(issue, env);
 
-        return { level: deployedHere ? RELEASE_LEVEL.DEPLOYED_CODE_ONLY : RELEASE_LEVEL.NONE, blocked:false, results:[] };
+        return { level: deployedHere ? RELEASE_LEVEL.DEPLOYED_CODE_ONLY : RELEASE_LEVEL.NONE, blocked: false, results: [], uncertain: deployedHere ? uncertain : [] };
     }
 
     const results = pairs.map(l => ({
@@ -99,17 +148,25 @@ function issueStatusForEnv(issue, env){
         component: l.component,
         flagKey: l.flagKey
     }));
-    const allDeployed = results.every(r=> r.deployed);
-    const noneDeployed = results.every(r=> !r.deployed);
-    const allReleased = results.every(r=> r.released);
-    const noneReleased = results.every(r=> !r.released);
+    const gates = [...flagged].map(component => {
+        const links = results.filter(r => r.component === component);
+
+        if (!links[0].deployed) {
+            return 'absent';
+        }
+        if (links.every(r => r.flagOn)) {
+            return 'on';
+        }
+
+        return links.every(r => !r.flagOn && !r.flagPartial) ? 'off' : 'partial';
+    });
     let level;
 
-    if (noneDeployed) {
+    if (!reached.length && gates.every(g => g === 'absent')) {
         level = RELEASE_LEVEL.NONE;
-    } else if (allReleased) {
+    } else if (gates.every(g => g === 'on')) {
         level = RELEASE_LEVEL.RELEASED;
-    } else if (allDeployed && noneReleased) {
+    } else if (gates.every(g => g === 'off')) {
         level = RELEASE_LEVEL.DEPLOYED;
     } else {
         level = RELEASE_LEVEL.PARTIAL;
@@ -122,7 +179,7 @@ function issueStatusForEnv(issue, env){
         blocked = true;
     }
 
-    return { level, blocked, results };
+    return { level, blocked, results, uncertain: level === RELEASE_LEVEL.NONE ? [] : uncertain };
 }
 function statusLabel(level){
     return { [RELEASE_LEVEL.NONE]: 'Not deployed', [RELEASE_LEVEL.DEPLOYED]: 'Deployed (hidden)', [RELEASE_LEVEL.RELEASED]: 'Released', [RELEASE_LEVEL.PARTIAL]: 'Partial', [RELEASE_LEVEL.DEPLOYED_CODE_ONLY]: 'Code deployed' }[level];
@@ -232,7 +289,7 @@ function issueEnvDate(issue, env){
             consider(dep.deployedAt);
         }
 
-        const fs = effectiveFlagState(state.flagStates[l.flagKey] ? state.flagStates[l.flagKey][env] : null);
+        const fs = flagStateFor(l.flagKey, l.component, env);
 
         if (fs) {
             consider(fs.changedAt);

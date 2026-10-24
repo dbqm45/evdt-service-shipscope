@@ -234,8 +234,8 @@ reading it through `loadData()` in a `vm`; `server-test.yml` also runs on `docs/
   `*` = anything but `/`.
 - **Flags**: `flagsMeta` key → `{ description, source: 'build'|'runtime-be', jiraKeys[], components[] }`;
   `flagStates` key → env → slot (`build`/`runtime-be`) → `{ enabled, changedAt, changedBy, component }` plus the
-  server's `state`/`rollout`; `effectiveFlagState()` prefers `runtime-be`. Per service (ADR-003, read by the frontend
-  from increment 1b): `flagStatesByComponent` key → env → component → `{ state, rollout, enabled (strictly on),
+  server's `state`/`rollout`; `effectiveFlagState()` prefers `runtime-be`. Per service (ADR-003, read by
+  `issueStatusForEnv()`): `flagStatesByComponent` key → env → component → `{ state, rollout, enabled (strictly on),
   changedAt, changedBy, sourceName, kind, overridden[] }` from the sources covering that service (runtime over build,
   then priority, then the later change), and `componentsOrder[].flagCoverage` `tracked`/`none`/`unknown`.
 - **Jira**: `jiraIndex` = `{ currentPi, pis: [{ pi, file, kind?, includes?, sprints: [{ name, startDate, endDate }] }] }`
@@ -249,8 +249,12 @@ reading it through `loadData()` in a `vm`; `server-test.yml` also runs on `docs/
   commit naming only a sub-task counts for the Story (issues synced before the field match on their own key until
   the next sync). An issue with no deployment of its own and no flag also counts as deployed where every issue in its
   `blockedByKeys` is (`deployedViaBlockers()`, one level, each blocker on its key plus its loaded `subtaskKeys`): a
-  bug fixed in a Story's sub-task. `issueStatusForEnv()` gives `none` / `deployed` (code shipped, flag
-  off) / `released` (flag on) / `partial` / `deployed_code_only` (no flag to check).
+  bug fixed in a Story's sub-task. `issueStatusForEnv()` (ADR-003) works per service the issue's code reached:
+  a service with a linked flag is a gate (all on / all off / else partial, a rollout below 100% included; values from
+  `flagStateFor()`: `flagStatesByComponent`, or the legacy slots for data without it), one without is neutral, one
+  with a linked flag but not the code makes it partial. It gives `none` / `deployed` (every gate off) / `released`
+  (every gate on) / `partial` / `deployed_code_only` (no gate), plus `uncertain`: reached services with
+  `flagCoverage: 'unknown'`, shown as a "?" on the pill and named in the open row.
 
 ## Frontend (`docs/`)
 
@@ -312,7 +316,8 @@ key in another PI (`piContinuationBadge()`), a ghost-flag age (`ghostFlagAge()`:
 than `GHOST_FLAG_DAYS` = 30 since the later of deploy and last flag change) and per-env pills with plain-language
 tooltips (`statusLabelTooltip()`, also in the `.table-legend` row). `#filterHideTasks` hides Tasks; it is an
 ordinary filter reset by "Clear" and on PI switch. The `FALLBACK` dataset (`EBO-99001`, `legacyMigrationEnabled`,
-deploy `d21` under `EVP-4288`) exercises the ghost-flag and open-bug badges in the `file://` preview.
+deploy `d21` under `EVP-4288`) exercises the ghost-flag and open-bug badges in the `file://` preview, and its BFF
+(`flagCoverage: 'unknown'`) the "?" on the issues whose code reached it.
 
 **Technical view.** Summary cards, the component × env matrix (`app-technical-matrix.js`), Deployment history
 (`app-technical-timeline.js`) and the flags list (`app-technical-flags.js`). Matrix rows have `min-height: 70px`

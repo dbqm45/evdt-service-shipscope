@@ -23,7 +23,7 @@ Każdy punkt to osobny PR, wdrażalny sam; `[ ]` = do zrobienia, `[x]` = zrobion
   Settings.
 - [x] Stan efektywny per (serwis, klucz, środowisko) liczony na serwerze; dashboard-data rozszerzone addytywnie
   (`flagStatesByComponent`, `componentsOrder[].flagCoverage`), sloty `build`/`runtime-be` zostają na czas przejścia.
-- [ ] Nowy `issueStatusForEnv()`: bramki per serwis, serwis neutralny, `partial` to Partial (dopiero 100% =
+- [x] Nowy `issueStatusForEnv()`: bramki per serwis, serwis neutralny, `partial` to Partial (dopiero 100% =
   on), niepewność „?" dla serwisów nieśledzonych. `FALLBACK` z tymi samymi polami.
 
 ### 2. Świeżość i monitoring
