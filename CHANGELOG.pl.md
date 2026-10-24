@@ -7,6 +7,12 @@ dashboard, nie publikowany pakiet), dlatego wpisy są pogrupowane według dat. I
 ShipScope, znajdują się w `README.pl.md`, pełne techniczne odniesienie w `CLAUDE.md` (po angielsku), a
 wyjaśnienie sposobu liczenia poszczególnych wartości/badge'y w `FAQ.pl.md`.
 
+## [0.2.18] - 2026-10-24
+
+### Nowe
+
+- **SHP:** let ingest tokens expire and limit them to environments (#75)
+
 ## [0.2.17] - 2026-10-24
 
 ### Nowe

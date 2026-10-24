@@ -7,6 +7,12 @@ dashboard, not a published package), so entries are grouped by date instead. See
 ShipScope is, `CLAUDE.md` for the technical reference, and `FAQ.md` for how specific numbers/badges are
 calculated.
 
+## [0.2.18] - 2026-10-24
+
+### Added
+
+- **SHP:** let ingest tokens expire and limit them to environments (#75)
+
 ## [0.2.17] - 2026-10-24
 
 ### Added
