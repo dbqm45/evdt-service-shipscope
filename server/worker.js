@@ -4,6 +4,9 @@ const { syncAllJira } = require('./lib/jira-sync');
 const { syncAll } = require('./lib/deployment-sync');
 const { cleanupAll } = require('./lib/retention');
 const { pendingSyncRequests, finishSyncRequests } = require('./lib/webhooks');
+const { recordRun } = require('./lib/worker-status');
+const { createLogger, logLevel, logProcessFailures } = require('./lib/log');
+const { APP_VERSION } = require('./lib/version');
 
 const HEARTBEAT_INTERVAL_MS = 30_000;
 const WEBHOOK_INTERVAL_MS = 30_000; // how often webhook-requested syncs are picked up
@@ -15,18 +18,37 @@ const SYNC_LOCK = 727_001;
 const CLEANUP_LOCK = 727_002;
 const JIRA_LOCK = 727_003;
 
-const stamp = () => new Date().toISOString();
+const defaultLogger = createLogger({ service: 'worker', level: logLevel(process.env), base: { version: APP_VERSION } });
 
 /**
- * One heartbeat tick: pings Postgres and logs the result. Extracted from the loop below so it's testable
+ * The `log(message, fields)` the sync modules call: `fields.level` picks the level (default info), the rest are
+ * fields of the line (tenantId, repo, err, ...).
+ */
+const syncLogger = (logger) => (msg, fields = {}) => {
+    const { level = 'info', ...rest } = fields;
+    (logger[level] || logger.info)(msg, rest);
+};
+
+/** Notes a job's run in worker_status (migration 020) for GET /health/worker. Never fails the job. */
+async function noteRun(pool, logger, deps, run) {
+    try {
+        await (deps.recordRun || recordRun)(pool, run);
+    } catch (err) {
+        logger.warn('could not record the worker status', { job: run.job, err });
+    }
+}
+
+/**
+ * One heartbeat tick: pings Postgres, logs the result and records it. Extracted from the loop below so it's testable
  * without waiting on a real interval or a real database.
  */
-async function heartbeatTick(pool, log = console.log) {
+async function heartbeatTick(pool, logger = defaultLogger, deps = {}) {
     try {
         const { latencyMs } = await checkConnection(pool);
-        log(`${stamp()} heartbeat ok (db latency ${latencyMs}ms)`);
+        logger.debug('heartbeat ok', { dbLatencyMs: latencyMs });
+        await noteRun(pool, logger, deps, { job: 'heartbeat', ok: true, details: { dbLatencyMs: latencyMs } });
     } catch (err) {
-        log(`${stamp()} heartbeat failed: ${err.message}`);
+        logger.error('heartbeat failed: database unreachable', { err });
     }
 }
 
@@ -73,62 +95,87 @@ function tenantBudgetSeconds(env) {
     return value;
 }
 
-/** One deployment sync pass (FR-005), never overlapping another. Errors are logged, never thrown. */
-async function syncTick(pool, app, log = console.log, deps = { syncAll }, tenantBudgetMs = DEFAULT_TENANT_BUDGET_SECONDS * 1000) {
+/**
+ * Runs one job under its lock: logs the outcome with its duration and records it. Errors are logged, never thrown.
+ * A pass in which some tenants failed still succeeded as a job; their count goes into the record (`failed`).
+ */
+async function runJob(pool, { job, lock, logger, deps, run, summary }) {
+    const started = Date.now();
+    const log = logger.child({ job });
     try {
-        const run = await runExclusive(pool, SYNC_LOCK, () => deps.syncAll({ pool, app, log: (m) => log(`${stamp()} ${m}`), options: { tenantBudgetMs } }));
-        if (run.skipped) log(`${stamp()} sync skipped: another run holds the lock`);
-        else log(`${stamp()} sync done: ${run.result.repos} repos, +${run.result.inserted} deployments, ${run.result.failed} failed, ${run.result.deferred} left for the next pass`);
+        const outcome = await runExclusive(pool, lock, run);
+        if (outcome.skipped) {
+            log.info(`${job} skipped: another run holds the lock`);
+            return;
+        }
+        const fields = { durationMs: Date.now() - started, ...outcome.result };
+        (outcome.result?.failed ? log.warn : log.info)(summary(outcome.result), fields);
+        await noteRun(pool, log, deps, { job, ok: true, details: outcome.result });
     } catch (err) {
-        log(`${stamp()} sync failed: ${err.message}`);
+        log.error(`${job} failed`, { durationMs: Date.now() - started, err });
+        await noteRun(pool, log, deps, { job, ok: false, error: err.message });
     }
 }
 
-/** One Jira issue sync pass (FR-009), never overlapping another. Errors are logged, never thrown. */
-async function jiraTick(pool, atlassian, log = console.log, deps = { syncAllJira }, tenantBudgetMs = DEFAULT_TENANT_BUDGET_SECONDS * 1000) {
-    try {
-        const run = await runExclusive(pool, JIRA_LOCK, () => deps.syncAllJira({ pool, atlassian, log: (m) => log(`${stamp()} ${m}`), tenantBudgetMs }));
-        if (run.skipped) log(`${stamp()} jira sync skipped: another run holds the lock`);
-        else log(`${stamp()} jira sync done: ${run.result.tenants} tenants, ${run.result.issues} issues, ${run.result.failed} failed, ${run.result.deferred} left for the next pass`);
-    } catch (err) {
-        log(`${stamp()} jira sync failed: ${err.message}`);
-    }
+/** One deployment sync pass (FR-005), never overlapping another. */
+async function syncTick(pool, app, logger = defaultLogger, deps = { syncAll }, tenantBudgetMs = DEFAULT_TENANT_BUDGET_SECONDS * 1000) {
+    await runJob(pool, {
+        job: 'deployments', lock: SYNC_LOCK, logger, deps,
+        run: () => deps.syncAll({ pool, app, log: syncLogger(logger.child({ job: 'deployments' })), options: { tenantBudgetMs } }),
+        summary: (r) => `deployment sync done: ${r.repos} repos, +${r.inserted} deployments, ${r.failed} failed, ${r.deferred} left for the next pass`,
+    });
+}
+
+/** One Jira issue sync pass (FR-009), never overlapping another. */
+async function jiraTick(pool, atlassian, logger = defaultLogger, deps = { syncAllJira }, tenantBudgetMs = DEFAULT_TENANT_BUDGET_SECONDS * 1000) {
+    await runJob(pool, {
+        job: 'jira', lock: JIRA_LOCK, logger, deps,
+        run: () => deps.syncAllJira({ pool, atlassian, log: syncLogger(logger.child({ job: 'jira' })), tenantBudgetMs }),
+        summary: (r) => `jira sync done: ${r.tenants} tenants, ${r.issues} issues, ${r.failed} failed, ${r.deferred} left for the next pass`,
+    });
 }
 
 /**
  * Picks up what webhooks asked for (migration 013) and syncs just that: the named repos, the named Jira
  * connections. Under the same locks as the periodic syncs, so never alongside one; a request that couldn't run
- * (lock held, or the sync failed as a whole) stays queued for the next tick. Errors are logged, never thrown.
+ * (lock held, or the sync failed as a whole) stays queued for the next tick. Errors are logged, never thrown; the
+ * tick is recorded as one job (`webhooks`), failed when any source failed.
  */
-async function webhookTick(pool, { app, atlassian, tenantBudgetMs = DEFAULT_TENANT_BUDGET_SECONDS * 1000 }, log = console.log, deps = { syncAll, syncAllJira }) {
+async function webhookTick(pool, { app, atlassian, tenantBudgetMs = DEFAULT_TENANT_BUDGET_SECONDS * 1000 }, logger = defaultLogger, deps = { syncAll, syncAllJira }) {
+    const log = logger.child({ job: 'webhooks' });
     const sources = [
         app && ['github', SYNC_LOCK, (requests) => deps.syncAll({
-            pool, app, log: (m) => log(`${stamp()} ${m}`), options: { tenantBudgetMs }, repoIds: requests.map((r) => Number(r.key)).filter(Number.isSafeInteger),
+            pool, app, log: syncLogger(log), options: { tenantBudgetMs }, repoIds: requests.map((r) => Number(r.key)).filter(Number.isSafeInteger),
         })],
-        atlassian && ['jira', JIRA_LOCK, (requests) => deps.syncAllJira({ pool, atlassian, log: (m) => log(`${stamp()} ${m}`), tenantBudgetMs, keys: requests.map((r) => r.key) })],
+        atlassian && ['jira', JIRA_LOCK, (requests) => deps.syncAllJira({ pool, atlassian, log: syncLogger(log), tenantBudgetMs, keys: requests.map((r) => r.key) })],
     ].filter(Boolean);
+    const errors = [];
+    const handled = {};
     for (const [source, lock, sync] of sources) {
+        const started = Date.now();
         try {
             const requests = await pendingSyncRequests(pool, source);
             if (!requests.length) continue;
             const run = await runExclusive(pool, lock, () => sync(requests));
             if (run.skipped) continue;
             await finishSyncRequests(pool, source, requests);
-            log(`${stamp()} ${source} webhook sync done: ${requests.length} request(s)`);
+            handled[source] = requests.length;
+            log.info(`${source} webhook sync done: ${requests.length} request(s)`, { source, requests: requests.length, durationMs: Date.now() - started });
         } catch (err) {
-            log(`${stamp()} ${source} webhook sync failed: ${err.message}`);
+            errors.push(`${source}: ${err.message}`);
+            log.error(`${source} webhook sync failed`, { source, durationMs: Date.now() - started, err });
         }
     }
+    await noteRun(pool, log, deps, { job: 'webhooks', ok: !errors.length, error: errors.join('; ') || null, details: handled });
 }
 
-/** The daily retention cleanup, never overlapping another. Errors are logged, never thrown. */
-async function cleanupTick(pool, log = console.log, deps = { cleanupAll }) {
-    try {
-        const run = await runExclusive(pool, CLEANUP_LOCK, () => deps.cleanupAll(pool));
-        if (!run.skipped) log(`${stamp()} cleanup done: ${run.result} old deployment records deleted`);
-    } catch (err) {
-        log(`${stamp()} cleanup failed: ${err.message}`);
-    }
+/** The daily retention cleanup, never overlapping another. */
+async function cleanupTick(pool, logger = defaultLogger, deps = { cleanupAll }) {
+    await runJob(pool, {
+        job: 'cleanup', lock: CLEANUP_LOCK, logger, deps,
+        run: async () => ({ deleted: await deps.cleanupAll(pool) }),
+        summary: (r) => `cleanup done: ${r.deleted} old deployment records deleted`,
+    });
 }
 
 if (require.main === module) {
@@ -136,6 +183,9 @@ if (require.main === module) {
     const syncMinutes = syncIntervalMinutes(process.env);
     const budgetMs = tenantBudgetSeconds(process.env) * 1000;
     const pool = createPool();
+    logProcessFailures(defaultLogger);
+    pool.on('error', (err) => defaultLogger.error('idle database connection failed', { err }));
+    defaultLogger.info('worker started', { syncIntervalMinutes: syncMinutes, tenantBudgetSeconds: budgetMs / 1000, github: !!app, jira: !!loadAtlassianConfig(process.env) });
     const timers = [setInterval(() => heartbeatTick(pool), HEARTBEAT_INTERVAL_MS)];
     heartbeatTick(pool);
 
@@ -143,20 +193,21 @@ if (require.main === module) {
         timers.push(setInterval(() => syncTick(pool, app, undefined, undefined, budgetMs), syncMinutes * 60_000));
         syncTick(pool, app, undefined, undefined, budgetMs);
     } else {
-        console.log(`${stamp()} GITHUB_APP_* not set: deployment sync is off`);
+        defaultLogger.warn('GITHUB_APP_* not set: deployment sync is off');
     }
     const atlassian = loadAtlassianConfig(process.env);
     if (atlassian) {
         timers.push(setInterval(() => jiraTick(pool, atlassian, undefined, undefined, budgetMs), syncMinutes * 60_000));
         jiraTick(pool, atlassian, undefined, undefined, budgetMs);
     } else {
-        console.log(`${stamp()} ATLASSIAN_* not set: Jira sync is off`);
+        defaultLogger.warn('ATLASSIAN_* not set: Jira sync is off');
     }
     if (app || atlassian) timers.push(setInterval(() => webhookTick(pool, { app, atlassian, tenantBudgetMs: budgetMs }), WEBHOOK_INTERVAL_MS));
     timers.push(setInterval(() => cleanupTick(pool), CLEANUP_INTERVAL_MS));
     cleanupTick(pool);
 
     process.on('SIGTERM', () => {
+        defaultLogger.info('worker stopping (SIGTERM)');
         timers.forEach(clearInterval);
         pool.end(() => process.exit(0));
     });

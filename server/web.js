@@ -8,6 +8,7 @@ const { AtlassianError } = require('./lib/atlassian');
 const { JiraNotConnectedError, JiraSiteError } = require('./lib/jira-connections');
 const { JiraBoardError } = require('./lib/jira-sync');
 const { APP_VERSION } = require('./lib/version');
+const { createLogger, logLevel, loggerOptions, logProcessFailures } = require('./lib/log');
 const { GitHubApiError } = require('./lib/github-app');
 const {
     TenantNotFoundError, AlreadyMemberError, ForbiddenError, LastAdminError, ConfirmationMismatchError, assertAdmin,
@@ -127,11 +128,15 @@ function splitCookie(value, first, second) {
  * the small set of cross-domain helpers (requireUser, assertAdminOf, ...) every route file receives through
  * `ctx` instead of its own copy.
  *
- * @param {{ pool: import('pg').Pool, auth?: ReturnType<typeof loadAuthConfig>, githubApp?: ReturnType<typeof loadGitHubAppConfig>, atlassian?: ReturnType<typeof loadAtlassianConfig>, fetch?: typeof fetch, logger?: boolean|object, dashboardDir?: string, mockDashboard?: { data: object, issuesByPi: Record<string, object[]> }|null, ingestRateLimit?: { capacity: number, refillPerSecond: number } }} options
+ * @param {{ pool: import('pg').Pool, auth?: ReturnType<typeof loadAuthConfig>, githubApp?: ReturnType<typeof loadGitHubAppConfig>, atlassian?: ReturnType<typeof loadAtlassianConfig>, fetch?: typeof fetch, logger?: boolean|object, dashboardDir?: string, mockDashboard?: { data: object, issuesByPi: Record<string, object[]> }|null, ingestRateLimit?: { capacity: number, refillPerSecond: number }, syncIntervalMinutes?: number }} options
  * @returns {import('fastify').FastifyInstance}
  */
-function buildApp({ pool, auth, githubApp = null, atlassian = null, fetch: fetchFn = fetch, logger = false, dashboardDir = DEFAULT_DASHBOARD_DIR, mockDashboard = null, ingestRateLimit = null }) {
+function buildApp({ pool, auth, githubApp = null, atlassian = null, fetch: fetchFn = fetch, logger = false, dashboardDir = DEFAULT_DASHBOARD_DIR, mockDashboard = null, ingestRateLimit = null, syncIntervalMinutes = 15 }) {
     const app = Fastify({
+        // A request id on every log line of a request and in the response (X-Request-Id), so a user's report can be
+        // matched to the logs; one sent by the caller (Render's proxy, a load balancer) is kept.
+        requestIdHeader: 'x-request-id',
+        requestIdLogLabel: 'requestId',
         // Fastify's defaults silently strip unknown body fields and coerce types (42 -> "42"). External
         // input is rejected instead of rewritten (CLAUDE.md: validate every external boundary).
         ajv: { customOptions: { removeAdditional: false, coerceTypes: false } },
@@ -151,6 +156,8 @@ function buildApp({ pool, auth, githubApp = null, atlassian = null, fetch: fetch
         if (mapped) {
             if (err instanceof GitHubApiError) request.log.warn({ err: err.message }, 'GitHub API call failed');
             if (err instanceof AtlassianError) request.log.warn({ err: err.message }, 'Atlassian API call failed');
+            // Why a request was refused, next to its "request completed" line (the reason is ours, never a secret).
+            else if (!(err instanceof GitHubApiError)) request.log.info({ reason: err.message, statusCode: mapped[1] }, 'request refused');
             const body = {
                 error: err instanceof GitHubApiError ? 'GitHub request failed; please try again'
                     : err instanceof AtlassianError ? 'Jira request failed; please try again' : err.message,
@@ -159,12 +166,24 @@ function buildApp({ pool, auth, githubApp = null, atlassian = null, fetch: fetch
             if (err.retryAfterSeconds) reply.header('Retry-After', String(err.retryAfterSeconds));
             return reply.code(mapped[1]).send(body);
         }
-        if (err.statusCode && err.statusCode < 500) return reply.code(err.statusCode).send({ error: err.message });
+        if (err.statusCode && err.statusCode < 500) {
+            request.log.info({ reason: err.message, statusCode: err.statusCode }, 'request refused');
+            return reply.code(err.statusCode).send({ error: err.message });
+        }
         request.log.error(err);
         return reply.code(500).send({ error: 'Internal Server Error' });
     });
 
-    registerHealthRoutes(app, { pool });
+    app.addHook('onRequest', async (request, reply) => {
+        reply.header('X-Request-Id', request.id);
+    });
+    // Whose request it was, on every line logged for it (the "request completed" line included).
+    app.addHook('preHandler', async (request) => {
+        const tenantId = request.params && request.params.tenantId;
+        if (tenantId && request.log.setBindings) request.log.setBindings({ tenantId });
+    });
+
+    registerHealthRoutes(app, { pool, expectWorker: { deployments: !!githubApp, jira: !!atlassian }, syncIntervalMinutes });
 
     if (!auth) return app;
 
@@ -175,6 +194,7 @@ function buildApp({ pool, auth, githubApp = null, atlassian = null, fetch: fetch
     async function requireUser(request, reply) {
         request.user = await getSessionUser(pool, request.cookies[SESSION_COOKIE]);
         if (!request.user) return reply.code(401).send({ error: 'Not signed in' });
+        if (request.log.setBindings) request.log.setBindings({ userId: request.user.id });
     }
 
     // For links people open in a browser (invitations): send them through sign-in and back, instead of a 401.
@@ -220,15 +240,23 @@ if (require.main === module) {
     const pool = createPool();
     const dashboardDir = process.env.DASHBOARD_DIR || DEFAULT_DASHBOARD_DIR;
     const mockDashboard = mockDataEnabled(process.env) ? loadMockDashboard(dashboardDir) : null;
-    if (mockDashboard) console.warn('SHIPSCOPE_MOCK_DATA=1: every dashboard shows the built-in sample data');
-    const app = buildApp({ pool, auth, githubApp, atlassian, logger: true, dashboardDir, mockDashboard });
+    const level = logLevel(process.env);
+    const log = createLogger({ service: 'web', level, base: { version: APP_VERSION } });
+    logProcessFailures(log);
+    pool.on('error', (err) => log.error('idle database connection failed', { err }));
+    if (mockDashboard) log.warn('SHIPSCOPE_MOCK_DATA=1: every dashboard shows the built-in sample data');
+    const syncIntervalMinutes = Number(process.env.SYNC_INTERVAL_MINUTES) || 15;
+    const app = buildApp({ pool, auth, githubApp, atlassian, logger: loggerOptions({ level, version: APP_VERSION }), dashboardDir, mockDashboard, syncIntervalMinutes });
     const port = Number(process.env.PORT) || 3000;
-    app.listen({ port, host: '0.0.0.0' }).catch((err) => {
-        console.error(err);
+    app.listen({ port, host: '0.0.0.0' }).then(() => {
+        log.info('web started', { port, github: !!githubApp, jira: !!atlassian, logLevel: level });
+    }).catch((err) => {
+        log.error('web failed to start', { err });
         process.exit(1);
     });
 
     process.on('SIGTERM', () => {
+        log.info('web stopping (SIGTERM)');
         app.close().then(() => pool.end()).then(() => process.exit(0));
     });
 }

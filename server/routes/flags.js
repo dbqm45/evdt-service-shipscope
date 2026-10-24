@@ -49,7 +49,9 @@ function registerFlagRoutes(app, ctx) {
                 .catch((err) => request.log.warn({ err: err.message }, 'could not record a refused flag message'));
             throw request.validationError;
         }
-        return ingestFlags(pool, { token, payload: request.body });
+        const result = await ingestFlags(pool, { token, payload: request.body });
+        request.log.info({ source: result.source, flags: result.flags, changed: result.changed, removed: result.removed, stale: result.stale }, 'flag message accepted');
+        return result;
     });
 
     app.get('/api/flags/ingest/schema', async (request, reply) => reply.type('application/schema+json').send(INGEST_SCHEMA));

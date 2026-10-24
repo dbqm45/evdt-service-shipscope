@@ -92,6 +92,7 @@ place in this repo with third-party dependencies** (`pg`, `fastify`, `@fastify/c
 |---|---|---|
 | `GET /health` | — | Liveness (Render health check). |
 | `GET /health/db` | — | Postgres reachability; 503 if not. |
+| `GET /health/worker` | — | For an uptime monitor: `{ status: "ok" \| "degraded" \| "down", checks }`. 503 (`down`) when the worker sent no heartbeat for 2 minutes, a configured sync (deployments, Jira) has not succeeded for 3 × `SYNC_INTERVAL_MINUTES` + 5 minutes, or a webhook request waits over 10 minutes; 200 `degraded` when syncs run but some tenants' fail. Ages and counts only, never tenant data or error text. |
 | `GET /auth/github/login` | — | Sets a short-lived `oauth_state` cookie and redirects to GitHub. |
 | `GET /auth/github/callback` | — | Checks `state` against the cookie (CSRF), exchanges the code, upserts the user, sets the `sid` session cookie, redirects to `/me`. |
 | `POST /auth/logout` | session | Deletes the session, clears the cookie. 204. |
@@ -351,7 +352,38 @@ Postgres database. Step-by-step setup (in Polish): `SETUP.pl.md`, section 6.
   updates set `GITHUB_APP_WEBHOOK_SECRET` (web) and `PUBLIC_BASE_URL` on the worker too (it registers the Jira
   webhooks). `server/test/render-blueprint.test.js` checks the file against the code: no `rootDir`, the commands,
   the build filter, every variable the config reads declared on the service that reads it, secrets never inline.
-- **Health**: `GET /health` (Render's health check, also reports the version) and `GET /health/db`.
+- **Health**: `GET /health` (Render's health check, also reports the version), `GET /health/db` and
+  `GET /health/worker` (below).
+
+## Monitoring and logs
+
+**Alerting on a stopped worker.** Render's health check only covers the Web Service. Point an uptime monitor (Better
+Stack, UptimeRobot or similar, every 1-5 minutes) at `https://<web>/health/worker` and alert on a non-2xx answer;
+optionally alert on the word `degraded` too. The worker records each job's last run, last success and last error in
+`worker_status` (migration `020`, `lib/worker-status.js`); the web service judges them (`judgeWorker()`). If you change
+`SYNC_INTERVAL_MINUTES`, set it on both services.
+
+**Logs.** Both services write one JSON object per line to stdout (`lib/log.js`; the web service through Fastify's
+own logger with the same shape), which Render keeps under each service's **Logs** tab. Every line has `time`,
+`level`, `service` (`web`/`worker`), `version` and `msg`, plus context:
+
+| Field | Where | Use it to |
+|---|---|---|
+| `requestId` | every line of one HTTP request; also sent back as `X-Request-Id` (a caller's own is kept) | follow one request a user reports |
+| `tenantId`, `userId` | requests under `/tenants/:tenantId/...`, signed-in requests | see everything that happened for one workspace |
+| `job`, `durationMs` | worker jobs: `heartbeat`, `deployments`, `jira`, `webhooks`, `cleanup` | see how long syncs take and which failed |
+| `repo`, `installationId`, `retryAt` | per-repo and per-tenant sync lines | find the repo or connection behind a failure |
+| `err` (`type`, `message`, `code`, `status`, `stack`) | every logged error | see where it failed |
+
+Levels: `error` (something broke: a job failed, a 500, an unhandled rejection), `warn` (a tenant's sync failed, a
+rate limit, a pass with failures), `info` (each request, each job's summary, a refused request with its `reason`),
+`debug` (the worker's heartbeats). `LOG_LEVEL` sets the threshold (default `info`). Credentials never reach a line:
+fields named like a token, secret, password, cookie or authorization header are replaced by `[redacted]`, and
+ingest tokens, GitHub tokens, bearer tokens and OAuth `code`/`state` in messages and URLs are masked. Flag values
+and payloads are not logged, only counts.
+
+Useful searches in Render's log view: `"level":"error"`, a `tenantId`, a `requestId` from a user's report,
+`"job":"deployments"`, `request refused`.
 
 See `@context/foundation/infrastructure.md`'s "Getting Started" and "Operational Story" sections for the full
 deploy/rollback/secrets workflow.

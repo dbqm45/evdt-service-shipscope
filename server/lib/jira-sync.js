@@ -395,7 +395,7 @@ async function removeJiraWebhooks(pool, { tenantId, atlassian, fetch: fetchFn = 
  * `keys` limits it to the tenants a webhook delivery names (lib/webhooks.js jiraSyncKeys(): `webhook:<id>` of the
  * connection's webhook, `cloud:<cloudId>` or `site:<url>`).
  *
- * @param {{ pool: import('pg').Pool, atlassian: object, fetch?: typeof fetch, log?: (msg: string) => void, now?: Date, clock?: () => number, keys?: string[], tenantBudgetMs?: number }} input
+ * @param {{ pool: import('pg').Pool, atlassian: object, fetch?: typeof fetch, log?: (msg: string, fields?: { level?: string } & object) => void, now?: Date, clock?: () => number, keys?: string[], tenantBudgetMs?: number }} input
  * @returns {Promise<{ tenants: number, issues: number, failed: number, deferred: number }>} deferred: tenants left (partly) for a later pass
  */
 async function syncAllJira({ pool, atlassian, fetch: fetchFn = fetch, log = () => {}, now = new Date(), clock = Date.now, keys = null, tenantBudgetMs = DEFAULT_TENANT_BUDGET_MS }) {
@@ -432,17 +432,17 @@ async function syncAllJira({ pool, atlassian, fetch: fetchFn = fetch, log = () =
             totals.issues += result.issues;
             if (result.partial) {
                 totals.deferred += 1;
-                log(`tenant ${tenantId}: ${result.boards} Jira board(s) synced, the rest next pass (time budget)`);
+                log(`tenant ${tenantId}: ${result.boards} Jira board(s) synced, the rest next pass (time budget)`, { tenantId, boards: result.boards });
             }
         } catch (err) {
             if (!(err instanceof AtlassianError) && !(err instanceof JiraNotConnectedError)) throw err;
             if (err.retryAt) {
                 totals.deferred += 1;
-                log(`tenant ${tenantId}: Atlassian rate limit, Jira sync paused until ${err.retryAt.toISOString()}`);
+                log(`tenant ${tenantId}: Atlassian rate limit, Jira sync paused until ${err.retryAt.toISOString()}`, { level: 'warn', tenantId, retryAt: err.retryAt });
                 continue;
             }
             totals.failed += 1;
-            log(`tenant ${tenantId}: Jira sync failed: ${err.message}`);
+            log(`tenant ${tenantId}: Jira sync failed: ${err.message}`, { level: 'warn', tenantId, err });
         }
     }
     return totals;
