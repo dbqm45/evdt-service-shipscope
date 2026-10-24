@@ -56,7 +56,7 @@ async function populatedTenant({ pool, app, as }, owner, name, { jira = false } 
     const call = as(owner);
     const tenantId = (await call('POST', '/tenants', { name })).json().tenant.id;
     await call('POST', `/tenants/${tenantId}/invitations`, { role: 'member' });
-    const { token } = (await call('POST', `/tenants/${tenantId}/flag-sources`, { name: 'LD', kind: 'runtime' })).json();
+    const { token, source } = (await call('POST', `/tenants/${tenantId}/flag-sources`, { name: 'LD', kind: 'runtime' })).json();
     const ingest = await app.inject({
         method: 'POST', url: '/api/flags/ingest', headers: { authorization: `Bearer ${token.token}` },
         payload: { schemaVersion: 2, observations: [{ key: 'newCheckout', env: 'prod', state: 'on' }] },
@@ -72,6 +72,7 @@ async function populatedTenant({ pool, app, as }, owner, name, { jira = false } 
         );
         await c.query("INSERT INTO issue_deployments (tenant_id, issue_key, environment, repo_id, first_deployed_at) VALUES ($1, 'ABC-1', 'prod', $2, now())", [tenantId, jira ? 1 : 2]);
     });
+    await call('PUT', `/tenants/${tenantId}/flag-sources/${source.id}`, { name: 'LD', kind: 'runtime', priority: 0, repoIds: [jira ? 1 : 2] });
     if (jira) {
         const start = await call('GET', `/tenants/${tenantId}/jira/connect`);
         const state = new URL(start.headers.location).searchParams.get('state');

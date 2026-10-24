@@ -1,7 +1,7 @@
 const crypto = require('crypto');
 const { listInstallationRepos } = require('../lib/github-app');
 const {
-    listConnections, trackedRepoIdsForAdmin, trackRepo, untrackRepo, updateRepoSettings, unlinkInstallation,
+    listConnections, trackedRepoIdsForAdmin, trackRepo, untrackRepo, updateRepoSettings, setRepoFlagStance, unlinkInstallation,
 } = require('../lib/github-connections');
 
 const INSTALL_COOKIE = 'gh_install';
@@ -145,6 +145,22 @@ function registerGitHubRoutes(app, ctx) {
             actorUserId: request.user.id,
             repoId: Number(request.params.repoId),
             ...request.body,
+        });
+        if (!updated) return reply.code(404).send({ error: 'That repository is not tracked' });
+        return updated;
+    });
+
+    // Whether a repo uses feature flags (ADR-003): `none` = declared without flags, `unknown` = not said yet. A repo
+    // some flag source covers counts as tracked whatever is stored here.
+    app.put('/tenants/:tenantId/github/repos/:repoId/flag-stance', {
+        preHandler: requireUser,
+        schema: {
+            params: repoParams,
+            body: { type: 'object', required: ['flagStance'], additionalProperties: false, properties: { flagStance: { type: 'string', enum: ['unknown', 'none'] } } },
+        },
+    }, async (request, reply) => {
+        const updated = await setRepoFlagStance(pool, {
+            tenantId: request.params.tenantId, actorUserId: request.user.id, repoId: Number(request.params.repoId), flagStance: request.body.flagStance,
         });
         if (!updated) return reply.code(404).send({ error: 'That repository is not tracked' });
         return updated;
