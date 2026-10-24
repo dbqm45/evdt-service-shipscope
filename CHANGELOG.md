@@ -7,6 +7,12 @@ dashboard, not a published package), so entries are grouped by date instead. See
 ShipScope is, `CLAUDE.md` for the technical reference, and `FAQ.md` for how specific numbers/badges are
 calculated.
 
+## [0.2.19] - 2026-10-24
+
+### Added
+
+- **SHP:** scope flag sources to services and add per-service state (#76)
+
 ## [0.2.18] - 2026-10-24
 
 ### Added

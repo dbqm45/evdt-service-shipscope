@@ -7,6 +7,12 @@ dashboard, nie publikowany pakiet), dlatego wpisy są pogrupowane według dat. I
 ShipScope, znajdują się w `README.pl.md`, pełne techniczne odniesienie w `CLAUDE.md` (po angielsku), a
 wyjaśnienie sposobu liczenia poszczególnych wartości/badge'y w `FAQ.pl.md`.
 
+## [0.2.19] - 2026-10-24
+
+### Nowe
+
+- **SHP:** scope flag sources to services and add per-service state (#76)
+
 ## [0.2.18] - 2026-10-24
 
 ### Nowe
