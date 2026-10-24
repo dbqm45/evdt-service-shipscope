@@ -16,6 +16,13 @@ const {
  */
 
 class IngestTokenError extends Error {}
+/** The tenant's previous message is still being written for longer than the wait allows; the sender retries. */
+class IngestBusyError extends Error {
+    constructor(message, retryAfterSeconds) {
+        super(message);
+        this.retryAfterSeconds = retryAfterSeconds;
+    }
+}
 class FlagSourceNotFoundError extends Error {}
 class FlagSourceConflictError extends Error {}
 
@@ -49,6 +56,11 @@ function toSource(row) {
 const SOURCE_COLUMNS = 'id, name, kind, priority, repo_id, created_at, last_ingest_at, last_ingest, last_error, last_error_at';
 // A refused message's reason is kept for Settings up to this length.
 const MAX_ERROR_LENGTH = 500;
+// How long an ingest waits for the tenant's previous message before answering 503, and what it tells the sender.
+const INGEST_LOCK_TIMEOUT_MS = 10_000;
+const INGEST_RETRY_AFTER_SECONDS = 5;
+// Postgres "lock_not_available": the lock_timeout above ran out.
+const LOCK_NOT_AVAILABLE = '55P03';
 
 /** @typedef {{ id: string, name: string, kind: string, priority: number, repoId: number|null, createdAt: Date, lastIngestAt: Date|null, lastIngest: { flags: number, changed: number, removed: number, stale: number }|null, lastError: { at: Date, message: string }|null }} FlagSource */
 
@@ -197,9 +209,9 @@ async function revokeIngestToken(pool, { tenantId, actorUserId, tokenId }) {
  * @returns {Promise<{ source: string, flags: number, changed: number, removed: number, stale: number, created: string[] }>}
  * @throws {IngestTokenError|IngestPayloadError}
  */
-async function ingestFlags(pool, { token, payload, now = new Date() }) {
+async function ingestFlags(pool, { token, payload, now = new Date(), lockTimeoutMs = INGEST_LOCK_TIMEOUT_MS }) {
     try {
-        return await applyIngest(pool, { token, payload, now });
+        return await applyIngest(pool, { token, payload, now, lockTimeoutMs });
     } catch (err) {
         // Best effort: the sender gets its 400 either way.
         if (err instanceof IngestPayloadError) await recordIngestError(pool, { token, message: err.message, now }).catch(() => {});
@@ -243,14 +255,25 @@ async function recordIngestError(pool, { token, message, now = new Date() }) {
     });
 }
 
-async function applyIngest(pool, { token, payload, now }) {
+async function applyIngest(pool, { token, payload, now, lockTimeoutMs }) {
     if (!TOKEN_PATTERN.test(token || '')) throw new IngestTokenError('Invalid ingest token');
     return withScope(pool, { ingestTokenHash: hashToken(token) }, async (client) => {
         const found = await resolveToken(client, token);
         if (!found) throw new IngestTokenError('Invalid ingest token');
         const { tokenId, tenantId, sourceId } = found;
         // One ingest per tenant at a time, so two messages from one source can't interleave their full-state diffs.
-        await client.query("SELECT pg_advisory_xact_lock(hashtextextended('flags:' || $1, 0))", [tenantId]);
+        // The wait is bounded: a request queued behind a slow one gives its pooled connection back instead of
+        // holding it, so a flood of messages for one tenant can't use up the pool every other request needs.
+        await client.query("SELECT set_config('lock_timeout', $1, true)", [`${Math.max(1, Math.floor(lockTimeoutMs))}ms`]);
+        try {
+            await client.query("SELECT pg_advisory_xact_lock(hashtextextended('flags:' || $1, 0))", [tenantId]);
+        } catch (err) {
+            if (err.code === LOCK_NOT_AVAILABLE) {
+                throw new IngestBusyError('Another flag message for this workspace is still being written; try again shortly', INGEST_RETRY_AFTER_SECONDS);
+            }
+            throw err;
+        }
+        await client.query("SELECT set_config('lock_timeout', '0', true)");
 
         const { rows: [source] } = await client.query('SELECT name FROM flag_sources WHERE tenant_id = $1 AND id = $2', [tenantId, sourceId]);
         const { complete, environments, observations, metaByKey } = checkPayload(payload, now);
@@ -267,12 +290,17 @@ async function applyIngest(pool, { token, payload, now }) {
              ON CONFLICT (tenant_id, key) DO NOTHING RETURNING key`,
             [tenantId, keys, now]
         );
-        for (const [key, meta] of metaByKey) {
+        if (metaByKey.size) {
+            // One statement for every described flag; a field the sender left out keeps its stored value.
+            const meta = [...metaByKey].map(([key, m]) => ({
+                key, has_description: 'description' in m, description: m.description ?? null, has_jira_keys: 'jiraKeys' in m, jira_keys: m.jiraKeys || [],
+            }));
             await client.query(
-                `UPDATE flags SET description = CASE WHEN $3 THEN $4 ELSE description END,
-                                  jira_keys = CASE WHEN $5 THEN $6::text[] ELSE jira_keys END
-                 WHERE tenant_id = $1 AND key = $2`,
-                [tenantId, key, 'description' in meta, meta.description ?? null, 'jiraKeys' in meta, meta.jiraKeys || []]
+                `UPDATE flags f SET description = CASE WHEN m.has_description THEN m.description ELSE f.description END,
+                                    jira_keys = CASE WHEN m.has_jira_keys THEN ARRAY(SELECT jsonb_array_elements_text(m.jira_keys)) ELSE f.jira_keys END
+                 FROM jsonb_to_recordset($2::jsonb) AS m(key text, has_description boolean, description text, has_jira_keys boolean, jira_keys jsonb)
+                 WHERE f.tenant_id = $1 AND f.key = m.key`,
+                [tenantId, JSON.stringify(meta)]
             );
         }
 
@@ -426,6 +454,7 @@ module.exports = {
     setFlagDetails,
     TOKEN_PATTERN,
     IngestTokenError,
+    IngestBusyError,
     IngestPayloadError,
     recordIngestError,
     FlagSourceNotFoundError,

@@ -156,6 +156,9 @@ emptied. `sync_requests` (webhook queue) is the one non-RLS table; it holds no t
   the sender's `changedAt`, flags no longer listed are marked removed, an older message never undoes a newer one).
   A key every JavaScript object already has (`__proto__`, `constructor`, `toString`, …, `isReservedKey()` in
   `lib/flags-logic.js`) is refused on ingest, skipped when reading, and not taken from Jira; the adapter refuses it too.
+  The ingest is guarded for a shared service: a per-token token bucket (`lib/request-limiter.js`, burst 60 then 1/s,
+  429 + `Retry-After`) runs before any database work, and the wait for the per-tenant ingest lock is bounded
+  (`lock_timeout` 10 s, then 503 + `Retry-After`); the adapter retries both.
   The body schema is `server/schemas/flags-ingest.v2.schema.json`, used by the route and served at
   `GET /api/flags/ingest/schema`; the sender's guide (format, where flags live, the adapter, `jq` recipes) is
   `ONBOARDING.md`. Each source keeps its status (migration `016`): the last accepted message's summary

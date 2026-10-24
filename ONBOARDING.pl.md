@@ -91,7 +91,9 @@ w repozytorium, pod adresem aplikacji, w AWS AppConfig czy w serwisie flag. Każ
 - Najwyżej 5000 obserwacji w jednej wiadomości.
 
 Odpowiedź to `{ source, flags, changed, removed, stale, created }`; błędna wiadomość dostaje 400 z powodem, nieznany
-albo unieważniony token — 401. Dokładny format to JSON Schema (draft-07), publikowany przez każdy serwer ShipScope pod
+albo unieważniony token — 401. 429 (z jednego tokenu więcej niż seria 60 wiadomości, potem jedna na sekundę) i 503
+(poprzednia wiadomość workspace'u jeszcze się zapisuje) są chwilowe: odczekaj tyle, ile mówi nagłówek `Retry-After`,
+i wyślij ponownie; adapter robi to sam. Dokładny format to JSON Schema (draft-07), publikowany przez każdy serwer ShipScope pod
 `GET /api/flags/ingest/schema` (w repozytorium: `server/schemas/flags-ingest.v2.schema.json`); jeśli piszesz
 własnego nadawcę, sprawdzaj z nim wiadomość przed wysłaniem.
 
@@ -174,6 +176,7 @@ narzędzie umie uruchomić potok. Ponowne wysłanie tego samego stanu niczego ni
 | `several objects (…); name the one with the flags in path` | Ustaw `path` na nazwę const. |
 | `flag x differs between a and b` | Dwa pliki dają jednej fladze różne wartości w jednym środowisku: użyj osobnego źródła dla każdej grupy plików. |
 | `ShipScope answered 401` | Zły albo unieważniony token albo sekret nie trafia do kroku. |
+| `ShipScope answered 429` albo `503` | Chwilowe; adapter już odczekał i spróbował jeszcze trzy razy. Wysyłaj rzadziej albo spróbuj później. |
 | `ShipScope answered 400: …` | Wiadomość łamie regułę (np. klucz ze spacją); powód jest w tej linii i przy źródle w Settings. |
 
 ### Adapter flag: przykłady

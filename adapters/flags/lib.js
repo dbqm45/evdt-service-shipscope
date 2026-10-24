@@ -412,11 +412,11 @@ function parseHeaders(lines) {
  * Reads the flags, builds the message and (unless `dryRun`) posts it.
  *
  * @param {AdapterOptions} options
- * @param {{ fetch?: typeof fetch, cwd?: string, log?: (line: string) => void }} [io]
+ * @param {{ fetch?: typeof fetch, cwd?: string, log?: (line: string) => void, sleep?: (ms: number) => Promise<void> }} [io]
  * @returns {Promise<{ payload: object, result: { source: string, flags: number, changed: number, removed: number, stale: number, created: string[] }|null }>}
  * @throws {AdapterError}
  */
-async function run(options, { fetch: doFetch = globalThis.fetch, cwd = process.cwd(), log = console.log } = {}) {
+async function run(options, { fetch: doFetch = globalThis.fetch, cwd = process.cwd(), log = console.log, sleep = defaultSleep } = {}) {
     const { env, files = [], url, headers = {}, format, path: dotPath, valuePath, keyField, rolloutPath, prefix, changedBy, complete = true, dryRun = false } = options;
     const envMap = options.envMap || DEFAULT_ENV_MAP;
     if (Boolean(files.length) === Boolean(url)) throw new AdapterError('give either files or a url to read the flags from');
@@ -457,11 +457,20 @@ async function run(options, { fetch: doFetch = globalThis.fetch, cwd = process.c
     const { shipscopeUrl, token } = options;
     if (!shipscopeUrl) throw new AdapterError('the ShipScope URL is missing (SHIPSCOPE_URL)');
     if (!token) throw new AdapterError('the ingest token is missing (SHIPSCOPE_FLAGS_TOKEN)');
-    const res = await doFetch(`${shipscopeUrl.replace(/\/+$/, '')}/api/flags/ingest`, {
+    const send = () => doFetch(`${shipscopeUrl.replace(/\/+$/, '')}/api/flags/ingest`, {
         method: 'POST',
         headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
         body: JSON.stringify(payload),
     });
+    let res = await send();
+    // 429 (this token sends too often) and 503 (the workspace's previous message is still being written) are
+    // temporary: wait as long as ShipScope asks (bounded) and try again, a few times.
+    for (let attempt = 1; attempt <= RETRIES && (res.status === 429 || res.status === 503); attempt++) {
+        const seconds = Math.min(MAX_RETRY_WAIT_SECONDS, Math.max(1, Number(res.headers.get('retry-after')) || 5));
+        log(`ShipScope answered ${res.status}; trying again in ${seconds} s (${attempt}/${RETRIES}).`);
+        await sleep(seconds * 1000);
+        res = await send();
+    }
     const body = await res.text();
     if (!res.ok) throw new AdapterError(`ShipScope answered ${res.status}: ${body.slice(0, 500)}`);
     const result = JSON.parse(body);
@@ -469,6 +478,10 @@ async function run(options, { fetch: doFetch = globalThis.fetch, cwd = process.c
         + `${result.stale ? `, ${result.stale} older than what it has` : ''}${result.created.length ? `, new: ${result.created.join(', ')}` : ''}.`);
     return { payload, result };
 }
+
+const RETRIES = 3;
+const MAX_RETRY_WAIT_SECONDS = 30;
+const defaultSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 module.exports = {
     AdapterError, ENVIRONMENTS, toState, pick, formatOf, parseDocument, flagMap, mergeStates, buildPayload, expandFiles, envPatternRegExp,

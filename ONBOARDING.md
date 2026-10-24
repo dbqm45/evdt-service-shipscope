@@ -86,7 +86,9 @@ a flag service. Each such place is one **flag source**:
 - At most 5000 observations per message.
 
 The answer is `{ source, flags, changed, removed, stale, created }`; a wrong message gets 400 with the reason, an
-unknown or revoked token 401. The exact format is a JSON Schema (draft-07), published by every ShipScope server at
+unknown or revoked token 401. 429 (more than a burst of 60 messages, then one a second, from one token) and 503 (the
+workspace's previous message is still being written) are temporary: wait as long as the `Retry-After` header says and
+send again; the adapter does this by itself. The exact format is a JSON Schema (draft-07), published by every ShipScope server at
 `GET /api/flags/ingest/schema` (and kept in `server/schemas/flags-ingest.v2.schema.json`); validate against it
 before sending if you build your own sender.
 
@@ -169,6 +171,7 @@ tool can trigger the pipeline. Sending the same state again changes nothing.
 | `several objects (…); name the one with the flags in path` | Set `path` to the const's name. |
 | `flag x differs between a and b` | Two files give one flag different values for one environment: use one source per file group. |
 | `ShipScope answered 401` | Wrong or revoked token, or the secret is not passed to the step. |
+| `ShipScope answered 429` or `503` | Temporary; the adapter already waited and tried again three times. Send less often, or try again later. |
 | `ShipScope answered 400: …` | The message breaks a rule (e.g. a key with spaces); the reason is in the line and under the source in Settings. |
 
 ### The flags adapter: examples

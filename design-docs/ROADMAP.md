@@ -8,10 +8,10 @@ Każdy punkt to osobny PR, wdrażalny sam; `[ ]` = do zrobienia, `[x]` = zrobion
 
 ### 0. Ochrona obecnego API ingest
 
-- [ ] Ingest nie trzyma połączenia z puli bez końca: limit czasu oczekiwania na blokadę tenanta
+- [x] Ingest nie trzyma połączenia z puli bez końca: limit czasu oczekiwania na blokadę tenanta
   (`server/lib/flags.js`, `pg_advisory_xact_lock`), po nim 503 z `Retry-After`.
-- [ ] Limit żądań per token na `POST /api/flags/ingest` (429 z `Retry-After`).
-- [ ] Opisy i klucze Jiry flag zapisywane jednym zapytaniem zamiast jednego `UPDATE` na flagę.
+- [x] Limit żądań per token na `POST /api/flags/ingest` (429 z `Retry-After`); adapter sam ponawia po 429/503.
+- [x] Opisy i klucze Jiry flag zapisywane jednym zapytaniem zamiast jednego `UPDATE` na flagę.
 - [ ] Tokeny ingest z datą ważności i opcjonalnym zakresem (środowiska); w Settings data wygaśnięcia i ostrzeżenie
   przed nią.
 

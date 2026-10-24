@@ -15,7 +15,7 @@ const {
 const { withScope } = require('./lib/scope');
 const { InvitationNotFoundError, InvitationUnusableError, TOKEN_PATTERN } = require('./lib/invitations');
 const { InstallationNotFoundError, InstallationTakenError } = require('./lib/github-connections');
-const { IngestTokenError, IngestPayloadError, FlagSourceNotFoundError, FlagSourceConflictError, FlagNotFoundError } = require('./lib/flags');
+const { IngestTokenError, IngestBusyError, IngestPayloadError, FlagSourceNotFoundError, FlagSourceConflictError, FlagNotFoundError } = require('./lib/flags');
 const { getSessionUser } = require('./lib/sessions');
 const { mockDataEnabled, loadMockDashboard } = require('./lib/mock-dashboard');
 
@@ -23,7 +23,7 @@ const { registerHealthRoutes } = require('./routes/health');
 const { registerAuthRoutes } = require('./routes/auth');
 const { registerTenantRoutes } = require('./routes/tenants');
 const { registerInvitationRoutes } = require('./routes/invitations');
-const { registerFlagRoutes } = require('./routes/flags');
+const { registerFlagRoutes, IngestRateLimitError } = require('./routes/flags');
 const { registerDashboardRoutes } = require('./routes/dashboard');
 const { registerWebhookRoutes } = require('./routes/webhooks');
 const { registerGitHubRoutes } = require('./routes/github');
@@ -85,6 +85,8 @@ const ERROR_STATUS = [
     [GitHubApiError, 502],
     [IngestTokenError, 401],
     [IngestPayloadError, 400],
+    [IngestRateLimitError, 429],
+    [IngestBusyError, 503],
     [FlagSourceNotFoundError, 404],
     [FlagSourceConflictError, 409],
     [JiraNotConnectedError, 409],
@@ -124,10 +126,10 @@ function splitCookie(value, first, second) {
  * the small set of cross-domain helpers (requireUser, assertAdminOf, ...) every route file receives through
  * `ctx` instead of its own copy.
  *
- * @param {{ pool: import('pg').Pool, auth?: ReturnType<typeof loadAuthConfig>, githubApp?: ReturnType<typeof loadGitHubAppConfig>, atlassian?: ReturnType<typeof loadAtlassianConfig>, fetch?: typeof fetch, logger?: boolean|object, dashboardDir?: string, mockDashboard?: { data: object, issuesByPi: Record<string, object[]> }|null }} options
+ * @param {{ pool: import('pg').Pool, auth?: ReturnType<typeof loadAuthConfig>, githubApp?: ReturnType<typeof loadGitHubAppConfig>, atlassian?: ReturnType<typeof loadAtlassianConfig>, fetch?: typeof fetch, logger?: boolean|object, dashboardDir?: string, mockDashboard?: { data: object, issuesByPi: Record<string, object[]> }|null, ingestRateLimit?: { capacity: number, refillPerSecond: number } }} options
  * @returns {import('fastify').FastifyInstance}
  */
-function buildApp({ pool, auth, githubApp = null, atlassian = null, fetch: fetchFn = fetch, logger = false, dashboardDir = DEFAULT_DASHBOARD_DIR, mockDashboard = null }) {
+function buildApp({ pool, auth, githubApp = null, atlassian = null, fetch: fetchFn = fetch, logger = false, dashboardDir = DEFAULT_DASHBOARD_DIR, mockDashboard = null, ingestRateLimit = null }) {
     const app = Fastify({
         // Fastify's defaults silently strip unknown body fields and coerce types (42 -> "42"). External
         // input is rejected instead of rewritten (CLAUDE.md: validate every external boundary).
@@ -153,6 +155,7 @@ function buildApp({ pool, auth, githubApp = null, atlassian = null, fetch: fetch
                     : err instanceof AtlassianError ? 'Jira request failed; please try again' : err.message,
             };
             if (err instanceof InvitationUnusableError) body.status = err.status;
+            if (err.retryAfterSeconds) reply.header('Retry-After', String(err.retryAfterSeconds));
             return reply.code(mapped[1]).send(body);
         }
         if (err.statusCode && err.statusCode < 500) return reply.code(err.statusCode).send({ error: err.message });
@@ -190,7 +193,7 @@ function buildApp({ pool, auth, githubApp = null, atlassian = null, fetch: fetch
         cookies: { SESSION_COOKIE, LINK_COOKIE },
         UUID_PATTERN, UUID_PARAM, TOKEN_PARAM, GITHUB_ID_PARAM,
         STATE_TTL_SECONDS, POST_LOGIN_REDIRECT, RETURN_TO_PATTERN,
-        DASHBOARD_HEADERS, dashboardDir, UI_DIR, mockDashboard,
+        DASHBOARD_HEADERS, dashboardDir, UI_DIR, mockDashboard, ingestRateLimit,
         // Set by registerDashboardRoutes() once ui/invite.html is confirmed deployed; read lazily by
         // registerInvitationRoutes() — a mutable slot instead of a return value because the invitation
         // route is registered before the dashboard routes, and only the *value at request time* matters.

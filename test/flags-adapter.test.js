@@ -185,6 +185,33 @@ test('run: errors are AdapterErrors with the reason', async () => {
     await assert.rejects(run({ env: 'qa', url: 'https://app/flags', dryRun: true }, { ...io, fetch }), /https:\/\/app\/flags answered 404/);
 });
 
+test('run: a 429 or 503 is retried after the Retry-After ShipScope sends (bounded), a few times', async () => {
+    write('flags.json', '{"a":true}');
+    const answers = [
+        { status: 503, headers: { 'retry-after': '5' } },
+        { status: 429, headers: { 'retry-after': '600' } },
+        { status: 200, body: INGESTED },
+    ];
+    const calls = [];
+    const fetch = async (url) => {
+        calls.push(url);
+        const a = answers.shift();
+        return { ok: a.status < 400, status: a.status, headers: { get: (h) => (a.headers || {})[h] ?? null }, text: async () => JSON.stringify(a.body || {}) };
+    };
+    const waits = [];
+    const sleep = async (ms) => { waits.push(ms); };
+    const { result } = await run({ env: 'qa', files: ['flags.json'], shipscopeUrl: 'https://s', token: 't' }, { fetch, cwd: DIR, log: quiet, sleep });
+    assert.deepEqual(result, INGESTED);
+    assert.equal(calls.length, 3);
+    assert.deepEqual(waits, [5000, 30000], 'as asked, at most 30 s');
+
+    const busy = async () => ({ ok: false, status: 503, headers: { get: () => null }, text: async () => '{"error":"busy"}' });
+    waits.length = 0;
+    await assert.rejects(run({ env: 'qa', files: ['flags.json'], shipscopeUrl: 'https://s', token: 't' }, { fetch: busy, cwd: DIR, log: quiet, sleep }),
+        /ShipScope answered 503/);
+    assert.deepEqual(waits, [5000, 5000, 5000], 'three tries after the first, 5 s without a Retry-After');
+});
+
 test('command line: options from arguments and environment; --help; exit code 1 with the reason', () => {
     assert.deepEqual(optionsFromArgs(['--env', 'prod', '--file', 'a.json', '--file', 'b/*.json', '--header', 'X-A: 1', '--changes-only', '--value-path', 'enabled'],
         { SHIPSCOPE_URL: 'https://s', SHIPSCOPE_FLAGS_TOKEN: 'shpi_t' }), {
