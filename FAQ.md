@@ -127,6 +127,13 @@ Only from the services the issue's code reached on that environment
 - **"?" after the status.** At least one service the code reached has no flag source and is not marked as having no
   flags. The level stays, but ShipScope cannot be sure, and the tooltip and the open row name that service. Mark it in
   Settings → GitHub (pencil → Feature flags), or tick it on its flag source, and the "?" goes away.
+  The "?" also appears when a service's flag values are not confirmed:
+  - its source last sent the full state of that environment longer ago than the source's threshold
+    ("not confirmed since …"; by default a day for runtime sources, never for build sources);
+  - its last message was refused;
+  - it has never sent a full state.
+
+  Settings → Flag sources shows each source's state per environment and lets an admin set the threshold.
 
 ### Which Jira issues does a flag belong to?
 

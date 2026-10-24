@@ -130,6 +130,13 @@ Tylko z serwisów, do których kod zadania trafił na danym środowisku
 - **„?” po statusie.** Co najmniej jeden serwis, do którego trafił kod, nie ma źródła flag i nie jest oznaczony jako
   bez flag. Poziom zostaje, ale ShipScope nie ma pewności, a podpowiedź i rozwinięty wiersz nazywają ten serwis.
   Oznacz go w Settings → GitHub (ołówek → Feature flags) albo zaznacz go przy jego źródle flag, a „?” zniknie.
+  „?” pojawia się też, gdy wartości flag serwisu nie są potwierdzone:
+  - jego źródło wysłało pełny stan środowiska dawniej, niż wynosi próg źródła („not confirmed since …”; domyślnie
+    dzień dla źródeł runtime, nigdy dla źródeł build);
+  - jego ostatnia wiadomość została odrzucona;
+  - nigdy nie wysłało pełnego stanu.
+
+  Settings → Flag sources pokazuje stan każdego źródła per środowisko, a admin ustawia tam próg.
 
 ### Do których zadań Jiry należy flaga?
 

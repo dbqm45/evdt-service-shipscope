@@ -184,8 +184,8 @@ function BreakdownRow({ component, flagKey, envs }){
 }
 
 /** Expanded per-component code/flag breakdown under an open issue row. `rows` are `BreakdownRow` props;
- *  with none, `noFlagReason` explains why instead. `dependency` is `{ note }` or null; `uncertain` = services the
- *  code reached that nobody said anything about flags for. */
+ *  with none, `noFlagReason` explains why instead. `dependency` is `{ note }` or null; `uncertain` = why the status
+ *  is not certain, one plain sentence per service (doubtText()). */
 function IssueBreakdown({ issueKey, rows, noFlagReason, dependency = null, uncertain = [] }){
     return html`<div class="breakdown">
         ${rows.length ? html`
@@ -197,7 +197,7 @@ function IssueBreakdown({ issueKey, rows, noFlagReason, dependency = null, uncer
         </table>
         <div class="breakdown-hint">"Not found" means no successful deployment of that component carried a commit referencing ${issueKey} yet.</div>
         ` : html`<div class="breakdown-row" style="justify-content:flex-start;">No flag linked to ${issueKey} — ${noFlagReason}</div>`}
-        ${uncertain.length ? html`<div class="breakdown-row"><span>Not sure</span><span>${uncertain.join(', ')}: no flag source covers it and it is not marked as having no flags (Settings → GitHub)</span></div>` : ''}
+        ${uncertain.length ? html`<div class="breakdown-row"><span>Not sure</span><span>${uncertain.join('; ')} (Settings)</span></div>` : ''}
         ${dependency ? html`<div class="breakdown-row"><span>Blocking dependency</span><span style="color:var(--blocked)">${dependency.note}</span></div>` : ''}
     </div>`;
 }

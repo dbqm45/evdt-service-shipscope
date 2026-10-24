@@ -126,15 +126,18 @@ function componentFlagCoverage(component){
  * - a service with a linked flag but without the issue's code here leaves the issue Partial;
  * - every gate on = Released, every gate off = Deployed (hidden), anything else = Partial, no gate = Code deployed;
  * - a reached service nobody covers or declared flag-free (`flagCoverage: 'unknown'`) does not change the level,
- *   it is listed in `uncertain` and the pill gets a "?".
+ *   it is listed in `uncertain` and the pill gets a "?";
+ * - so is a gate service whose flag values are not confirmed (`flagFreshness`: stale, error or unknown, ADR-003).
+ *   Each entry is `{ component, reason: 'untracked'|'stale'|'error'|'unknown', observedAt }` (doubtText()).
  *
- * @returns {{ level: string, blocked: boolean, results: object[], uncertain: string[] }}
+ * @returns {{ level: string, blocked: boolean, results: object[], uncertain: Array<{ component: string, reason: string, observedAt: string|null }> }}
  */
 function issueStatusForEnv(issue, env){
     const pairs = issueLinks(issue);
     const reached = componentsReached(issue, env);
     const flagged = new Set(pairs.map(p => p.component));
-    const uncertain = reached.filter(c => !flagged.has(c) && componentFlagCoverage(c) === 'unknown');
+    const uncertain = reached.filter(c => !flagged.has(c) && componentFlagCoverage(c) === 'unknown')
+        .map(component => ({ component, reason: 'untracked', observedAt: null }));
 
     if (!pairs.length) {
         // No flag is linked to this issue: did its code reach this environment at all (or ship in what blocks it)?
@@ -160,6 +163,13 @@ function issueStatusForEnv(issue, env){
 
         return links.every(r => !r.flagOn && !r.flagPartial) ? 'off' : 'partial';
     });
+    [...flagged].forEach((component, i) => {
+        const freshness = gates[i] !== 'absent' && state.flagFreshness ? state.flagFreshness[component]?.[env] : null;
+
+        if (freshness && freshness.state !== 'fresh') {
+            uncertain.push({ component, reason: freshness.state, observedAt: freshness.observedAt || null });
+        }
+    });
     let level;
 
     if (!reached.length && gates.every(g => g === 'absent')) {
@@ -180,6 +190,15 @@ function issueStatusForEnv(issue, env){
     }
 
     return { level, blocked, results, uncertain: level === RELEASE_LEVEL.NONE ? [] : uncertain };
+}
+/** Why one service leaves an issue's status uncertain (an `issueStatusForEnv().uncertain` entry), in plain words. */
+function doubtText({ component, reason, observedAt }){
+    switch (reason) {
+        case 'untracked': return `${component}: no flag source covers it and it is not marked as having no flags`;
+        case 'stale': return `${component}: flag values not confirmed since ${observedAt ? `${fmtDateShort(observedAt)} ${fmtTime(observedAt)}` : 'ever'}`;
+        case 'error': return `${component}: the last flag message from its source was refused`;
+        default: return `${component}: its flag source has not confirmed a full state yet`;
+    }
 }
 function statusLabel(level){
     return { [RELEASE_LEVEL.NONE]: 'Not deployed', [RELEASE_LEVEL.DEPLOYED]: 'Deployed (hidden)', [RELEASE_LEVEL.RELEASED]: 'Released', [RELEASE_LEVEL.PARTIAL]: 'Partial', [RELEASE_LEVEL.DEPLOYED_CODE_ONLY]: 'Code deployed' }[level];

@@ -696,6 +696,31 @@ function SourceStatus(source){
         <span class="settings-row-meta">${n.flags} flag(s), ${n.changed} changed, ${n.removed} removed${n.stale ? `, ${n.stale} older than stored` : ''}</span>`;
 }
 
+const FRESHNESS_LABELS = { fresh: 'confirmed', stale: 'not confirmed since', error: 'refused', unknown: 'not confirmed yet' };
+const FRESHNESS_CLASS = { fresh: 'ok', stale: 'warn', error: 'fail', unknown: 'warn' };
+
+/** Per environment, when the source last confirmed its full state (ADR-003) and how long that counts as current. */
+function SourceFreshness(source){
+    const envs = source.environments || [];
+    const threshold = source.effectiveStaleAfterMinutes;
+    const limit = threshold ? `stale after ${threshold >= 60 && threshold % 60 === 0 ? `${threshold / 60} h` : `${threshold} min`}` : 'never stale (build values change with a deployment)';
+    if (!envs.length) {
+        return html`<div class="settings-row-meta">No environment confirmed yet: a complete message (every flag of an environment) confirms it · ${limit}</div>`;
+    }
+    return html`<div class="settings-envs-state">${envs.map((e) => html`<span class="state-tag ${FRESHNESS_CLASS[e.state] || ''}" title="${e.observedAt ? `last full state ${fmtDateTime(e.observedAt)}` : 'no full state yet'}">${e.env}: ${FRESHNESS_LABELS[e.state] || e.state}${e.observedAt && e.state !== 'unknown' ? ` ${fmtDateTime(e.observedAt)}` : ''}</span>`)}
+        <span class="settings-row-meta">${limit}</span></div>`;
+}
+
+/** The threshold field: minutes, empty = the kind's default. */
+function StaleAfterInput(value){
+    return html`<label>Stale after (minutes) <input name="staleAfterMinutes" type="number" min="5" max="43200" placeholder="default" value="${value ?? ''}"></label>`;
+}
+
+/** '' -> null (the kind's default), else the number of minutes. */
+function staleAfterOf(value){
+    return value === '' || value === undefined ? null : Number(value);
+}
+
 // A token is flagged this many days before it expires (Settings and the checklist), so its sender can be given a new one.
 const TOKEN_WARNING_DAYS = 30;
 const TOKEN_LIFETIMES = [['365', '1 year'], ['90', '90 days'], ['30', '30 days'], ['never', 'never expires']];
@@ -757,10 +782,12 @@ function renderSources({ flags, repos, once, origin, now = new Date() }){
             <label>Kind <select name="kind">${kindOptions(s.kind)}</select></label>
             <label>Priority <input name="priority" type="number" min="0" max="1000" required value="${s.priority}"></label>
             ${services(s.repoIds || [])}
+            ${StaleAfterInput(s.staleAfterMinutes)}
             <button type="submit" class="btn">Save</button>
         </form>
         ${(s.repoIds || []).length ? '' : html`<p class="settings-hint">Applies to no repository: its flags are listed, but no issue status on the dashboard uses them. Tick the services it covers.</p>`}
         <div class="settings-source-status">${SourceStatus(s)}</div>
+        ${SourceFreshness(s)}
         <div class="settings-row-meta">Tokens: ${s.tokens.length ? s.tokens.map((t) => TokenLine(t, now)) : 'none — the source can\'t send anything'}</div>
         ${NewTokenForm(s)}
         </td><td class="actions"><button type="button" class="btn btn-danger" data-action="delete-source" data-source-id="${s.id}">Delete</button></td></tr>`);
@@ -776,6 +803,7 @@ function renderSources({ flags, repos, once, origin, now = new Date() }){
             <label>Kind <select name="kind">${kindOptions('runtime')}</select></label>
             <label>Priority (optional) <input name="priority" type="number" min="0" max="1000"></label>
             ${services([])}
+            ${StaleAfterInput(null)}
             ${LifetimeSelect('tokenExpiresInDays')}
             <button type="submit" class="btn btn-primary">Add source</button>
         </form>`;
@@ -1104,6 +1132,7 @@ const actions = {
         const values = formValues(form);
         const body = {
             name: values.name.trim(), kind: values.kind, repoIds: (values.repoIds || []).map(Number), tokenExpiresInDays: lifetimeOf(values.tokenExpiresInDays),
+            staleAfterMinutes: staleAfterOf(values.staleAfterMinutes),
         };
         if (values.priority !== '') {
             body.priority = Number(values.priority);
@@ -1116,6 +1145,7 @@ const actions = {
         const values = formValues(form);
         await api('PUT', tenantPath(`/flag-sources/${data.sourceId}`), {
             name: values.name.trim(), kind: values.kind, priority: Number(values.priority), repoIds: (values.repoIds || []).map(Number),
+            staleAfterMinutes: staleAfterOf(values.staleAfterMinutes),
         });
         return { section: 'flags', ok: 'Saved.' };
     },

@@ -387,8 +387,13 @@ function buildFallbackData(){
     // what this would otherwise supplement.
     const issueDeployments = {};
 
+    // The charger service's runtime source last confirmed prod three days ago: its released issues read "Released?".
+    const flagFreshness = {
+        [CH]: { prod: { state: 'stale', observedAt: daysAgo(3), sources: [{ name: 'Charger runtime', state: 'stale', observedAt: daysAgo(3) }] } },
+    };
+
     // No Jira site behind the sample keys: they are shown unlinked.
-    return { deployments, flagsMeta, flagStates, flagStateHistory, jiraIssuesByPi, jiraIndex, issueStatusIndex, componentsOrder, issueDeployments, jiraBrowseUrl: null };
+    return { deployments, flagsMeta, flagStates, flagStateHistory, flagFreshness, jiraIssuesByPi, jiraIndex, issueStatusIndex, componentsOrder, issueDeployments, jiraBrowseUrl: null };
 }
 
 // FALLBACK itself is initialised in app-main.js (right before init()): buildFallbackData() calls helpers from
@@ -405,7 +410,7 @@ const API_TENANT_ID = (() => {
 })();
 
 const emptyDashboardData = () => ({
-    deployments: [], flagsMeta: {}, flagStates: {}, jiraIndex: { currentPi: null, pis: [] }, flagStateHistory: [],
+    deployments: [], flagsMeta: {}, flagStates: {}, flagFreshness: {}, jiraIndex: { currentPi: null, pis: [] }, flagStateHistory: [],
     componentsOrder: [], issueStatusIndex: {}, issueDeployments: {},
 });
 
