@@ -28,9 +28,9 @@ Każdy punkt to osobny PR, wdrażalny sam; `[ ]` = do zrobienia, `[x]` = zrobion
 
 ### 2. Świeżość i monitoring
 
-- [ ] Znacznik potwierdzenia per (źródło, środowisko) (`flag_source_envs`: `last_observed_at`, `last_error`),
+- [x] Znacznik potwierdzenia per (źródło, środowisko) (`flag_source_envs`: `last_observed_at`, `last_error`),
   próg świeżości per źródło, stany `fresh`/`stale`/`error`/`unknown`.
-- [ ] Wspólna ścieżka zapisu `applyObservations()` (wydzielona z `applyIngest()`, najpierw test
+- [x] Wspólna ścieżka zapisu `applyObservations()` (wydzielona z `applyIngest()`, najpierw test
   charakteryzujący).
 - [ ] UI: „niepotwierdzone od X", „Released?" z powodem; stan każdego źródła per środowisko w Settings.
 - [ ] Metryki i strukturalne logi (wiek kolejki `sync_requests`, czas passów, błędy źródeł), alerty dla

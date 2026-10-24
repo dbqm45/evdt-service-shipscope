@@ -41,7 +41,7 @@ const { createTestDb } = require('./helpers/test-db');
 const { buildApp } = require('../web');
 const { AUTH, fakeGitHub, signIn } = require('./helpers/auth');
 const { withScope } = require('../lib/scope');
-const { ingestFlags, IngestBusyError } = require('../lib/flags');
+const { ingestFlags, IngestBusyError, listFlagSources } = require('../lib/flags');
 
 const USERS = { alice: { id: 870_000_001, login: 'alice' }, bob: { id: 870_000_002, login: 'bob' }, mallory: { id: 870_000_003, login: 'mallory' } };
 
@@ -208,6 +208,43 @@ test('per service: a source covers a set of services, each service keeps its own
     assert.strictEqual(coverage(await dashboard(), 'api'), 'none');
     await untrackRepo(pool, { tenantId, actorUserId: aliceId, repoId: 1 });
     assert.deepStrictEqual(await rows('SELECT * FROM flag_source_repos'), []);
+});
+
+test('freshness: a complete message confirms its environments; a threshold makes them stale, a refusal an error', async (t) => {
+    const { pool, newSource, ingest, dashboard, app, alice, tenantId, rows } = await setup(t);
+    const [{ user_id: aliceId }] = await rows("SELECT user_id FROM memberships WHERE role = 'admin'");
+    const be = await newSource({ name: 'BE endpoint', kind: 'runtime', repoIds: [2], tokenEnvironments: ['qa', 'prod'] });
+    const envsAt = async (now) => (await listFlagSources(pool, { tenantId, actorUserId: aliceId, now })).find((s) => s.name === 'BE endpoint');
+
+    let source = await envsAt(new Date());
+    assert.deepStrictEqual([source.environments, source.staleAfterMinutes, source.effectiveStaleAfterMinutes], [[], null, 1440], 'nothing confirmed yet');
+
+    await ingest(be.token.token, { observations: [obs('checkout', 'prod', 'on')] });
+    await ingest(be.token.token, { complete: false, observations: [obs('checkout', 'qa', 'on')] });
+    source = await envsAt(new Date());
+    assert.deepStrictEqual(source.environments.map((e) => [e.env, e.state]), [['prod', 'fresh']], 'an incremental message confirms nothing');
+    const later = new Date(Date.now() + 25 * 3600_000);
+    assert.strictEqual((await envsAt(later)).environments[0].state, 'stale', 'a runtime source: a day by default');
+
+    let data = await dashboard();
+    assert.strictEqual(data.flagFreshness.api.prod.state, 'fresh');
+    assert.deepStrictEqual(data.flagFreshness.api.prod.sources.map((s) => s.name), ['BE endpoint']);
+    assert.strictEqual(data.flagFreshness.web, undefined, 'a service no source covers has no freshness');
+
+    // The threshold is the source's: 5 minutes to 30 days, null for the kind's default, left out = unchanged.
+    const put = (payload) => app.inject({ method: 'PUT', url: `/tenants/${tenantId}/flag-sources/${be.source.id}`, cookies: { sid: alice }, payload: { name: 'BE endpoint', kind: 'runtime', priority: 100, repoIds: [2], ...payload } });
+    assert.strictEqual((await put({ staleAfterMinutes: 4 })).statusCode, 400);
+    assert.strictEqual((await put({ staleAfterMinutes: 60 })).json().staleAfterMinutes, 60);
+    assert.strictEqual((await put({})).json().staleAfterMinutes, 60, 'left out: unchanged');
+    assert.strictEqual((await envsAt(new Date(Date.now() + 2 * 3600_000))).environments[0].state, 'stale');
+    assert.strictEqual((await put({ staleAfterMinutes: null })).json().effectiveStaleAfterMinutes, 1440);
+
+    // A refused message is newer than the last confirmation: error, until the next complete message.
+    assert.strictEqual((await ingest(be.token.token, { observations: [obs('checkout', 'test', 'on')] })).statusCode, 403);
+    assert.strictEqual((await envsAt(new Date())).environments[0].state, 'error');
+    assert.strictEqual((await dashboard()).flagFreshness.api.prod.state, 'error');
+    await ingest(be.token.token, { observations: [obs('checkout', 'prod', 'on')] });
+    assert.strictEqual((await envsAt(new Date())).environments[0].state, 'fresh');
 });
 
 test('ingest: tokens are checked and payloads validated; nothing is written by a rejected request', async (t) => {

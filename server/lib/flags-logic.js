@@ -246,7 +246,53 @@ function historyRecords(history, sources) {
     }));
 }
 
+/** Minutes a confirmation stays fresh when the source sets no threshold: a runtime value can change any time, a
+ *  build value only with a deployment (null = never stale). */
+const STALE_AFTER_MINUTES = { runtime: 24 * 60, build: null };
+const FRESHNESS_ORDER = ['fresh', 'unknown', 'stale', 'error'];
+
+/**
+ * One source's freshness on one environment (ADR-003): `error` when its last error is newer than its last full
+ * confirmation, `unknown` when it never confirmed one, `stale` when the confirmation is older than the threshold,
+ * else `fresh`.
+ *
+ * @param {{ observedAt: Date|null, errorAt: Date|null, staleAfterMinutes: number|null, now: Date }} input
+ * @returns {'fresh'|'stale'|'error'|'unknown'}
+ */
+function freshnessOf({ observedAt, errorAt, staleAfterMinutes, now }) {
+    if (errorAt && (!observedAt || errorAt > observedAt)) return 'error';
+    if (!observedAt) return 'unknown';
+    if (staleAfterMinutes && now - observedAt > staleAfterMinutes * 60_000) return 'stale';
+    return 'fresh';
+}
+
+/**
+ * Per service and environment, how sure the flag values are: every source covering the service, its own state, and
+ * the worst of them (error > stale > unknown > fresh) with the oldest confirmation.
+ *
+ * @param {Array<{ name: string, components: string[], envs: Array<{ env: string, state: string, observedAt: Date|null }> }>} sources
+ * @returns {Object<string, Object<string, { state: string, observedAt: string|null, sources: Array<{ name: string, state: string, observedAt: string|null }> }>>}
+ */
+function freshnessByComponent(sources) {
+    const out = {};
+    for (const source of sources) {
+        for (const component of source.components) {
+            for (const { env, state, observedAt } of source.envs) {
+                const entry = ((out[component] ||= {})[env] ||= { state: 'fresh', observedAt: null, sources: [] });
+                const at = observedAt ? observedAt.toISOString() : null;
+                entry.sources.push({ name: source.name, state, observedAt: at });
+                if (FRESHNESS_ORDER.indexOf(state) > FRESHNESS_ORDER.indexOf(entry.state)) entry.state = state;
+                if (at && (!entry.observedAt || at < entry.observedAt)) entry.observedAt = at;
+            }
+        }
+    }
+    return out;
+}
+
 module.exports = {
+    STALE_AFTER_MINUTES,
+    freshnessOf,
+    freshnessByComponent,
     IngestPayloadError,
     isReservedKey,
     MAX_CHANGED_AT_AGE_MS,
