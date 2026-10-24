@@ -95,7 +95,7 @@ changelog entry by hand outside a `chore(release)` PR.
 
 Deployed to Render per `context/foundation/infrastructure.md`: `render.yaml` builds both the Web Service and the
 Background Worker from the repo root (`npm ci --prefix server`, `node server/web.js`), not `rootDir: server`, which
-would hide `docs/` from the Web Service. Migrations (`server/migrations/001`–`017`, applied by the hand-rolled
+would hide `docs/` from the Web Service. Migrations (`server/migrations/001`–`018`, applied by the hand-rolled
 `lib/migrate.js`) run as each service's `preDeployCommand` under an advisory lock (`test/render-blueprint.test.js`).
 Dependencies, all in `server/package.json`: `pg`, `fastify`, `@fastify/cookie`. Fastify runs with
 `removeAdditional: false, coerceTypes: false`: unknown fields and wrong types are a 400, never silently fixed.
@@ -110,7 +110,7 @@ errors to HTTP codes, shared constants) and registers one plugin per area from `
 New rules go into the pure file; the I/O file orchestrates.
 
 **Tenant isolation (RLS).** Every query on an RLS table — the list is `RLS_TABLES` in `lib/scope.js` (memberships,
-invitations, github_installations, tracked_repos, deployments, issue_deployments, flag_sources, ingest_tokens, flags,
+invitations, github_installations, tracked_repos, deployments, issue_deployments, flag_sources, flag_source_repos, ingest_tokens, flags,
 flag_values, flag_value_history, jira_connections, jira_boards, jira_pis, jira_issues) — must run inside
 `withScope()`, which sets `app.current_tenant_id`/`app.current_user_id` with transaction-local
 `set_config(..., true)`. An unscoped read returns zero rows; an unscoped write is an RLS error.
@@ -151,7 +151,9 @@ emptied. `sync_requests` (webhook queue) is the one non-RLS table; it holds no t
 - **Feature flags** — today pushed from outside, never read by ShipScope (`ADR-001`); `ADR-003` decides the
   next model (flags in code read at the deployed commit, polled endpoints, per-service state, freshness), built in
   the increments of `design-docs/ROADMAP.md`. An admin names the tenant's flag
-  sources (kind `build`/`runtime`, priority, optional component); each sends the full state of its flags per
+  sources (kind `build`/`runtime`, priority, the services it covers: `flag_source_repos`, migration `018`;
+  `flag_sources.repo_id` keeps the first for older readers) and may declare a repo without flags
+  (`tracked_repos.flag_stance`, `PUT …/github/repos/:repoId/flag-stance`); each sends the full state of its flags per
   environment with its own token to `POST /api/flags/ingest` (`schemaVersion: 2`: `off`/`on`/`partial` + rollout,
   the sender's `changedAt`, flags no longer listed are marked removed, an older message never undoes a newer one).
   A key every JavaScript object already has (`__proto__`, `constructor`, `toString`, …, `isReservedKey()` in
@@ -218,7 +220,7 @@ emptied. `sync_requests` (webhook queue) is the one non-RLS table; it holds no t
 `server/test/dashboard-contract.test.js`: both syncs against fake APIs, the real routes, the real `docs/app-*.js`
 reading it through `loadData()` in a `vm`; `server-test.yml` also runs on `docs/app-*.js` changes for it):
 `deployments`, `flagsMeta`, `flagStates`, `flagStateHistory`, `jiraIndex`, `issueStatusIndex`, `issueDeployments`,
-`componentsOrder` (the tracked repos), `lastSyncedAt`, `jiraBrowseUrl`. The `FALLBACK` sample data has the same shape.
+`flagStatesByComponent`, `componentsOrder` (the tracked repos), `lastSyncedAt`, `jiraBrowseUrl`. The `FALLBACK` sample data has the same shape.
 
 - **Deployment record**: `component`, environment (`test`/`qa`/`prod`; `mapEnvironment()` maps by substring,
   `production` → `prod`, `dev` → `test`, `preprod` never `prod`, anything else is skipped), status, `deployedAt`,
@@ -232,7 +234,10 @@ reading it through `loadData()` in a `vm`; `server-test.yml` also runs on `docs/
   `*` = anything but `/`.
 - **Flags**: `flagsMeta` key → `{ description, source: 'build'|'runtime-be', jiraKeys[], components[] }`;
   `flagStates` key → env → slot (`build`/`runtime-be`) → `{ enabled, changedAt, changedBy, component }` plus the
-  server's `state`/`rollout`; `effectiveFlagState()` prefers `runtime-be`.
+  server's `state`/`rollout`; `effectiveFlagState()` prefers `runtime-be`. Per service (ADR-003, read by the frontend
+  from increment 1b): `flagStatesByComponent` key → env → component → `{ state, rollout, enabled (strictly on),
+  changedAt, changedBy, sourceName, kind, overridden[] }` from the sources covering that service (runtime over build,
+  then priority, then the later change), and `componentsOrder[].flagCoverage` `tracked`/`none`/`unknown`.
 - **Jira**: `jiraIndex` = `{ currentPi, pis: [{ pi, file, kind?, includes?, sprints: [{ name, startDate, endDate }] }] }`
   (an "increment" — PI, sprint, release or month — keeps the name `pi` in the data); issues of one increment come from
   `GET /api/tenants/:id/jira-issues`. Issue fields: `key`, `type`, `title`, `pi`, `sprint`, `status`,

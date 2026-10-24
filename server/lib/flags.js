@@ -43,15 +43,45 @@ function newToken() {
     return { token, tokenHash: hashToken(token) };
 }
 
-async function assertTrackedRepo(client, tenantId, repoId) {
-    if (repoId === null || repoId === undefined) return;
-    const { rows } = await client.query('SELECT 1 FROM tracked_repos WHERE tenant_id = $1 AND repo_id = $2', [tenantId, repoId]);
-    if (!rows.length) throw new FlagSourceNotFoundError('That repository is not tracked');
+/** The services a source covers, from the new `repoIds` or the older single `repoId` (null/absent: none). */
+function scopeOf({ repoIds, repoId }) {
+    if (repoIds !== undefined) return [...new Set(repoIds.map(Number))].sort((a, b) => a - b);
+    return repoId === null || repoId === undefined ? [] : [Number(repoId)];
 }
 
-function toSource(row) {
+async function assertTrackedRepos(client, tenantId, repoIds) {
+    if (!repoIds.length) return;
+    const { rows } = await client.query('SELECT repo_id FROM tracked_repos WHERE tenant_id = $1 AND repo_id = ANY($2)', [tenantId, repoIds]);
+    if (rows.length !== repoIds.length) throw new FlagSourceNotFoundError('That repository is not tracked');
+}
+
+/**
+ * Inside withScope: replaces the services a source covers. `flag_sources.repo_id` keeps the first of them for
+ * readers of the older single-component field.
+ */
+async function setSourceScope(client, tenantId, sourceId, repoIds) {
+    await client.query('DELETE FROM flag_source_repos WHERE tenant_id = $1 AND source_id = $2', [tenantId, sourceId]);
+    await client.query(
+        'INSERT INTO flag_source_repos (tenant_id, source_id, repo_id) SELECT $1, $2, unnest($3::bigint[])',
+        [tenantId, sourceId, repoIds]
+    );
+    await client.query('UPDATE flag_sources SET repo_id = $3 WHERE tenant_id = $1 AND id = $2', [tenantId, sourceId, repoIds[0] ?? null]);
+}
+
+/** source id -> the repo ids it covers, for the whole tenant. */
+async function sourceScopes(client, tenantId) {
+    const { rows } = await client.query('SELECT source_id, repo_id FROM flag_source_repos WHERE tenant_id = $1 ORDER BY repo_id', [tenantId]);
+    const scopes = new Map();
+    for (const r of rows) {
+        if (!scopes.has(r.source_id)) scopes.set(r.source_id, []);
+        scopes.get(r.source_id).push(Number(r.repo_id));
+    }
+    return scopes;
+}
+
+function toSource(row, repoIds = []) {
     return {
-        id: row.id, name: row.name, kind: row.kind, priority: row.priority, repoId: row.repo_id === null ? null : Number(row.repo_id), createdAt: row.created_at,
+        id: row.id, name: row.name, kind: row.kind, priority: row.priority, repoIds, repoId: repoIds[0] ?? null, createdAt: row.created_at,
         lastIngestAt: row.last_ingest_at, lastIngest: row.last_ingest,
         lastError: row.last_error_at ? { at: row.last_error_at, message: row.last_error } : null,
     };
@@ -70,28 +100,31 @@ const INGEST_RETRY_AFTER_SECONDS = 5;
 // Postgres "lock_not_available": the lock_timeout above ran out.
 const LOCK_NOT_AVAILABLE = '55P03';
 
-/** @typedef {{ id: string, name: string, kind: string, priority: number, repoId: number|null, createdAt: Date, lastIngestAt: Date|null, lastIngest: { flags: number, changed: number, removed: number, stale: number }|null, lastError: { at: Date, message: string }|null }} FlagSource */
+/** @typedef {{ id: string, name: string, kind: string, priority: number, repoIds: number[], repoId: number|null, createdAt: Date, lastIngestAt: Date|null, lastIngest: { flags: number, changed: number, removed: number, stale: number }|null, lastError: { at: Date, message: string }|null }} FlagSource */
 
 /**
  * Creates a flag source with its first token. Admins only. The token is returned once and never stored.
  *
  * @param {import('pg').Pool} pool
- * @param {{ tenantId: string, actorUserId: string, name: string, kind: 'build'|'runtime', priority?: number, repoId?: number|null, tokenExpiresInDays?: number|null, tokenEnvironments?: string[]|null }} input
+ * @param {{ tenantId: string, actorUserId: string, name: string, kind: 'build'|'runtime', priority?: number, repoIds?: number[], repoId?: number|null, tokenExpiresInDays?: number|null, tokenEnvironments?: string[]|null }} input
  *   the first token's lifetime and environments, as for createIngestToken()
  * @returns {Promise<{ source: FlagSource, token: { id: string, token: string, expiresAt: Date|null, environments: string[]|null } }>}
- * @throws {FlagSourceNotFoundError} repoId isn't tracked
+ * @throws {FlagSourceNotFoundError} a repo in its scope isn't tracked
  * @throws {FlagSourceConflictError} the name is taken
  */
-async function createFlagSource(pool, { tenantId, actorUserId, name, kind, priority, repoId = null, tokenExpiresInDays, tokenEnvironments = null }) {
+async function createFlagSource(pool, { tenantId, actorUserId, name, kind, priority, repoIds, repoId, tokenExpiresInDays, tokenEnvironments = null }) {
     return withScope(pool, { tenantId }, async (client) => {
         await assertAdmin(client, { tenantId, userId: actorUserId });
-        await assertTrackedRepo(client, tenantId, repoId);
-        const row = await saveSource(client, () => client.query(
-            `INSERT INTO flag_sources (tenant_id, name, kind, priority, repo_id) VALUES ($1, $2, $3, $4, $5) RETURNING ${SOURCE_COLUMNS}`,
-            [tenantId, name, kind, priority ?? DEFAULT_PRIORITY[kind], repoId]
+        const scope = scopeOf({ repoIds, repoId });
+        await assertTrackedRepos(client, tenantId, scope);
+        let row = await saveSource(client, () => client.query(
+            `INSERT INTO flag_sources (tenant_id, name, kind, priority) VALUES ($1, $2, $3, $4) RETURNING ${SOURCE_COLUMNS}`,
+            [tenantId, name, kind, priority ?? DEFAULT_PRIORITY[kind]]
         ));
+        await setSourceScope(client, tenantId, row.id, scope);
+        row = { ...row, repo_id: scope[0] ?? null };
         const token = await insertToken(client, { tenantId, sourceId: row.id, actorUserId, expiresInDays: tokenExpiresInDays, environments: tokenEnvironments });
-        return { source: toSource(row), token };
+        return { source: toSource(row, scope), token };
     });
 }
 
@@ -127,23 +160,26 @@ async function saveSource(client, query) {
 }
 
 /**
- * Changes a source's name, kind, priority or component. Admins only.
+ * Changes a source's name, kind, priority or the services it covers (`repoIds`; the older `repoId` sets one). Admins
+ * only.
  *
  * @param {import('pg').Pool} pool
- * @param {{ tenantId: string, actorUserId: string, sourceId: string, name: string, kind: 'build'|'runtime', priority: number, repoId: number|null }} input
+ * @param {{ tenantId: string, actorUserId: string, sourceId: string, name: string, kind: 'build'|'runtime', priority: number, repoIds?: number[], repoId?: number|null }} input
  * @returns {Promise<FlagSource>}
  * @throws {FlagSourceNotFoundError|FlagSourceConflictError}
  */
-async function updateFlagSource(pool, { tenantId, actorUserId, sourceId, name, kind, priority, repoId }) {
+async function updateFlagSource(pool, { tenantId, actorUserId, sourceId, name, kind, priority, repoIds, repoId }) {
     return withScope(pool, { tenantId }, async (client) => {
         await assertAdmin(client, { tenantId, userId: actorUserId });
-        await assertTrackedRepo(client, tenantId, repoId);
+        const scope = scopeOf({ repoIds, repoId });
+        await assertTrackedRepos(client, tenantId, scope);
         const row = await saveSource(client, () => client.query(
             `UPDATE flag_sources SET name = $3, kind = $4, priority = $5, repo_id = $6 WHERE tenant_id = $1 AND id = $2 RETURNING ${SOURCE_COLUMNS}`,
-            [tenantId, sourceId, name, kind, priority, repoId]
+            [tenantId, sourceId, name, kind, priority, scope[0] ?? null]
         ));
         if (!row) throw new FlagSourceNotFoundError('No such flag source');
-        return toSource(row);
+        await setSourceScope(client, tenantId, sourceId, scope);
+        return toSource(row, scope);
     });
 }
 
@@ -174,12 +210,13 @@ async function listFlagSources(pool, { tenantId, actorUserId }) {
     return withScope(pool, { tenantId }, async (client) => {
         await assertAdmin(client, { tenantId, userId: actorUserId });
         const { rows: sources } = await client.query(`SELECT ${SOURCE_COLUMNS} FROM flag_sources WHERE tenant_id = $1 ORDER BY name`, [tenantId]);
+        const scopes = await sourceScopes(client, tenantId);
         const { rows: tokens } = await client.query(
             'SELECT id, source_id, created_at, last_used_at, expires_at, environments FROM ingest_tokens WHERE tenant_id = $1 ORDER BY created_at',
             [tenantId]
         );
         return sources.map((s) => ({
-            ...toSource(s),
+            ...toSource(s, scopes.get(s.id) || []),
             tokens: tokens.filter((t) => t.source_id === s.id).map((t) => ({
                 id: t.id, createdAt: t.created_at, lastUsedAt: t.last_used_at, expiresAt: t.expires_at, environments: t.environments,
             })),
@@ -453,11 +490,14 @@ async function setFlagDetails(pool, { tenantId, actorUserId, key, description, j
  *
  * @param {import('pg').PoolClient} client
  * @param {{ tenantId: string, componentOf: (repoId: number) => string }} input
- * @returns {Promise<{ flagsMeta: object, flagStates: object, flagStateHistory: object[] }>}
+ * Also `flagStatesByComponent` (key -> env -> service -> the value that service runs, pickWinningValues()) and the
+ * set of services some source covers (`coveredComponents`).
+ *
+ * @returns {Promise<{ flagsMeta: object, flagStates: object, flagStatesByComponent: object, flagStateHistory: object[], coveredComponents: Set<string> }>}
  */
 async function readDashboardFlags(client, { tenantId, componentOf }) {
-    const { rows: sourceRows } = await client.query('SELECT id, name, kind, priority, repo_id FROM flag_sources WHERE tenant_id = $1', [tenantId]);
-    const sources = sourceDescriptors(sourceRows, componentOf);
+    const { rows: sourceRows } = await client.query('SELECT id, name, kind, priority FROM flag_sources WHERE tenant_id = $1', [tenantId]);
+    const sources = sourceDescriptors(sourceRows, componentOf, await sourceScopes(client, tenantId));
     const { rows: flags } = await client.query(
         'SELECT key, description, jira_keys, manual_description, manual_jira_keys, created_at FROM flags WHERE tenant_id = $1',
         [tenantId]
@@ -473,9 +513,10 @@ async function readDashboardFlags(client, { tenantId, componentOf }) {
         [tenantId]
     );
 
-    const { flagStates, slotsOf, componentsOf } = pickWinningValues(values, sources);
+    const { flagStates, byComponent, slotsOf, componentsOf } = pickWinningValues(values, sources);
     const flagsMeta = visibleFlagsMeta(flags, { slotsOf, componentsOf }, fromJira);
-    return { flagsMeta, flagStates, flagStateHistory: historyRecords(history, sources) };
+    const coveredComponents = new Set([...sources.values()].flatMap((s) => s.components));
+    return { flagsMeta, flagStates, flagStatesByComponent: byComponent, flagStateHistory: historyRecords(history, sources), coveredComponents };
 }
 
 module.exports = {

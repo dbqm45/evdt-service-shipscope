@@ -107,6 +107,10 @@ test('settings page: GitHub -- installations, the tracked repositories table, th
     assert.match(editing, /name="versionFile" placeholder="e.g. trigger.properties" value="trigger.properties"/);
     assert.match(editing, />\.github\/\nREADME\.md<\/textarea>/);
     assert.ok(!/<form[^>]*>(?:(?!<\/form>).)*<form/s.test(editing), 'no form inside another form');
+    assert.match(editing, /data-flag-stance="unknown"[\s\S]*<select name="flagStance"><option value="unknown" selected>Not set[\s\S]*<option value="none" >This repository has no feature flags/);
+    assert.match(admin, /<th>Flags<\/th>/);
+    assert.match(admin, /<td>not set<\/td>/);
+    assert.match(str(ui.renderGitHub({ enabled: true, github: { ...github, repos: [{ ...github.repos[0], flagStance: 'none' }] }, installationRepos: {}, admin: false })), /<td>none<\/td>/);
 
     const paused = { ...github, repos: [{ ...github.repos[0], rateLimitedUntil: '2026-10-16T12:10:00.000Z' }] };
     assert.match(str(ui.renderGitHub({ enabled: true, github: paused, installationRepos: {}, admin: false })),
@@ -247,12 +251,14 @@ test('settings page: the flags section -- each flag with its state and Jira link
     assert.match(str(ui.renderFlags({ flagList: { error: 'boom' }, admin: true })), /settings-error">boom/);
 
     assert.match(sourcesPage(null), /<p class="settings-loading">Loading/);
-    const sources = [{ id: 's1', name: 'LaunchDarkly', kind: 'runtime', priority: 100, repoId: 101, tokens: [{ id: 't1', createdAt: '2026-10-01T10:00:00Z', lastUsedAt: null }] },
-        { id: 's2', name: 'Build "files"', kind: 'build', priority: 0, repoId: null, tokens: [] }];
+    const sources = [{ id: 's1', name: 'LaunchDarkly', kind: 'runtime', priority: 100, repoIds: [101], repoId: 101, tokens: [{ id: 't1', createdAt: '2026-10-01T10:00:00Z', lastUsedAt: null }] },
+        { id: 's2', name: 'Build "files"', kind: 'build', priority: 0, repoIds: [], repoId: null, tokens: [] }];
     const out = sourcesPage(sources, { token: 'sst_secret' });
     assert.match(out, /<code>sst_secret<\/code>/);
     assert.match(out, /POST https:\/\/s\/api\/flags\/ingest/);
-    assert.match(out, /data-source-id="s1"[\s\S]*?<option value="runtime" selected>runtime[\s\S]*?<option value="101" selected>acme\/web/);
+    assert.match(out, /data-source-id="s1"[\s\S]*?<option value="runtime" selected>runtime[\s\S]*?<legend>Applies to<\/legend><label class="inline"><input type="checkbox" name="repoIds" value="101" checked> acme\/web/);
+    assert.match(out, /data-source-id="s2"[\s\S]*?name="repoIds" value="101" > acme\/web[\s\S]*?Applies to no repository/, 'a source covering nothing says so');
+    assert.doesNotMatch(out.slice(0, out.indexOf('data-source-id="s2"')), /Applies to no repository/);
     assert.match(out, /value="Build &quot;files&quot;"/);
     assert.match(out, /data-action="revoke-token" data-token-id="t1"/);
     assert.match(out, /none — the source can&#39;t send anything/);
@@ -469,6 +475,13 @@ test('settings page: actions send what the API expects, then reload their sectio
     calls.length = 0;
     await ui.runAction('save-repo-settings', form([['versionFile', '  '], ['driftIgnorePaths', ' .github/\n\nREADME.md\n.github/ ']], { repoId: '101' }, 'github'));
     assert.deepStrictEqual(calls[0], { method: 'PUT', url: `${base}/github/repos/101/settings`, body: { versionFile: null, driftIgnorePaths: ['.github/', 'README.md'] } });
+    assert.ok(!calls.some((c) => c.url.endsWith('/flag-stance')), 'no flags field: the stance is left alone');
+    calls.length = 0;
+    await ui.runAction('save-repo-settings', form([['versionFile', ''], ['driftIgnorePaths', ''], ['flagStance', 'unknown']], { repoId: '101', flagStance: 'unknown' }, 'github'));
+    assert.ok(!calls.some((c) => c.url.endsWith('/flag-stance')), 'unchanged: not sent');
+    calls.length = 0;
+    await ui.runAction('save-repo-settings', form([['versionFile', ''], ['driftIgnorePaths', ''], ['flagStance', 'none']], { repoId: '101', flagStance: 'unknown' }, 'github'));
+    assert.deepStrictEqual(calls[1], { method: 'PUT', url: `${base}/github/repos/101/flag-stance`, body: { flagStance: 'none' } });
     assert.strictEqual(ui.settingsState.editingRepo, null, 'saved: the row closes');
 
     ui.settingsState.installationRepos[7] = [{ id: 102, fullName: 'acme/api', tracked: false }];
@@ -478,11 +491,11 @@ test('settings page: actions send what the API expects, then reload their sectio
     assert.strictEqual(ui.settingsState.installationRepos[7][0].tracked, true);
 
     calls.length = 0;
-    await ui.runAction('create-source', form([['name', ' LD '], ['kind', 'runtime'], ['priority', ''], ['repoId', ''], ['tokenExpiresInDays', '365']], {}, 'flags'));
-    assert.deepStrictEqual(calls[0].body, { name: 'LD', kind: 'runtime', repoId: null, tokenExpiresInDays: 365 }, 'an empty priority takes the server default');
+    await ui.runAction('create-source', form([['name', ' LD '], ['kind', 'runtime'], ['priority', ''], ['repoIds', '101', false], ['tokenExpiresInDays', '365']], {}, 'flags'));
+    assert.deepStrictEqual(calls[0].body, { name: 'LD', kind: 'runtime', repoIds: [], tokenExpiresInDays: 365 }, 'an empty priority takes the server default');
     assert.deepStrictEqual(ui.settingsState.once, { token: 'sst_new' });
     calls.length = 0;
-    await ui.runAction('create-source', form([['name', 'Never'], ['kind', 'build'], ['priority', ''], ['repoId', ''], ['tokenExpiresInDays', 'never']], {}, 'flags'));
+    await ui.runAction('create-source', form([['name', 'Never'], ['kind', 'build'], ['priority', ''], ['tokenExpiresInDays', 'never']], {}, 'flags'));
     assert.strictEqual(calls[0].body.tokenExpiresInDays, null, '"never" is no expiry');
 
     // A new token: its lifetime, and the environments it may send (all ticked = no limit; none = refused here).
@@ -499,8 +512,8 @@ test('settings page: actions send what the API expects, then reload their sectio
     assert.deepStrictEqual(calls, [], 'no environment: nothing sent');
     assert.deepStrictEqual(ui.settingsState.messages.flags, { error: true, text: 'Pick at least one environment the token may send.' });
     calls.length = 0;
-    await ui.runAction('save-source', form([['name', 'LD'], ['kind', 'build'], ['priority', '5'], ['repoId', '101']], { sourceId: 's9' }, 'flags'));
-    assert.deepStrictEqual(calls[0], { method: 'PUT', url: `${base}/flag-sources/s9`, body: { name: 'LD', kind: 'build', priority: 5, repoId: 101 } });
+    await ui.runAction('save-source', form([['name', 'LD'], ['kind', 'build'], ['priority', '5'], ['repoIds', '101', true], ['repoIds', '102', true], ['repoIds', '103', false]], { sourceId: 's9' }, 'flags'));
+    assert.deepStrictEqual(calls[0], { method: 'PUT', url: `${base}/flag-sources/s9`, body: { name: 'LD', kind: 'build', priority: 5, repoIds: [101, 102] } });
 
     // Deleting the workspace: asks first, sends the typed name, then leaves for / (another workspace, or /start).
     global.location = { pathname: `/t/${TENANT}/settings`, assign: (url) => { global.location.assigned = url; } };

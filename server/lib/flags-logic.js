@@ -119,18 +119,27 @@ function planIngestWrites({ observations, existing, complete, environments }) {
 }
 
 /**
- * Resolves raw flag_sources rows into the shape pickWinningValues() needs: slot instead of kind, and a
- * component name (via the given lookup) instead of a bare repo_id.
+ * Resolves raw flag_sources rows into the shape pickWinningValues() needs: slot instead of kind, and the
+ * component names (via the given lookup) of the services the source covers (flag_source_repos, migration 018).
+ * `component` is the first of them, for the slot records that carry one name; an untracked repo has no name.
  *
- * @param {Array<{ id: string, name: string, kind: string, priority: number, repo_id: number|string|null }>} sourceRows
+ * @param {Array<{ id: string, name: string, kind: string, priority: number }>} sourceRows
  * @param {(repoId: number) => string|null} componentOf
- * @returns {Map<string, { name: string, slot: string, priority: number, component: string|null }>}
+ * @param {Map<string, number[]>} scopes source id -> the repo ids it covers
+ * @returns {Map<string, { name: string, kind: string, slot: string, priority: number, component: string|null, components: string[] }>}
  */
-function sourceDescriptors(sourceRows, componentOf) {
-    return new Map(sourceRows.map((s) => [s.id, {
-        name: s.name, slot: slotOf(s.kind), priority: s.priority,
-        component: s.repo_id === null ? null : componentOf(Number(s.repo_id)) || null,
-    }]));
+function sourceDescriptors(sourceRows, componentOf, scopes) {
+    return new Map(sourceRows.map((s) => {
+        const components = [...new Set((scopes.get(s.id) || []).map((id) => componentOf(Number(id))).filter(Boolean))].sort();
+        return [s.id, { name: s.name, kind: s.kind, slot: slotOf(s.kind), priority: s.priority, component: components[0] || null, components }];
+    }));
+}
+
+/** Which of two values wins inside one service: runtime over build, then the higher priority, then the later change. */
+function beatsInService(a, b) {
+    if (a.source.kind !== b.source.kind) return a.source.kind === 'runtime';
+    if (a.source.priority !== b.source.priority) return a.source.priority > b.source.priority;
+    return a.v.changed_at > b.v.changed_at;
 }
 
 /**
@@ -140,11 +149,15 @@ function sourceDescriptors(sourceRows, componentOf) {
  *
  * @param {Array<{ source_id: string, key: string, environment: string, state: string, rollout: number|string|null, changed_at: Date, changed_by: string }>} values
  * @param {Map<string, { name: string, slot: string, priority: number, component: string|null }>} sources
- * @returns {{ flagStates: object, slotsOf: Map<string, Set<string>>, componentsOf: Map<string, Set<string>> }}
+ * Alongside, `byComponent`: per (key, env, service) the value that service actually runs, from the sources that
+ * cover it (beatsInService()), with the values it overrode. A source covering no service adds nothing there.
+ *
+ * @returns {{ flagStates: object, byComponent: object, slotsOf: Map<string, Set<string>>, componentsOf: Map<string, Set<string>> }}
  */
 function pickWinningValues(values, sources) {
     const winners = new Map();
     const componentsOf = new Map();
+    const inService = new Map();
     for (const v of values.filter((row) => !isReservedKey(row.key))) {
         const source = sources.get(v.source_id);
         const id = `${v.key}\u0000${v.environment}\u0000${source.slot}`;
@@ -153,7 +166,28 @@ function pickWinningValues(values, sources) {
             winners.set(id, { v, source });
         }
         if (!componentsOf.has(v.key)) componentsOf.set(v.key, new Set());
-        if (source.component) componentsOf.get(v.key).add(source.component);
+        for (const component of source.components) {
+            componentsOf.get(v.key).add(component);
+            const serviceId = `${v.key}\u0000${v.environment}\u0000${component}`;
+            if (!inService.has(serviceId)) inService.set(serviceId, { key: v.key, env: v.environment, component, all: [] });
+            inService.get(serviceId).all.push({ v, source });
+        }
+    }
+
+    const byComponent = {};
+    for (const { key, env, component, all } of inService.values()) {
+        const [win, ...rest] = [...all].sort((a, b) => (beatsInService(a, b) ? -1 : beatsInService(b, a) ? 1 : 0));
+        ((byComponent[key] ||= {})[env] ||= {})[component] = {
+            state: win.v.state,
+            rollout: win.v.rollout === null ? null : Number(win.v.rollout),
+            // Strictly "on": a partial rollout is not released to everybody (ADR-003).
+            enabled: win.v.state === 'on',
+            changedAt: win.v.changed_at.toISOString(),
+            changedBy: win.v.changed_by,
+            sourceName: win.source.name,
+            kind: win.source.kind,
+            overridden: rest.map(({ v, source }) => ({ sourceName: source.name, kind: source.kind, state: v.state })),
+        };
     }
 
     const flagStates = {};
@@ -171,7 +205,7 @@ function pickWinningValues(values, sources) {
         if (!slotsOf.has(v.key)) slotsOf.set(v.key, new Set());
         slotsOf.get(v.key).add(source.slot);
     }
-    return { flagStates, slotsOf, componentsOf };
+    return { flagStates, byComponent, slotsOf, componentsOf };
 }
 
 /**

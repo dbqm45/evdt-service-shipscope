@@ -64,7 +64,7 @@ async function buildDashboardData(pool, { tenantId, actorUserId }) {
         if (!(await roleOf(client, { tenantId, userId: actorUserId }))) throw new TenantNotFoundError('Tenant not found');
 
         const { rows: repos } = await client.query(
-            'SELECT repo_id, full_name, last_synced_at, drift FROM tracked_repos WHERE tenant_id = $1 ORDER BY created_at, full_name',
+            'SELECT repo_id, full_name, last_synced_at, drift, flag_stance FROM tracked_repos WHERE tenant_id = $1 ORDER BY created_at, full_name',
             [tenantId]
         );
         const names = componentNames(repos);
@@ -100,7 +100,7 @@ async function buildDashboardData(pool, { tenantId, actorUserId }) {
         });
 
         const { jiraIndex, issueStatusIndex } = await readDashboardJira(client, { tenantId });
-        const { flagsMeta, flagStates, flagStateHistory } = await readDashboardFlags(client, {
+        const { flagsMeta, flagStates, flagStatesByComponent, flagStateHistory, coveredComponents } = await readDashboardFlags(client, {
             tenantId, componentOf: (repoId) => names.get(repoId),
         });
 
@@ -114,6 +114,7 @@ async function buildDashboardData(pool, { tenantId, actorUserId }) {
             deployments: records,
             flagsMeta,
             flagStates,
+            flagStatesByComponent,
             flagStateHistory,
             jiraIndex,
             issueStatusIndex,
@@ -124,6 +125,8 @@ async function buildDashboardData(pool, { tenantId, actorUserId }) {
                 serviceType: null,
                 featureFlagsIncluded: null,
                 application: null,
+                // ADR-003: tracked (a source covers it), none (declared: no flags) or unknown (nobody said).
+                flagCoverage: coveredComponents.has(names.get(Number(r.repo_id))) ? 'tracked' : r.flag_stance === 'none' ? 'none' : 'unknown',
             })),
             lastSyncedAt: synced.length ? synced[0].toISOString() : null,
             jiraBrowseUrl,

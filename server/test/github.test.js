@@ -91,7 +91,14 @@ test('an admin connects the GitHub App and chooses tracked repos', async (t) => 
     const after = (await app.inject({ method: 'GET', url: listUrl, cookies: { sid: alice } })).json().repositories;
     assert.deepStrictEqual(after.filter((r) => r.tracked).map((r) => r.fullName), ['acme/repo-104']);
     assert.deepStrictEqual((await app.inject({ method: 'GET', url: `/tenants/${tenantId}/github`, cookies: { sid: alice } })).json().repos,
-        [{ repoId: 70_104, fullName: 'acme/repo-104', installationId: ACME, lastSyncedAt: null, lastSyncError: null, rateLimitedUntil: null, deployments: 0, versionFile: null, driftIgnorePaths: [] }]);
+        [{ repoId: 70_104, fullName: 'acme/repo-104', installationId: ACME, lastSyncedAt: null, lastSyncError: null, rateLimitedUntil: null, deployments: 0, versionFile: null, flagStance: 'unknown', driftIgnorePaths: [] }]);
+
+    // Whether the repo uses feature flags: admins only, `unknown` or `none`.
+    const stance = (sid, repoId, flagStance) => app.inject({ method: 'PUT', url: `/tenants/${tenantId}/github/repos/${repoId}/flag-stance`, cookies: { sid }, payload: { flagStance } });
+    assert.strictEqual((await stance(alice, 70104, 'maybe')).statusCode, 400);
+    assert.strictEqual((await stance(alice, 70105, 'none')).statusCode, 404, 'not tracked');
+    assert.deepStrictEqual((await stance(alice, 70104, 'none')).json(), { repoId: 70_104, flagStance: 'none' });
+    assert.strictEqual((await app.inject({ method: 'GET', url: `/tenants/${tenantId}/github`, cookies: { sid: alice } })).json().repos[0].flagStance, 'none');
 
     // A repo of a different installation, or one that doesn't exist, can't be tracked through this one.
     const foreign = await app.inject({ method: 'PUT', url: `/tenants/${tenantId}/github/repos/90000`, cookies: { sid: alice }, payload: { installationId: ACME } });

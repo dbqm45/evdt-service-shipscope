@@ -16,7 +16,7 @@ test('isReservedKey: every name an object already has, plus prototype; ordinary 
 });
 
 test('a reserved key stored before the check is skipped on the way out, and no built-in is changed', () => {
-    const sources = new Map([['s', { name: 'S', slot: 'build', priority: 0, component: 'web' }]]);
+    const sources = new Map([['s', { name: 'S', slot: 'build', priority: 0, component: 'web', components: ['web'] }]]);
     const row = (key) => ({ source_id: 's', key, environment: 'prod', state: 'on', rollout: null, changed_at: new Date('2026-01-01'), changed_by: 'x' });
     const winners = pickWinningValues([row('toString'), row('valueOf'), row('ok')], sources);
     assert.deepEqual(Object.keys(winners.flagStates), ['ok']);
@@ -98,21 +98,46 @@ test('planIngestWrites: not complete (a partial-state message) never removes any
     assert.deepEqual(removals, []);
 });
 
-test('sourceDescriptors: resolves kind to slot and repo_id to a component name via the given lookup', () => {
+test('sourceDescriptors: resolves kind to slot and the covered repos to component names via the given lookup', () => {
     const sources = sourceDescriptors(
-        [{ id: 's1', name: 'FE', kind: 'build', priority: 10, repo_id: 7 }, { id: 's2', name: 'BE', kind: 'runtime', priority: 5, repo_id: null }],
-        (id) => (id === 7 ? 'evapl-service-frontend' : null)
+        [{ id: 's1', name: 'FE', kind: 'build', priority: 10 }, { id: 's2', name: 'BE', kind: 'runtime', priority: 5 }, { id: 's3', name: 'Both', kind: 'runtime', priority: 0 }],
+        (id) => ({ 7: 'web', 8: 'api' })[id] || null,
+        new Map([['s1', [7]], ['s3', [8, 7, 99]]])
     );
-    assert.deepEqual(sources.get('s1'), { name: 'FE', slot: 'build', priority: 10, component: 'evapl-service-frontend' });
-    assert.deepEqual(sources.get('s2'), { name: 'BE', slot: 'runtime-be', priority: 5, component: null });
+    assert.deepEqual(sources.get('s1'), { name: 'FE', kind: 'build', slot: 'build', priority: 10, component: 'web', components: ['web'] });
+    assert.deepEqual(sources.get('s2'), { name: 'BE', kind: 'runtime', slot: 'runtime-be', priority: 5, component: null, components: [] });
+    assert.deepEqual(sources.get('s3').components, ['api', 'web'], 'sorted, an untracked repo (99) dropped');
+});
+
+test('pickWinningValues byComponent: one state per service; runtime over build inside a service, never across', () => {
+    const sources = new Map([
+        ['fe-code', { name: 'FE code', kind: 'build', slot: 'build', priority: 10, component: 'web', components: ['web'] }],
+        ['be-endpoint', { name: 'BE endpoint', kind: 'runtime', slot: 'runtime-be', priority: 0, component: 'api', components: ['api'] }],
+        ['web-runtime', { name: 'Web runtime', kind: 'runtime', slot: 'runtime-be', priority: 0, component: 'web', components: ['web'] }],
+        ['unscoped', { name: 'Loose', kind: 'build', slot: 'build', priority: 99, component: null, components: [] }],
+    ]);
+    const at = new Date('2026-01-01');
+    const v = (source_id, environment, state, rollout = null) => ({ source_id, key: 'checkout', environment, state, rollout, changed_at: at, changed_by: source_id });
+    const { byComponent, flagStates } = pickWinningValues([
+        v('fe-code', 'prod', 'on'), v('be-endpoint', 'prod', 'off'), v('unscoped', 'prod', 'on'),
+        v('fe-code', 'qa', 'on'), v('web-runtime', 'qa', 'partial', 25),
+    ], sources);
+    assert.equal(byComponent.checkout.prod.web.state, 'on', 'the FE keeps its own value');
+    assert.equal(byComponent.checkout.prod.api.state, 'off', 'the BE value does not leak into the FE');
+    assert.equal(byComponent.checkout.prod.api.enabled, false);
+    assert.deepEqual(Object.keys(byComponent.checkout.prod).sort(), ['api', 'web'], 'a source covering no service adds nothing');
+    const qa = byComponent.checkout.qa.web;
+    assert.deepEqual([qa.state, qa.rollout, qa.enabled, qa.sourceName, qa.kind], ['partial', 25, false, 'Web runtime', 'runtime'], 'runtime wins; partial is not enabled');
+    assert.deepEqual(qa.overridden, [{ sourceName: 'FE code', kind: 'build', state: 'on' }]);
+    assert.equal(flagStates.checkout.prod.build.sourceName, 'Loose', 'the legacy slots keep their old rule');
 });
 
 test('pickWinningValues: highest priority wins; a tie goes to the later changed_at', () => {
     const sources = new Map([
-        ['low', { name: 'Low', slot: 'build', priority: 0, component: 'a' }],
-        ['high', { name: 'High', slot: 'build', priority: 10, component: 'b' }],
-        ['tie-early', { name: 'TieEarly', slot: 'build', priority: 5, component: null }],
-        ['tie-late', { name: 'TieLate', slot: 'build', priority: 5, component: null }],
+        ['low', { name: 'Low', slot: 'build', priority: 0, component: 'a', components: ['a'] }],
+        ['high', { name: 'High', slot: 'build', priority: 10, component: 'b', components: ['b'] }],
+        ['tie-early', { name: 'TieEarly', slot: 'build', priority: 5, component: null, components: [] }],
+        ['tie-late', { name: 'TieLate', slot: 'build', priority: 5, component: null, components: [] }],
     ]);
     const values = [
         { source_id: 'low', key: 'f', environment: 'prod', state: 'off', rollout: null, changed_at: new Date('2026-01-03'), changed_by: 'low' },
@@ -130,8 +155,8 @@ test('pickWinningValues: highest priority wins; a tie goes to the later changed_
 
 test('pickWinningValues: collects every component that ever reported a key, not just the winner\'s', () => {
     const sources = new Map([
-        ['winner', { name: 'Winner', slot: 'build', priority: 10, component: 'comp-a' }],
-        ['loser', { name: 'Loser', slot: 'build', priority: 0, component: 'comp-b' }],
+        ['winner', { name: 'Winner', slot: 'build', priority: 10, component: 'comp-a', components: ['comp-a'] }],
+        ['loser', { name: 'Loser', slot: 'build', priority: 0, component: 'comp-b', components: ['comp-b'] }],
     ]);
     const values = [
         { source_id: 'winner', key: 'f', environment: 'prod', state: 'on', rollout: null, changed_at: new Date('2026-01-01'), changed_by: 'w' },
@@ -143,8 +168,8 @@ test('pickWinningValues: collects every component that ever reported a key, not 
 
 test('pickWinningValues: build and runtime-be slots for the same key/env coexist independently', () => {
     const sources = new Map([
-        ['be', { name: 'BE', slot: 'build', priority: 0, component: null }],
-        ['rt', { name: 'RT', slot: 'runtime-be', priority: 0, component: null }],
+        ['be', { name: 'BE', slot: 'build', priority: 0, component: null, components: [] }],
+        ['rt', { name: 'RT', slot: 'runtime-be', priority: 0, component: null, components: [] }],
     ]);
     const values = [
         { source_id: 'be', key: 'f', environment: 'prod', state: 'off', rollout: null, changed_at: new Date('2026-01-01'), changed_by: 'be' },

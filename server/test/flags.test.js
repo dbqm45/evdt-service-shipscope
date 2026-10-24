@@ -169,6 +169,47 @@ test('ingest: several sources of one kind fold by priority, then by the latest c
     assert.strictEqual(data.flagStates.shared.prod['runtime-be'].enabled, true);
 });
 
+test('per service: a source covers a set of services, each service keeps its own state, and repos say whether they use flags', async (t) => {
+    const { pool, newSource, ingest, dashboard, app, alice, tenantId, rows } = await setup(t);
+    const [{ user_id: aliceId }] = await rows("SELECT user_id FROM memberships WHERE role = 'admin'");
+    const fe = await newSource({ name: 'FE code', kind: 'build', repoIds: [1] });
+    const be = await newSource({ name: 'BE endpoint', kind: 'runtime', repoIds: [2] });
+    assert.deepStrictEqual([fe.source.repoIds, fe.source.repoId], [[1], 1]);
+    await ingest(fe.token.token, { observations: [obs('checkout', 'prod', 'on')] });
+    await ingest(be.token.token, { observations: [obs('checkout', 'prod', 'off'), { key: 'search', env: 'prod', state: 'partial', rollout: 10 }] });
+
+    let data = await dashboard();
+    assert.strictEqual(data.flagStatesByComponent.checkout.prod.web.enabled, true, 'the FE value, not the BE one');
+    assert.strictEqual(data.flagStatesByComponent.checkout.prod.api.enabled, false);
+    assert.deepStrictEqual([data.flagStatesByComponent.search.prod.api.state, data.flagStatesByComponent.search.prod.api.rollout, data.flagStatesByComponent.search.prod.api.enabled], ['partial', 10, false]);
+    assert.strictEqual(data.flagStates.checkout.prod['runtime-be'].enabled, false, 'the legacy slots stay as they were');
+    const coverage = (d, name) => d.componentsOrder.find((c) => c.name === name).flagCoverage;
+    assert.deepStrictEqual([coverage(data, 'web'), coverage(data, 'api')], ['tracked', 'tracked']);
+
+    // One source over both services: both see its value; a service it no longer covers loses it.
+    const put = (payload) => app.inject({ method: 'PUT', url: `/tenants/${tenantId}/flag-sources/${be.source.id}`, cookies: { sid: alice }, payload });
+    assert.strictEqual((await put({ name: 'BE endpoint', kind: 'runtime', priority: 100, repoIds: [2, 1] })).json().repoIds.join(), '1,2');
+    data = await dashboard();
+    assert.strictEqual(data.flagStatesByComponent.checkout.prod.web.enabled, false, 'runtime over build inside the FE');
+    assert.deepStrictEqual(data.flagStatesByComponent.checkout.prod.web.overridden, [{ sourceName: 'FE code', kind: 'build', state: 'on' }]);
+    assert.deepStrictEqual(await rows('SELECT repo_id::int FROM flag_sources WHERE id = $1', [be.source.id]), [{ repo_id: 1 }], 'repo_id keeps the first one');
+    assert.strictEqual((await put({ name: 'BE endpoint', kind: 'runtime', priority: 100, repoIds: [] })).statusCode, 200);
+    data = await dashboard();
+    assert.deepStrictEqual(Object.keys(data.flagStatesByComponent.checkout.prod), ['web']);
+    assert.strictEqual(coverage(data, 'api'), 'unknown', 'no source covers api any more');
+    assert.strictEqual((await put({ name: 'x', kind: 'runtime', priority: 0, repoIds: [1], repoId: 1 })).statusCode, 400, 'one way to name the scope');
+    assert.strictEqual((await put({ name: 'x', kind: 'runtime', priority: 0 })).statusCode, 400, 'the scope is required on update');
+    assert.strictEqual((await put({ name: 'x', kind: 'runtime', priority: 0, repoIds: [1, 99] })).statusCode, 404, 'every repo must be tracked');
+
+    // Declaring a repo without flags (the route is checked in github.test.js), and untracking a repo drops it
+    // from every source's scope.
+    const { setRepoFlagStance, untrackRepo } = require('../lib/github-connections');
+    await setRepoFlagStance(pool, { tenantId, actorUserId: aliceId, repoId: 2, flagStance: 'none' });
+    assert.strictEqual(coverage(await dashboard(), 'api'), 'none');
+    await untrackRepo(pool, { tenantId, actorUserId: aliceId, repoId: 1 });
+    assert.deepStrictEqual(await rows('SELECT * FROM flag_source_repos'), []);
+});
+
 test('ingest: tokens are checked and payloads validated; nothing is written by a rejected request', async (t) => {
     const { app, newSource, ingest, rows } = await setup(t);
     const { token } = (await newSource({ name: 'CI', kind: 'build' })).token;

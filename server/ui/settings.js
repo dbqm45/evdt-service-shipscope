@@ -530,6 +530,11 @@ function TrackPicker(installations, installationRepos){
     });
 }
 
+// Whether a repo uses feature flags (tracked_repos.flag_stance). A repo some flag source covers is tracked anyway;
+// the dashboard then reads its flags, and "no flags" means deployed code is live.
+const FLAG_STANCES = { unknown: 'not set', none: 'none' };
+const FLAG_STANCE_CHOICES = { unknown: 'Not set (a flag source covers it, or not said yet)', none: 'This repository has no feature flags' };
+
 /** @param {{ enabled: boolean, webhooks: boolean, github: { installations: object[], repos: object[] }|null, installationRepos: object, admin: boolean, picker?: boolean, editing?: number|null }} props */
 function renderGitHub({ enabled, webhooks, github, installationRepos, admin, picker = false, editing = null }){
     const hint = 'ShipScope reads deployments, releases and tags of the repositories you track, through the GitHub App.';
@@ -556,21 +561,23 @@ function renderGitHub({ enabled, webhooks, github, installationRepos, admin, pic
             <td class="mono">${r.versionFile || '—'}</td>
             <td class="mono">${(r.driftIgnorePaths || []).join(', ') || '—'}</td>
             <td class="mono">${syncStatus(r)}</td>
+            <td>${FLAG_STANCES[r.flagStance] || FLAG_STANCES.unknown}</td>
             ${admin ? html`<td class="actions">
-                <button type="button" class="btn btn-icon" data-action="edit-repo" data-repo-id="${r.repoId}" aria-label="Edit ${r.fullName}" title="Version file and drift">${SETTINGS_ICONS.edit}</button>
+                <button type="button" class="btn btn-icon" data-action="edit-repo" data-repo-id="${r.repoId}" aria-label="Edit ${r.fullName}" title="Version file, drift and flags">${SETTINGS_ICONS.edit}</button>
                 <button type="button" class="btn btn-icon btn-danger" data-action="untrack-repo" data-repo-id="${r.repoId}" data-installation-id="${r.installationId}" aria-label="Stop tracking ${r.fullName}" title="Stop tracking">${SETTINGS_ICONS.close}</button>
             </td>` : ''}</tr>`;
         if (!admin || editing !== r.repoId) {
             return row;
         }
-        return html`${row}<tr class="settings-edit-row"><td colspan="5"><form class="settings-form" data-action="save-repo-settings" data-repo-id="${r.repoId}">
+        return html`${row}<tr class="settings-edit-row"><td colspan="6"><form class="settings-form" data-action="save-repo-settings" data-repo-id="${r.repoId}" data-flag-stance="${r.flagStance || 'unknown'}">
             <label>Version file <input name="versionFile" placeholder="e.g. trigger.properties" value="${r.versionFile || ''}" maxlength="200"></label>
             <label>Paths not counted as drift (one per line) <textarea name="driftIgnorePaths" placeholder=".github/&#10;README.md">${(r.driftIgnorePaths || []).join('\n')}</textarea></label>
+            <label>Feature flags <select name="flagStance">${Object.entries(FLAG_STANCE_CHOICES).map(([value, label]) => html`<option value="${value}" ${value === (r.flagStance || 'unknown') ? raw('selected') : ''}>${label}</option>`)}</select></label>
             <button type="submit" class="btn btn-primary">Save</button>
             <button type="button" class="btn" data-action="edit-repo" data-repo-id="${r.repoId}">Cancel</button></form></td></tr>`;
     });
     const table = rows.length
-        ? Card({ cls: 'flush', body: html`<table class="settings-table settings-repos"><thead><tr><th>Repository</th><th>Version file</th><th>Ignored for drift</th><th>Last sync</th>${admin ? html`<th></th>` : ''}</tr></thead><tbody>${rows}</tbody></table>` })
+        ? Card({ cls: 'flush', body: html`<table class="settings-table settings-repos"><thead><tr><th>Repository</th><th>Version file</th><th>Ignored for drift</th><th>Last sync</th><th>Flags</th>${admin ? html`<th></th>` : ''}</tr></thead><tbody>${rows}</tbody></table>` })
         : Card({ body: html`<p class="settings-hint">No repository tracked yet.${admin && github.installations.length ? ' Click Track repository to choose one.' : ''}</p>` });
     return page(html`${cards.length ? cards : Card({ body: html`<p class="settings-hint">No installation linked yet.</p>` })}
         ${admin && picker && github.installations.length ? TrackPicker(github.installations, installationRepos) : ''}${table}`, action);
@@ -739,16 +746,20 @@ function renderSources({ flags, repos, once, origin, now = new Date() }){
     if (flags.error) {
         return html`<p class="settings-error">${flags.error}</p>`;
     }
-    const repoOptions = (selected) => html`<option value="">— any component —</option>${repos.map((r) => html`<option value="${r.repoId}" ${r.repoId === selected ? raw('selected') : ''}>${r.fullName}</option>`)}`;
+    // The services a source covers. None checked: its flags are listed, but no service's state uses them.
+    const services = (selected) => html`<fieldset class="settings-envs"><legend>Applies to</legend>${repos.length
+        ? repos.map((r) => html`<label class="inline"><input type="checkbox" name="repoIds" value="${r.repoId}" ${selected.includes(r.repoId) ? raw('checked') : ''}> ${r.fullName}</label>`)
+        : html`<span class="settings-row-meta">no tracked repository</span>`}</fieldset>`;
     const kindOptions = (selected) => ['build', 'runtime'].map((k) => html`<option value="${k}" ${k === selected ? raw('selected') : ''}>${k}</option>`);
     const rows = flags.map((s) => html`<tr><td>
         <form class="settings-form" data-action="save-source" data-source-id="${s.id}">
             <label>Name <input name="name" required maxlength="100" value="${s.name}"></label>
             <label>Kind <select name="kind">${kindOptions(s.kind)}</select></label>
             <label>Priority <input name="priority" type="number" min="0" max="1000" required value="${s.priority}"></label>
-            <label>Component <select name="repoId">${repoOptions(s.repoId)}</select></label>
+            ${services(s.repoIds || [])}
             <button type="submit" class="btn">Save</button>
         </form>
+        ${(s.repoIds || []).length ? '' : html`<p class="settings-hint">Applies to no repository: its flags are listed, but no issue status on the dashboard uses them. Tick the services it covers.</p>`}
         <div class="settings-source-status">${SourceStatus(s)}</div>
         <div class="settings-row-meta">Tokens: ${s.tokens.length ? s.tokens.map((t) => TokenLine(t, now)) : 'none — the source can\'t send anything'}</div>
         ${NewTokenForm(s)}
@@ -764,7 +775,7 @@ function renderSources({ flags, repos, once, origin, now = new Date() }){
             <label>Name <input name="name" required maxlength="100" placeholder="e.g. LaunchDarkly"></label>
             <label>Kind <select name="kind">${kindOptions('runtime')}</select></label>
             <label>Priority (optional) <input name="priority" type="number" min="0" max="1000"></label>
-            <label>Component <select name="repoId">${repoOptions(null)}</select></label>
+            ${services([])}
             ${LifetimeSelect('tokenExpiresInDays')}
             <button type="submit" class="btn btn-primary">Add source</button>
         </form>`;
@@ -1039,6 +1050,9 @@ const actions = {
             versionFile: values.versionFile.trim() || null,
             driftIgnorePaths: [...new Set(values.driftIgnorePaths.split('\n').map((p) => p.trim()).filter(Boolean))],
         });
+        if (values.flagStance && values.flagStance !== data.flagStance) {
+            await api('PUT', tenantPath(`/github/repos/${data.repoId}/flag-stance`), { flagStance: values.flagStance });
+        }
         settingsState.editingRepo = null;
         return { section: 'github', ok: 'Saved; drift is recomputed with the next sync.' };
     },
@@ -1089,7 +1103,7 @@ const actions = {
     'create-source': async (form) => {
         const values = formValues(form);
         const body = {
-            name: values.name.trim(), kind: values.kind, repoId: values.repoId ? Number(values.repoId) : null, tokenExpiresInDays: lifetimeOf(values.tokenExpiresInDays),
+            name: values.name.trim(), kind: values.kind, repoIds: (values.repoIds || []).map(Number), tokenExpiresInDays: lifetimeOf(values.tokenExpiresInDays),
         };
         if (values.priority !== '') {
             body.priority = Number(values.priority);
@@ -1101,7 +1115,7 @@ const actions = {
     'save-source': async (form, data) => {
         const values = formValues(form);
         await api('PUT', tenantPath(`/flag-sources/${data.sourceId}`), {
-            name: values.name.trim(), kind: values.kind, priority: Number(values.priority), repoId: values.repoId ? Number(values.repoId) : null,
+            name: values.name.trim(), kind: values.kind, priority: Number(values.priority), repoIds: (values.repoIds || []).map(Number),
         });
         return { section: 'flags', ok: 'Saved.' };
     },

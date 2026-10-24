@@ -17,12 +17,12 @@ Każdy punkt to osobny PR, wdrażalny sam; `[ ]` = do zrobienia, `[x]` = zrobion
 
 ### 1. Poprawny model statusu (na samym pushu)
 
-- [ ] Źródło obejmuje zbiór serwisów (`flag_source_repos` zamiast etykiety `flag_sources.repo_id`); migracja
+- [x] Źródło obejmuje zbiór serwisów (`flag_source_repos` zamiast etykiety `flag_sources.repo_id`); migracja
   przenosi obecne `repo_id`, źródło bez serwisów zachowuje dzisiejsze zachowanie z podpowiedzią w Settings.
-- [ ] Stan repozytorium wobec flag: śledzone / bez flag / nieśledzone (`tracked_repos.flag_stance`), wybór w
+- [x] Stan repozytorium wobec flag: śledzone / bez flag / nieśledzone (`tracked_repos.flag_stance`), wybór w
   Settings.
-- [ ] Stan efektywny per (serwis, klucz, środowisko) liczony na serwerze; dashboard-data rozszerzone addytywnie
-  (`byComponent`, `flagCoverage`), sloty `build`/`runtime-be` zostają na czas przejścia.
+- [x] Stan efektywny per (serwis, klucz, środowisko) liczony na serwerze; dashboard-data rozszerzone addytywnie
+  (`flagStatesByComponent`, `componentsOrder[].flagCoverage`), sloty `build`/`runtime-be` zostają na czas przejścia.
 - [ ] Nowy `issueStatusForEnv()`: bramki per serwis, serwis neutralny, `partial` to Partial (dopiero 100% =
   on), niepewność „?" dla serwisów nieśledzonych. `FALLBACK` z tymi samymi polami.
 

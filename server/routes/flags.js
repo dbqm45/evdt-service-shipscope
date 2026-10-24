@@ -65,15 +65,18 @@ function registerFlagRoutes(app, ctx) {
             name: { type: 'string', minLength: 1, maxLength: 100 },
             kind: { type: 'string', enum: ['build', 'runtime'] },
             priority: { type: 'integer', minimum: 0, maximum: 1000 },
+            // The services the source covers; the older single `repoId` sets one (or none with null).
+            repoIds: { type: 'array', maxItems: 200, uniqueItems: true, items: { type: 'integer', minimum: 1 } },
             repoId: { anyOf: [{ type: 'null' }, { type: 'integer', minimum: 1 }] },
             ...extra,
         },
     });
+    const ONE_SCOPE = { not: { required: ['repoIds', 'repoId'] } };
     const sourceParams = { type: 'object', required: ['tenantId', 'sourceId'], properties: { tenantId: UUID_PARAM, sourceId: UUID_PARAM } };
 
     app.post('/tenants/:tenantId/flag-sources', {
         preHandler: requireUser,
-        schema: { params: tenantOnlyParams, body: sourceBody(['name', 'kind'], { tokenExpiresInDays: EXPIRES_IN_DAYS, tokenEnvironments: TOKEN_ENVIRONMENTS }) },
+        schema: { params: tenantOnlyParams, body: { ...sourceBody(['name', 'kind'], { tokenExpiresInDays: EXPIRES_IN_DAYS, tokenEnvironments: TOKEN_ENVIRONMENTS }), ...ONE_SCOPE } },
     }, async (request, reply) => reply.code(201).send(await createFlagSource(pool, {
         tenantId: request.params.tenantId, actorUserId: request.user.id, ...request.body,
     })));
@@ -111,7 +114,7 @@ function registerFlagRoutes(app, ctx) {
 
     app.put('/tenants/:tenantId/flag-sources/:sourceId', {
         preHandler: requireUser,
-        schema: { params: sourceParams, body: sourceBody(['name', 'kind', 'priority', 'repoId']) },
+        schema: { params: sourceParams, body: { ...sourceBody(['name', 'kind', 'priority']), anyOf: [{ required: ['repoIds'] }, { required: ['repoId'] }], ...ONE_SCOPE } },
     }, async (request) => updateFlagSource(pool, {
         tenantId: request.params.tenantId, actorUserId: request.user.id, sourceId: request.params.sourceId, ...request.body,
     }));
