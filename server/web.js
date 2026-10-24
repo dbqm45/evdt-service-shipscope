@@ -15,7 +15,7 @@ const {
 const { withScope } = require('./lib/scope');
 const { InvitationNotFoundError, InvitationUnusableError, TOKEN_PATTERN } = require('./lib/invitations');
 const { InstallationNotFoundError, InstallationTakenError } = require('./lib/github-connections');
-const { IngestTokenError, IngestBusyError, IngestPayloadError, FlagSourceNotFoundError, FlagSourceConflictError, FlagNotFoundError } = require('./lib/flags');
+const { IngestTokenError, IngestScopeError, IngestBusyError, IngestPayloadError, FlagSourceNotFoundError, FlagSourceConflictError, FlagNotFoundError } = require('./lib/flags');
 const { getSessionUser } = require('./lib/sessions');
 const { mockDataEnabled, loadMockDashboard } = require('./lib/mock-dashboard');
 
@@ -85,6 +85,7 @@ const ERROR_STATUS = [
     [GitHubApiError, 502],
     [IngestTokenError, 401],
     [IngestPayloadError, 400],
+    [IngestScopeError, 403],
     [IngestRateLimitError, 429],
     [IngestBusyError, 503],
     [FlagSourceNotFoundError, 404],

@@ -341,6 +341,32 @@ test('getting started: each step read off the loaded sections -- todo, waiting, 
     assert.strictEqual(byId({ ...empty, workspace: { members: [{}, {}], invitations: null } }).team.state, 'done');
 });
 
+test('tokens: expiry and scope shown on each token; the checklist warns before a source\'s last token runs out', () => {
+    const now = new Date('2026-10-24T12:00:00Z');
+    const tok = (expiresAt, environments = null) => ({ id: 't1', createdAt: '2026-01-01T00:00:00Z', lastUsedAt: null, expiresAt, environments });
+    assert.strictEqual(ui.tokenState(tok(null), now), 'ok');
+    assert.strictEqual(ui.tokenState(tok('2027-01-01T00:00:00Z'), now), 'ok');
+    assert.strictEqual(ui.tokenState(tok('2026-11-10T00:00:00Z'), now), 'expiring');
+    assert.strictEqual(ui.tokenState(tok('2026-10-24T11:59:00Z'), now), 'expired');
+    assert.match(str(ui.TokenLine(tok(null), now)), /never expires/);
+    assert.match(str(ui.TokenLine(tok('2026-11-10T00:00:00Z', ['qa', 'test']), now)), /state-tag warn">expires [^<]+<\/span>, only qa, test/);
+    assert.match(str(ui.TokenLine(tok('2026-10-01T00:00:00Z'), now)), /state-tag fail">expired /);
+
+    const page = str(ui.renderSourcesPage({ sources: [{ id: 's1', name: 'CI', kind: 'build', priority: 0, repoId: null, tokens: [tok(null)] }], repos: [], admin: true, once: {}, origin: 'https://s' }));
+    assert.match(page, /<form class="settings-form" data-action="new-token" data-source-id="s1">[\s\S]*?<option value="365">1 year[\s\S]*?<option value="never">never expires[\s\S]*?name="environments" value="prod" checked/);
+    assert.match(page, /data-action="create-source">[\s\S]*?name="tokenExpiresInDays"/);
+
+    const steps = (tokens) => Object.fromEntries(ui.onboardingSteps({
+        features: { githubApp: false, jira: false }, github: null, jira: null, boards: null, workspace: { members: [{}, {}], invitations: [] },
+        sources: [{ name: 'CI', tokens }], flagList: [{ key: 'a' }], now,
+    }).map((st) => [st.id, st]));
+    assert.strictEqual(steps([tok(null)]).flags.state, 'done');
+    assert.deepStrictEqual([steps([tok('2026-11-10T00:00:00Z')]).flags.state, steps([tok('2026-11-10T00:00:00Z')]).flags.cta], ['waiting', 'New token']);
+    assert.strictEqual(steps([tok('2026-11-10T00:00:00Z'), tok(null)]).flags.state, 'done', 'another token keeps the source going');
+    assert.strictEqual(steps([tok('2026-10-01T00:00:00Z')]).flags.state, 'problem');
+    assert.match(steps([tok('2026-10-01T00:00:00Z')]).flags.hint, /tokens of CI have expired/);
+});
+
 test('getting started: the checklist renders progress; once GitHub is done it can be hidden, and comes back on request', async () => {
     ui.settingsState.tenantId = TENANT;
     const step = (id, state, optional = false, extra = {}) => ({ id, title: `Step ${id}`, state, optional, hint: `<b>${id}</b>`, href: '#x', cta: 'Do it', ...extra });
@@ -400,6 +426,7 @@ test('settings page: actions send what the API expects, then reload their sectio
     const { fn, calls } = fakeFetch({
         [`POST ${base}/invitations`]: { url: 'https://s/invitations/tok' },
         [`POST ${base}/flag-sources`]: { source: { id: 's9' }, token: { id: 't9', token: 'sst_new' } },
+        [`POST ${base}/flag-sources/s9/tokens`]: { id: 't10', token: 'sst_tok', expiresAt: null, environments: null },
         [`POST ${base}/jira/sync`]: { boards: 2, issues: 9, currentPi: '@now' },
         [`DELETE ${base}`]: null,
         [`GET ${base}/jira`]: { connected: false },
@@ -451,9 +478,26 @@ test('settings page: actions send what the API expects, then reload their sectio
     assert.strictEqual(ui.settingsState.installationRepos[7][0].tracked, true);
 
     calls.length = 0;
-    await ui.runAction('create-source', form([['name', ' LD '], ['kind', 'runtime'], ['priority', ''], ['repoId', '']], {}, 'flags'));
-    assert.deepStrictEqual(calls[0].body, { name: 'LD', kind: 'runtime', repoId: null }, 'an empty priority takes the server default');
+    await ui.runAction('create-source', form([['name', ' LD '], ['kind', 'runtime'], ['priority', ''], ['repoId', ''], ['tokenExpiresInDays', '365']], {}, 'flags'));
+    assert.deepStrictEqual(calls[0].body, { name: 'LD', kind: 'runtime', repoId: null, tokenExpiresInDays: 365 }, 'an empty priority takes the server default');
     assert.deepStrictEqual(ui.settingsState.once, { token: 'sst_new' });
+    calls.length = 0;
+    await ui.runAction('create-source', form([['name', 'Never'], ['kind', 'build'], ['priority', ''], ['repoId', ''], ['tokenExpiresInDays', 'never']], {}, 'flags'));
+    assert.strictEqual(calls[0].body.tokenExpiresInDays, null, '"never" is no expiry');
+
+    // A new token: its lifetime, and the environments it may send (all ticked = no limit; none = refused here).
+    const tokenForm = (expires, envs) => form([['expiresInDays', expires], ...['test', 'qa', 'prod'].map((e) => ['environments', e, envs.includes(e)])], { sourceId: 's9' }, 'flags');
+    calls.length = 0;
+    await ui.runAction('new-token', tokenForm('90', ['qa', 'prod']));
+    assert.deepStrictEqual(calls[0], { method: 'POST', url: `${base}/flag-sources/s9/tokens`, body: { expiresInDays: 90, environments: ['qa', 'prod'] } });
+    assert.deepStrictEqual(ui.settingsState.once, { token: 'sst_tok' });
+    calls.length = 0;
+    await ui.runAction('new-token', tokenForm('never', ['test', 'qa', 'prod']));
+    assert.deepStrictEqual(calls[0].body, { expiresInDays: null, environments: null });
+    calls.length = 0;
+    await ui.runAction('new-token', tokenForm('30', []));
+    assert.deepStrictEqual(calls, [], 'no environment: nothing sent');
+    assert.deepStrictEqual(ui.settingsState.messages.flags, { error: true, text: 'Pick at least one environment the token may send.' });
     calls.length = 0;
     await ui.runAction('save-source', form([['name', 'LD'], ['kind', 'build'], ['priority', '5'], ['repoId', '101']], { sourceId: 's9' }, 'flags'));
     assert.deepStrictEqual(calls[0], { method: 'PUT', url: `${base}/flag-sources/s9`, body: { name: 'LD', kind: 'build', priority: 5, repoId: 101 } });

@@ -47,7 +47,9 @@ a flag service. Each such place is one **flag source**:
    sources of one kind report the same flag, the higher wins) and, optionally, the component (tracked repository)
    its flags belong to. The dashboard shows a flag's runtime value when there is one, otherwise its build value.
 2. Create a token for the source. It is shown once: store it as a secret where the sender runs (e.g. a GitHub
-   Actions secret `SHIPSCOPE_FLAGS_TOKEN`). A second token lets you rotate without a gap.
+   Actions secret `SHIPSCOPE_FLAGS_TOKEN`). A token lasts a year unless you pick another lifetime (or none), and can
+   be limited to the environments its sender handles. Settings and the Getting started checklist warn 30 days before
+   a source's last token expires; a second token lets you rotate without a gap.
 3. Have the sender post the **full state** of the source's flags after every change, or on a schedule. Sending the
    same state again changes nothing, so a schedule is safe.
 
@@ -170,7 +172,8 @@ tool can trigger the pipeline. Sending the same state again changes nothing.
 | `… is not written out as a value` | A computed or imported value in a `.ts` file: write it out, or print the flags as JSON in a step before. |
 | `several objects (…); name the one with the flags in path` | Set `path` to the const's name. |
 | `flag x differs between a and b` | Two files give one flag different values for one environment: use one source per file group. |
-| `ShipScope answered 401` | Wrong or revoked token, or the secret is not passed to the step. |
+| `ShipScope answered 401` | Wrong, revoked or expired token, or the secret is not passed to the step. |
+| `ShipScope answered 403` | The token may only send some environments (Settings → Sources); use one that covers this environment. |
 | `ShipScope answered 429` or `503` | Temporary; the adapter already waited and tried again three times. Send less often, or try again later. |
 | `ShipScope answered 400: …` | The message breaks a rule (e.g. a key with spaces); the reason is in the line and under the source in Settings. |
 

@@ -166,10 +166,10 @@ const STEP_MARK = { done: '✓', waiting: '…', problem: '!', todo: '', unavail
  * `done`, `waiting` (set up, ShipScope waits for data), `problem`, `todo`, `unavailable` (off on this server) or
  * `loading`; GitHub's three steps are required, the rest optional.
  *
- * @param {{ features: object, github: object|null, jira: object|null, boards: object[]|{ error: string }|null, sources: object[]|{ error: string }|null, flagList: object[]|{ error: string }|null, workspace: object|null }} input
+ * @param {{ features: object, github: object|null, jira: object|null, boards: object[]|{ error: string }|null, sources: object[]|{ error: string }|null, flagList: object[]|{ error: string }|null, workspace: object|null, now?: Date }} input
  * @returns {Array<{ id: string, title: string, state: string, optional: boolean, hint: string, href: string|null, cta: string|null }>}
  */
-function onboardingSteps({ features, github, jira, boards, sources, flagList, workspace }){
+function onboardingSteps({ features, github, jira, boards, sources, flagList, workspace, now = new Date() }){
     const step = (id, title, optional, state, hint, href = null, cta = null) => ({ id, title, optional, state, hint, href, cta });
     const steps = [];
     const repos = (github && github.repos) || [];
@@ -248,14 +248,25 @@ function onboardingSteps({ features, github, jira, boards, sources, flagList, wo
     } else if (sources.error || flagList.error) {
         steps.push(step('flags', 'Send feature flags', true, 'problem', sources.error || flagList.error, '#sources'));
     } else if (flagList.length) {
-        steps.push(step('flags', 'Send feature flags', true, 'done', `${flagList.length} flag(s) received.`, '#flags'));
+        // Received, but a source whose every token has run out (or is about to) stops sending: say so before it does.
+        const lapsing = sources.filter((src) => src.tokens.length && src.tokens.every((t) => tokenState(t, now) !== 'ok'));
+        const lapsed = lapsing.filter((src) => src.tokens.every((t) => tokenState(t, now) === 'expired'));
+        if (lapsed.length) {
+            steps.push(step('flags', 'Send feature flags', true, 'problem',
+                `The tokens of ${lapsed.map((src) => src.name).join(', ')} have expired: it can't send anything until it gets a new one.`, '#sources', 'New token'));
+        } else if (lapsing.length) {
+            steps.push(step('flags', 'Send feature flags', true, 'waiting',
+                `The tokens of ${lapsing.map((src) => src.name).join(', ')} expire within ${TOKEN_WARNING_DAYS} days: create a new one and give it to the sender.`, '#sources', 'New token'));
+        } else {
+            steps.push(step('flags', 'Send feature flags', true, 'done', `${flagList.length} flag(s) received.`, '#flags'));
+        }
     } else if (sources.some(sourceRefused)) {
         const refused = sources.filter(sourceRefused);
         steps.push(step('flags', 'Send feature flags', true, 'problem',
             `Message refused: ${refused.map((src) => `${src.name} — ${src.lastError.message}`).join('; ')}`, '#sources'));
-    } else if (sources.some((src) => src.tokens.length)) {
+    } else if (sources.some((src) => activeTokens(src, now).length)) {
         steps.push(step('flags', 'Send feature flags', true, 'waiting',
-            `Waiting for the first message from ${sources.filter((src) => src.tokens.length).map((src) => src.name).join(', ')} (POST /api/flags/ingest with its token).`, '#sources'));
+            `Waiting for the first message from ${sources.filter((src) => activeTokens(src, now).length).map((src) => src.name).join(', ')} (POST /api/flags/ingest with its token).`, '#sources'));
     } else {
         steps.push(step('flags', 'Send feature flags', true, 'todo', 'Name where your flags live (a build step, a flag service) and give it a token; it then pushes their state.', '#sources', 'Add a source'));
     }
@@ -678,8 +689,50 @@ function SourceStatus(source){
         <span class="settings-row-meta">${n.flags} flag(s), ${n.changed} changed, ${n.removed} removed${n.stale ? `, ${n.stale} older than stored` : ''}</span>`;
 }
 
-/** @param {{ flags: object[]|null|{ error: string }, repos: object[], admin: boolean, once: object, origin: string }} props */
-function renderSources({ flags, repos, once, origin }){
+// A token is flagged this many days before it expires (Settings and the checklist), so its sender can be given a new one.
+const TOKEN_WARNING_DAYS = 30;
+const TOKEN_LIFETIMES = [['365', '1 year'], ['90', '90 days'], ['30', '30 days'], ['never', 'never expires']];
+
+/** 'expired', 'expiring' (within TOKEN_WARNING_DAYS) or 'ok' (also: no expiry). */
+function tokenState(token, now = new Date()){
+    if (!token.expiresAt) {
+        return 'ok';
+    }
+    const left = new Date(token.expiresAt).getTime() - now.getTime();
+    return left <= 0 ? 'expired' : left <= TOKEN_WARNING_DAYS * 86_400_000 ? 'expiring' : 'ok';
+}
+
+/** The tokens a source can still send with. */
+function activeTokens(source, now = new Date()){
+    return source.tokens.filter((t) => tokenState(t, now) !== 'expired');
+}
+
+/** A token: when made and last used, when it expires (flagged when soon or past) and which environments it may send. */
+function TokenLine(token, now){
+    const state = tokenState(token, now);
+    const expiry = !token.expiresAt ? 'never expires'
+        : state === 'expired' ? html`<span class="state-tag fail">expired ${fmtDateTime(token.expiresAt)}</span>`
+            : state === 'expiring' ? html`<span class="state-tag warn">expires ${fmtDateTime(token.expiresAt)}</span>` : `expires ${fmtDateTime(token.expiresAt)}`;
+    return html`<span class="settings-token">created ${fmtDateTime(token.createdAt)}, last used ${fmtDateTime(token.lastUsedAt)}, ${expiry}${token.environments ? `, only ${token.environments.join(', ')}` : ''}
+            <button type="button" class="btn-link btn" data-action="revoke-token" data-token-id="${token.id}">revoke</button></span>`;
+}
+
+/** Lifetime of a new token: a year unless the admin picks another, or none. */
+function LifetimeSelect(name){
+    return html`<label>Token expires <select name="${name}">${TOKEN_LIFETIMES.map(([value, label]) => html`<option value="${value}">${label}</option>`)}</select></label>`;
+}
+
+/** The form under each source that issues a new token: lifetime and the environments it may send. */
+function NewTokenForm(source){
+    return html`<form class="settings-form" data-action="new-token" data-source-id="${source.id}">
+            ${LifetimeSelect('expiresInDays')}
+            <fieldset class="settings-envs"><legend>May send</legend>${ENVS.map((env) => html`<label class="inline"><input type="checkbox" name="environments" value="${env}" checked> ${env}</label>`)}</fieldset>
+            <button type="submit" class="btn">New token</button>
+        </form>`;
+}
+
+/** @param {{ flags: object[]|null|{ error: string }, repos: object[], admin: boolean, once: object, origin: string, now?: Date }} props */
+function renderSources({ flags, repos, once, origin, now = new Date() }){
     if (flags === null) {
         return html`<p class="settings-loading">Loading…</p>`;
     }
@@ -697,10 +750,9 @@ function renderSources({ flags, repos, once, origin }){
             <button type="submit" class="btn">Save</button>
         </form>
         <div class="settings-source-status">${SourceStatus(s)}</div>
-        <div class="settings-row-meta">Tokens: ${s.tokens.length ? s.tokens.map((t) => html`<span class="settings-token">created ${fmtDateTime(t.createdAt)}, last used ${fmtDateTime(t.lastUsedAt)}
-            <button type="button" class="btn-link btn" data-action="revoke-token" data-token-id="${t.id}">revoke</button></span>`) : 'none — the source can\'t send anything'}</div>
-        </td><td class="actions"><button type="button" class="btn" data-action="new-token" data-source-id="${s.id}">New token</button>
-        <button type="button" class="btn btn-danger" data-action="delete-source" data-source-id="${s.id}">Delete</button></td></tr>`);
+        <div class="settings-row-meta">Tokens: ${s.tokens.length ? s.tokens.map((t) => TokenLine(t, now)) : 'none — the source can\'t send anything'}</div>
+        ${NewTokenForm(s)}
+        </td><td class="actions"><button type="button" class="btn btn-danger" data-action="delete-source" data-source-id="${s.id}">Delete</button></td></tr>`);
     return html`${once.token ? SecretBox({
         label: 'Ingest token — shown only once',
         value: once.token,
@@ -713,6 +765,7 @@ function renderSources({ flags, repos, once, origin }){
             <label>Kind <select name="kind">${kindOptions('runtime')}</select></label>
             <label>Priority (optional) <input name="priority" type="number" min="0" max="1000"></label>
             <label>Component <select name="repoId">${repoOptions(null)}</select></label>
+            ${LifetimeSelect('tokenExpiresInDays')}
             <button type="submit" class="btn btn-primary">Add source</button>
         </form>`;
 }
@@ -885,6 +938,11 @@ function formValues(form){
     return values;
 }
 
+/** A lifetime select's value as the API takes it: days, or null for "never". */
+function lifetimeOf(value){
+    return value === 'never' ? null : Number(value || 365);
+}
+
 const confirmed = (text) => typeof confirm !== 'function' || confirm(text);
 
 /** Each action: (element, its data-* values) -> the section to report on and reload, after doing the change. */
@@ -1030,7 +1088,9 @@ const actions = {
     },
     'create-source': async (form) => {
         const values = formValues(form);
-        const body = { name: values.name.trim(), kind: values.kind, repoId: values.repoId ? Number(values.repoId) : null };
+        const body = {
+            name: values.name.trim(), kind: values.kind, repoId: values.repoId ? Number(values.repoId) : null, tokenExpiresInDays: lifetimeOf(values.tokenExpiresInDays),
+        };
         if (values.priority !== '') {
             body.priority = Number(values.priority);
         }
@@ -1045,8 +1105,17 @@ const actions = {
         });
         return { section: 'flags', ok: 'Saved.' };
     },
-    'new-token': async (el, data) => {
-        const { token } = await api('POST', tenantPath(`/flag-sources/${data.sourceId}/tokens`));
+    'new-token': async (form, data) => {
+        const values = formValues(form);
+        const environments = values.environments || ENVS;
+        if (!environments.length) {
+            throw new Error('Pick at least one environment the token may send.');
+        }
+        const { token } = await api('POST', tenantPath(`/flag-sources/${data.sourceId}/tokens`), {
+            expiresInDays: lifetimeOf(values.expiresInDays),
+            // Every environment ticked = no limit, so the token keeps working if the sender later adds one.
+            environments: environments.length === ENVS.length ? null : environments,
+        });
         settingsState.once = { token };
         return { section: 'flags' };
     },
@@ -1174,7 +1243,7 @@ async function initSettings(){
 }
 
 if (typeof module !== 'undefined') {
-    module.exports = { onboardingSteps, SourceStatus, renderGettingStarted, SetupCard, renderSidebar, pageFromHash, repoBadge, initials, renderGeneral, renderMembers, renderDangerZone, renderGitHub, renderJira, renderFlags, renderSourcesPage, FlagRow, formValues, actions, settingsState, runAction, load, api, ApiError };
+    module.exports = { onboardingSteps, SourceStatus, tokenState, TokenLine, renderGettingStarted, SetupCard, renderSidebar, pageFromHash, repoBadge, initials, renderGeneral, renderMembers, renderDangerZone, renderGitHub, renderJira, renderFlags, renderSourcesPage, FlagRow, formValues, actions, settingsState, runAction, load, api, ApiError };
 } else if (SETTINGS_TENANT_ID) {
     initSettings();
 }
