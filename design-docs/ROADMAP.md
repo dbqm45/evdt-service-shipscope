@@ -12,7 +12,7 @@ Każdy punkt to osobny PR, wdrażalny sam; `[ ]` = do zrobienia, `[x]` = zrobion
   (`server/lib/flags.js`, `pg_advisory_xact_lock`), po nim 503 z `Retry-After`.
 - [x] Limit żądań per token na `POST /api/flags/ingest` (429 z `Retry-After`); adapter sam ponawia po 429/503.
 - [x] Opisy i klucze Jiry flag zapisywane jednym zapytaniem zamiast jednego `UPDATE` na flagę.
-- [ ] Tokeny ingest z datą ważności i opcjonalnym zakresem (środowiska); w Settings data wygaśnięcia i ostrzeżenie
+- [x] Tokeny ingest z datą ważności i opcjonalnym zakresem (środowiska); w Settings data wygaśnięcia i ostrzeżenie
   przed nią.
 
 ### 1. Poprawny model statusu (na samym pushu)

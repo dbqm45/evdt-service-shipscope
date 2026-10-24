@@ -16,6 +16,10 @@ const {
  */
 
 class IngestTokenError extends Error {}
+/** A known token past its expiry: refused like an unknown one (401), but noted on its source for Settings. */
+class IngestTokenExpiredError extends IngestTokenError {}
+/** A token limited to some environments sent a message covering another one (403). */
+class IngestScopeError extends Error {}
 /** The tenant's previous message is still being written for longer than the wait allows; the sender retries. */
 class IngestBusyError extends Error {
     constructor(message, retryAfterSeconds) {
@@ -56,6 +60,10 @@ function toSource(row) {
 const SOURCE_COLUMNS = 'id, name, kind, priority, repo_id, created_at, last_ingest_at, last_ingest, last_error, last_error_at';
 // A refused message's reason is kept for Settings up to this length.
 const MAX_ERROR_LENGTH = 500;
+// A new token lasts this long unless the admin picks another lifetime or none ("never").
+const DEFAULT_TOKEN_DAYS = 365;
+const DAY_MS = 24 * 60 * 60 * 1000;
+
 // How long an ingest waits for the tenant's previous message before answering 503, and what it tells the sender.
 const INGEST_LOCK_TIMEOUT_MS = 10_000;
 const INGEST_RETRY_AFTER_SECONDS = 5;
@@ -68,12 +76,13 @@ const LOCK_NOT_AVAILABLE = '55P03';
  * Creates a flag source with its first token. Admins only. The token is returned once and never stored.
  *
  * @param {import('pg').Pool} pool
- * @param {{ tenantId: string, actorUserId: string, name: string, kind: 'build'|'runtime', priority?: number, repoId?: number|null }} input
- * @returns {Promise<{ source: FlagSource, token: { id: string, token: string } }>}
+ * @param {{ tenantId: string, actorUserId: string, name: string, kind: 'build'|'runtime', priority?: number, repoId?: number|null, tokenExpiresInDays?: number|null, tokenEnvironments?: string[]|null }} input
+ *   the first token's lifetime and environments, as for createIngestToken()
+ * @returns {Promise<{ source: FlagSource, token: { id: string, token: string, expiresAt: Date|null, environments: string[]|null } }>}
  * @throws {FlagSourceNotFoundError} repoId isn't tracked
  * @throws {FlagSourceConflictError} the name is taken
  */
-async function createFlagSource(pool, { tenantId, actorUserId, name, kind, priority, repoId = null }) {
+async function createFlagSource(pool, { tenantId, actorUserId, name, kind, priority, repoId = null, tokenExpiresInDays, tokenEnvironments = null }) {
     return withScope(pool, { tenantId }, async (client) => {
         await assertAdmin(client, { tenantId, userId: actorUserId });
         await assertTrackedRepo(client, tenantId, repoId);
@@ -81,13 +90,29 @@ async function createFlagSource(pool, { tenantId, actorUserId, name, kind, prior
             `INSERT INTO flag_sources (tenant_id, name, kind, priority, repo_id) VALUES ($1, $2, $3, $4, $5) RETURNING ${SOURCE_COLUMNS}`,
             [tenantId, name, kind, priority ?? DEFAULT_PRIORITY[kind], repoId]
         ));
-        const { token, tokenHash } = newToken();
-        const { rows: [tokenRow] } = await client.query(
-            'INSERT INTO ingest_tokens (token_hash, tenant_id, source_id, created_by) VALUES ($1, $2, $3, $4) RETURNING id',
-            [tokenHash, tenantId, row.id, actorUserId]
-        );
-        return { source: toSource(row), token: { id: tokenRow.id, token } };
+        const token = await insertToken(client, { tenantId, sourceId: row.id, actorUserId, expiresInDays: tokenExpiresInDays, environments: tokenEnvironments });
+        return { source: toSource(row), token };
     });
+}
+
+/**
+ * Inside withScope: stores a new token for a source and returns it (the only time it is visible).
+ *
+ * @param {import('pg').PoolClient} client
+ * @param {{ tenantId: string, sourceId: string, actorUserId: string, expiresInDays?: number|null, environments?: string[]|null, now?: Date }} input
+ *   `expiresInDays` undefined = DEFAULT_TOKEN_DAYS, null = never; `environments` null/undefined = every environment
+ * @returns {Promise<{ id: string, token: string, expiresAt: Date|null, environments: string[]|null }>}
+ */
+async function insertToken(client, { tenantId, sourceId, actorUserId, expiresInDays, environments = null, now = new Date() }) {
+    const days = expiresInDays === undefined ? DEFAULT_TOKEN_DAYS : expiresInDays;
+    const expiresAt = days === null ? null : new Date(now.getTime() + days * DAY_MS);
+    const scope = environments && environments.length ? [...new Set(environments)].sort() : null;
+    const { token, tokenHash } = newToken();
+    const { rows: [row] } = await client.query(
+        'INSERT INTO ingest_tokens (token_hash, tenant_id, source_id, created_by, expires_at, environments) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id',
+        [tokenHash, tenantId, sourceId, actorUserId, expiresAt, scope]
+    );
+    return { id: row.id, token, expiresAt, environments: scope };
 }
 
 /** Runs an INSERT/UPDATE of a source, turning a duplicate name into FlagSourceConflictError. */
@@ -143,42 +168,40 @@ async function deleteFlagSource(pool, { tenantId, actorUserId, sourceId }) {
  *
  * @param {import('pg').Pool} pool
  * @param {{ tenantId: string, actorUserId: string }} input
- * @returns {Promise<Array<FlagSource & { tokens: Array<{ id: string, createdAt: Date, lastUsedAt: Date|null }> }>>}
+ * @returns {Promise<Array<FlagSource & { tokens: Array<{ id: string, createdAt: Date, lastUsedAt: Date|null, expiresAt: Date|null, environments: string[]|null }> }>>}
  */
 async function listFlagSources(pool, { tenantId, actorUserId }) {
     return withScope(pool, { tenantId }, async (client) => {
         await assertAdmin(client, { tenantId, userId: actorUserId });
         const { rows: sources } = await client.query(`SELECT ${SOURCE_COLUMNS} FROM flag_sources WHERE tenant_id = $1 ORDER BY name`, [tenantId]);
         const { rows: tokens } = await client.query(
-            'SELECT id, source_id, created_at, last_used_at FROM ingest_tokens WHERE tenant_id = $1 ORDER BY created_at',
+            'SELECT id, source_id, created_at, last_used_at, expires_at, environments FROM ingest_tokens WHERE tenant_id = $1 ORDER BY created_at',
             [tenantId]
         );
         return sources.map((s) => ({
             ...toSource(s),
-            tokens: tokens.filter((t) => t.source_id === s.id).map((t) => ({ id: t.id, createdAt: t.created_at, lastUsedAt: t.last_used_at })),
+            tokens: tokens.filter((t) => t.source_id === s.id).map((t) => ({
+                id: t.id, createdAt: t.created_at, lastUsedAt: t.last_used_at, expiresAt: t.expires_at, environments: t.environments,
+            })),
         }));
     });
 }
 
 /**
- * Adds a token to a source (e.g. to rotate one). Admins only.
+ * Adds a token to a source (e.g. to rotate one). Admins only. It expires after `expiresInDays` (default
+ * DEFAULT_TOKEN_DAYS, null = never) and may only send the listed `environments` (default: all).
  *
  * @param {import('pg').Pool} pool
- * @param {{ tenantId: string, actorUserId: string, sourceId: string }} input
- * @returns {Promise<{ id: string, token: string }>}
+ * @param {{ tenantId: string, actorUserId: string, sourceId: string, expiresInDays?: number|null, environments?: string[]|null }} input
+ * @returns {Promise<{ id: string, token: string, expiresAt: Date|null, environments: string[]|null }>}
  * @throws {FlagSourceNotFoundError}
  */
-async function createIngestToken(pool, { tenantId, actorUserId, sourceId }) {
+async function createIngestToken(pool, { tenantId, actorUserId, sourceId, expiresInDays, environments = null }) {
     return withScope(pool, { tenantId }, async (client) => {
         await assertAdmin(client, { tenantId, userId: actorUserId });
         const { rows: source } = await client.query('SELECT 1 FROM flag_sources WHERE tenant_id = $1 AND id = $2', [tenantId, sourceId]);
         if (!source.length) throw new FlagSourceNotFoundError('No such flag source');
-        const { token, tokenHash } = newToken();
-        const { rows } = await client.query(
-            'INSERT INTO ingest_tokens (token_hash, tenant_id, source_id, created_by) VALUES ($1, $2, $3, $4) RETURNING id',
-            [tokenHash, tenantId, sourceId, actorUserId]
-        );
-        return { id: rows[0].id, token };
+        return insertToken(client, { tenantId, sourceId, actorUserId, expiresInDays, environments });
     });
 }
 
@@ -213,8 +236,8 @@ async function ingestFlags(pool, { token, payload, now = new Date(), lockTimeout
     try {
         return await applyIngest(pool, { token, payload, now, lockTimeoutMs });
     } catch (err) {
-        // Best effort: the sender gets its 400 either way.
-        if (err instanceof IngestPayloadError) await recordIngestError(pool, { token, message: err.message, now }).catch(() => {});
+        // Best effort: the sender gets its 400/401/403 either way.
+        if (err instanceof IngestPayloadError || err instanceof IngestTokenExpiredError || err instanceof IngestScopeError) await recordIngestError(pool, { token, message: err.message, now }).catch(() => {});
         throw err;
     }
 }
@@ -225,14 +248,14 @@ async function ingestFlags(pool, { token, payload, now = new Date(), lockTimeout
  *
  * @param {import('pg').PoolClient} client
  * @param {string} token
- * @returns {Promise<{ tokenId: string, tenantId: string, sourceId: string }|null>} null for an unknown token
+ * @returns {Promise<{ tokenId: string, tenantId: string, sourceId: string, expiresAt: Date|null, environments: string[]|null }|null>} null for an unknown token
  */
 async function resolveToken(client, token) {
-    const { rows: found } = await client.query('SELECT id, tenant_id, source_id FROM ingest_tokens WHERE token_hash = $1', [hashToken(token)]);
+    const { rows: found } = await client.query('SELECT id, tenant_id, source_id, expires_at, environments FROM ingest_tokens WHERE token_hash = $1', [hashToken(token)]);
     if (!found.length) return null;
-    const { id: tokenId, tenant_id: tenantId, source_id: sourceId } = found[0];
+    const { id: tokenId, tenant_id: tenantId, source_id: sourceId, expires_at: expiresAt, environments } = found[0];
     await setScope(client, { tenantId, ingestTokenHash: '' });
-    return { tokenId, tenantId, sourceId };
+    return { tokenId, tenantId, sourceId, expiresAt, environments };
 }
 
 /**
@@ -261,6 +284,9 @@ async function applyIngest(pool, { token, payload, now, lockTimeoutMs }) {
         const found = await resolveToken(client, token);
         if (!found) throw new IngestTokenError('Invalid ingest token');
         const { tokenId, tenantId, sourceId } = found;
+        if (found.expiresAt && found.expiresAt <= now) {
+            throw new IngestTokenExpiredError(`Ingest token expired on ${found.expiresAt.toISOString().slice(0, 10)}; create a new one in Settings`);
+        }
         // One ingest per tenant at a time, so two messages from one source can't interleave their full-state diffs.
         // The wait is bounded: a request queued behind a slow one gives its pooled connection back instead of
         // holding it, so a flood of messages for one tenant can't use up the pool every other request needs.
@@ -277,6 +303,10 @@ async function applyIngest(pool, { token, payload, now, lockTimeoutMs }) {
 
         const { rows: [source] } = await client.query('SELECT name FROM flag_sources WHERE tenant_id = $1 AND id = $2', [tenantId, sourceId]);
         const { complete, environments, observations, metaByKey } = checkPayload(payload, now);
+        const outside = found.environments ? environments.filter((env) => !found.environments.includes(env)) : [];
+        if (outside.length) {
+            throw new IngestScopeError(`This token may only send ${found.environments.join(', ')}, not ${outside.join(', ')}`);
+        }
         const changedBy = payload.changedBy || source.name;
         const keys = [...new Set(observations.map((o) => o.key))];
 
@@ -454,6 +484,8 @@ module.exports = {
     setFlagDetails,
     TOKEN_PATTERN,
     IngestTokenError,
+    IngestTokenExpiredError,
+    IngestScopeError,
     IngestBusyError,
     IngestPayloadError,
     recordIngestError,

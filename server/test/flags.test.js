@@ -280,6 +280,44 @@ test('flag sources: admins create, list (never the tokens), rename, rotate token
     assert.strictEqual((await app.inject({ method: 'DELETE', url: `${url}/${created.source.id}`, cookies: { sid: alice } })).statusCode, 404);
 });
 
+test('tokens: a year by default, a chosen lifetime or none, optionally only some environments; refusals noted on the source', async (t) => {
+    const { app, alice, tenantId, newSource, ingest, rows } = await setup(t);
+    const url = `/tenants/${tenantId}/flag-sources`;
+    const created = await newSource({ name: 'CI', kind: 'build', tokenEnvironments: ['qa', 'test'] });
+    const days = (iso) => Math.round((new Date(iso) - Date.now()) / 86_400_000);
+    assert.strictEqual(days(created.token.expiresAt), 365, 'a new token lasts a year unless told otherwise');
+    assert.deepStrictEqual(created.token.environments, ['qa', 'test']);
+    const never = (await newSource({ name: 'LD', kind: 'runtime', tokenExpiresInDays: null })).token;
+    assert.deepStrictEqual([never.expiresAt, never.environments], [null, null], 'no expiry, every environment');
+
+    const token = async (payload) => app.inject({ method: 'POST', url: `${url}/${created.source.id}/tokens`, cookies: { sid: alice }, payload });
+    const short = await token({ expiresInDays: 30, environments: ['prod'] });
+    assert.strictEqual(short.statusCode, 201, short.body);
+    assert.strictEqual(days(short.json().expiresAt), 30);
+    for (const bad of [{ expiresInDays: 0 }, { expiresInDays: 731 }, { environments: [] }, { environments: ['staging'] }, { environments: ['qa', 'qa'] }, { other: 1 }]) {
+        assert.strictEqual((await token(bad)).statusCode, 400, JSON.stringify(bad));
+    }
+    const listed = (await app.inject({ method: 'GET', url, cookies: { sid: alice } })).json().sources.find((s) => s.name === 'CI').tokens;
+    assert.deepStrictEqual(listed.map((tk) => [days(tk.expiresAt), tk.environments]), [[365, ['qa', 'test']], [30, ['prod']]]);
+
+    // Scope: the qa/test token may not send prod; the refusal is a 403 noted on the source.
+    let res = await ingest(created.token.token, { observations: [obs('a', 'qa', 'on'), obs('a', 'prod', 'on')] });
+    assert.strictEqual(res.statusCode, 403);
+    assert.match(res.json().error, /may only send qa, test, not prod/);
+    assert.match((await rows('SELECT last_error FROM flag_sources WHERE id = $1', [created.source.id]))[0].last_error, /not prod/);
+    assert.strictEqual((await ingest(created.token.token, { observations: [obs('a', 'qa', 'on')] })).statusCode, 200);
+    res = await ingest(created.token.token, { complete: true, environments: ['prod'], observations: [] });
+    assert.strictEqual(res.statusCode, 403, 'covering prod with an empty full state is sending prod too');
+
+    // Expiry: past its date a token is refused like an unknown one, and the reason is noted for Settings.
+    await rows("UPDATE ingest_tokens SET expires_at = now() - interval '1 minute' WHERE id = $1", [short.json().id]);
+    res = await ingest(short.json().token, { observations: [obs('a', 'prod', 'on')] });
+    assert.strictEqual(res.statusCode, 401);
+    assert.match(res.json().error, /expired on \d{4}-\d{2}-\d{2}; create a new one in Settings/);
+    assert.match((await rows('SELECT last_error FROM flag_sources WHERE id = $1', [created.source.id]))[0].last_error, /expired/);
+    assert.strictEqual((await ingest(never.token, { observations: [obs('b', 'prod', 'on')] })).statusCode, 200);
+});
+
 test('ingest: one tenant\'s ingests run one at a time', async (t) => {
     const { pool, tenantId, newSource, ingest } = await setup(t);
     const { token } = (await newSource({ name: 'CI', kind: 'build' })).token;

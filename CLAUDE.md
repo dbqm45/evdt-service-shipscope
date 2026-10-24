@@ -95,7 +95,7 @@ changelog entry by hand outside a `chore(release)` PR.
 
 Deployed to Render per `context/foundation/infrastructure.md`: `render.yaml` builds both the Web Service and the
 Background Worker from the repo root (`npm ci --prefix server`, `node server/web.js`), not `rootDir: server`, which
-would hide `docs/` from the Web Service. Migrations (`server/migrations/001`–`016`, applied by the hand-rolled
+would hide `docs/` from the Web Service. Migrations (`server/migrations/001`–`017`, applied by the hand-rolled
 `lib/migrate.js`) run as each service's `preDeployCommand` under an advisory lock (`test/render-blueprint.test.js`).
 Dependencies, all in `server/package.json`: `pg`, `fastify`, `@fastify/cookie`. Fastify runs with
 `removeAdditional: false, coerceTypes: false`: unknown fields and wrong types are a 400, never silently fixed.
@@ -158,7 +158,10 @@ emptied. `sync_requests` (webhook queue) is the one non-RLS table; it holds no t
   `lib/flags-logic.js`) is refused on ingest, skipped when reading, and not taken from Jira; the adapter refuses it too.
   The ingest is guarded for a shared service: a per-token token bucket (`lib/request-limiter.js`, burst 60 then 1/s,
   429 + `Retry-After`) runs before any database work, and the wait for the per-tenant ingest lock is bounded
-  (`lock_timeout` 10 s, then 503 + `Retry-After`); the adapter retries both.
+  (`lock_timeout` 10 s, then 503 + `Retry-After`); the adapter retries both. Tokens (migration `017`) expire after a
+  chosen lifetime (default 365 days, or never; older tokens never) and may be limited to some environments; an
+  expired token is a 401 and an out-of-scope message a 403, both noted on the source, and Settings plus the checklist
+  warn `TOKEN_WARNING_DAYS` (30) before a source's last token runs out.
   The body schema is `server/schemas/flags-ingest.v2.schema.json`, used by the route and served at
   `GET /api/flags/ingest/schema`; the sender's guide (format, where flags live, the adapter, `jq` recipes) is
   `ONBOARDING.md`. Each source keeps its status (migration `016`): the last accepted message's summary

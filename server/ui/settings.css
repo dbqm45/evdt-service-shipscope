@@ -140,3 +140,8 @@
     .settings-card.flush .settings-table tr { padding: 8px 0; border-bottom: 1px solid var(--border-soft); }
     .settings-card.flush .settings-table td { border-bottom: none; }
 }
+
+/* A new token's environments: a row of checkboxes inside its form. */
+.settings-envs { border: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 10px; font-size: 12px; color: var(--muted); }
+.settings-envs legend { float: left; padding: 0; margin-right: 2px; }
+.settings-token { display: block; margin-top: 3px; }

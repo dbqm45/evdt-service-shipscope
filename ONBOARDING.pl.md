@@ -50,7 +50,9 @@ w repozytorium, pod adresem aplikacji, w AWS AppConfig czy w serwisie flag. Każ
    jednego rodzaju podaje tę samą flagę, wygrywa wyższy) i opcjonalnie komponent (śledzone repozytorium), do którego
    należą jego flagi. Dashboard pokazuje wartość runtime, jeśli jest, inaczej build.
 2. Utwórz token dla źródła. Jest pokazany tylko raz: zapisz go jako sekret tam, gdzie działa nadawca (np. sekret
-   GitHub Actions `SHIPSCOPE_FLAGS_TOKEN`). Drugi token pozwala na rotację bez przerwy.
+   GitHub Actions `SHIPSCOPE_FLAGS_TOKEN`). Token jest ważny rok, chyba że wybierzesz inny czas (albo bez wygasania),
+   i można go ograniczyć do środowisk, które obsługuje jego nadawca. Settings i checklista ostrzegają 30 dni przed
+   wygaśnięciem ostatniego tokenu źródła; drugi token pozwala na rotację bez przerwy.
 3. Niech nadawca wysyła **pełny stan** flag źródła po każdej zmianie albo cyklicznie. Ponowne wysłanie tego samego
    stanu niczego nie zmienia, więc harmonogram jest bezpieczny.
 
@@ -175,7 +177,8 @@ narzędzie umie uruchomić potok. Ponowne wysłanie tego samego stanu niczego ni
 | `… is not written out as a value` | Wartość wyliczana albo importowana w pliku `.ts`: wpisz ją wprost albo wypisz flagi jako JSON w kroku wcześniej. |
 | `several objects (…); name the one with the flags in path` | Ustaw `path` na nazwę const. |
 | `flag x differs between a and b` | Dwa pliki dają jednej fladze różne wartości w jednym środowisku: użyj osobnego źródła dla każdej grupy plików. |
-| `ShipScope answered 401` | Zły albo unieważniony token albo sekret nie trafia do kroku. |
+| `ShipScope answered 401` | Zły, unieważniony albo wygasły token albo sekret nie trafia do kroku. |
+| `ShipScope answered 403` | Token może wysyłać tylko niektóre środowiska (Settings → Sources); użyj takiego, który obejmuje to środowisko. |
 | `ShipScope answered 429` albo `503` | Chwilowe; adapter już odczekał i spróbował jeszcze trzy razy. Wysyłaj rzadziej albo spróbuj później. |
 | `ShipScope answered 400: …` | Wiadomość łamie regułę (np. klucz ze spacją); powód jest w tej linii i przy źródle w Settings. |
 

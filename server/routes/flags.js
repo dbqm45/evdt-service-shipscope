@@ -54,7 +54,10 @@ function registerFlagRoutes(app, ctx) {
 
     app.get('/api/flags/ingest/schema', async (request, reply) => reply.type('application/schema+json').send(INGEST_SCHEMA));
 
-    const sourceBody = (required) => ({
+    // A token's lifetime in days (null = never; left out = the default year) and the environments it may send.
+    const EXPIRES_IN_DAYS = { anyOf: [{ type: 'null' }, { type: 'integer', minimum: 1, maximum: 730 }] };
+    const TOKEN_ENVIRONMENTS = { anyOf: [{ type: 'null' }, { type: 'array', minItems: 1, uniqueItems: true, items: { type: 'string', enum: ['test', 'qa', 'prod'] } }] };
+    const sourceBody = (required, extra = {}) => ({
         type: 'object',
         required,
         additionalProperties: false,
@@ -63,13 +66,14 @@ function registerFlagRoutes(app, ctx) {
             kind: { type: 'string', enum: ['build', 'runtime'] },
             priority: { type: 'integer', minimum: 0, maximum: 1000 },
             repoId: { anyOf: [{ type: 'null' }, { type: 'integer', minimum: 1 }] },
+            ...extra,
         },
     });
     const sourceParams = { type: 'object', required: ['tenantId', 'sourceId'], properties: { tenantId: UUID_PARAM, sourceId: UUID_PARAM } };
 
     app.post('/tenants/:tenantId/flag-sources', {
         preHandler: requireUser,
-        schema: { params: tenantOnlyParams, body: sourceBody(['name', 'kind']) },
+        schema: { params: tenantOnlyParams, body: sourceBody(['name', 'kind'], { tokenExpiresInDays: EXPIRES_IN_DAYS, tokenEnvironments: TOKEN_ENVIRONMENTS }) },
     }, async (request, reply) => reply.code(201).send(await createFlagSource(pool, {
         tenantId: request.params.tenantId, actorUserId: request.user.id, ...request.body,
     })));
@@ -123,9 +127,12 @@ function registerFlagRoutes(app, ctx) {
 
     app.post('/tenants/:tenantId/flag-sources/:sourceId/tokens', {
         preHandler: requireUser,
-        schema: { params: sourceParams },
+        schema: {
+            params: sourceParams,
+            body: { type: ['object', 'null'], additionalProperties: false, properties: { expiresInDays: EXPIRES_IN_DAYS, environments: TOKEN_ENVIRONMENTS } },
+        },
     }, async (request, reply) => reply.code(201).send(await createIngestToken(pool, {
-        tenantId: request.params.tenantId, actorUserId: request.user.id, sourceId: request.params.sourceId,
+        tenantId: request.params.tenantId, actorUserId: request.user.id, sourceId: request.params.sourceId, ...(request.body || {}),
     })));
 
     app.delete('/tenants/:tenantId/ingest-tokens/:tokenId', {
