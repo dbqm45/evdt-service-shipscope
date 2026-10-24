@@ -260,7 +260,9 @@ reading it through `loadData()` in a `vm`; `server-test.yml` also runs on `docs/
   `flagStateFor()`: `flagStatesByComponent`, or the legacy slots for data without it), one without is neutral, one
   with a linked flag but not the code makes it partial. It gives `none` / `deployed` (every gate off) / `released`
   (every gate on) / `partial` / `deployed_code_only` (no gate), plus `uncertain`: reached services with
-  `flagCoverage: 'unknown'`, shown as a "?" on the pill and named in the open row.
+  `flagCoverage: 'unknown'` and gate services whose `flagFreshness` is not `fresh`, each
+  `{ component, reason: 'untracked'|'stale'|'error'|'unknown', observedAt }`, shown as a "?" on the pill with
+  `doubtText()` in the tooltip and the open row.
 
 ## Frontend (`docs/`)
 
@@ -323,7 +325,8 @@ than `GHOST_FLAG_DAYS` = 30 since the later of deploy and last flag change) and 
 tooltips (`statusLabelTooltip()`, also in the `.table-legend` row). `#filterHideTasks` hides Tasks; it is an
 ordinary filter reset by "Clear" and on PI switch. The `FALLBACK` dataset (`EBO-99001`, `legacyMigrationEnabled`,
 deploy `d21` under `EVP-4288`) exercises the ghost-flag and open-bug badges in the `file://` preview, and its BFF
-(`flagCoverage: 'unknown'`) the "?" on the issues whose code reached it.
+(`flagCoverage: 'unknown'`) and its charger service's stale prod source (`flagFreshness`) the "?" on the issues
+whose code reached them.
 
 **Technical view.** Summary cards, the component × env matrix (`app-technical-matrix.js`), Deployment history
 (`app-technical-timeline.js`) and the flags list (`app-technical-flags.js`). Matrix rows have `min-height: 70px`

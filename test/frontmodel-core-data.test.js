@@ -148,7 +148,7 @@ test('buildFallbackData returns a coherent dataset', () => {
           byPi: [...f.jiraIssuesByPi.keys()], nDeps: f.deployments.length, nIssues: [...f.jiraIssuesByPi.values()].flat().length,
           sprintDates: f.jiraIndex.pis[0].sprints, idx: f.issueStatusIndex['EBO-16955'], jiraBrowseUrl: f.jiraBrowseUrl, nullSprintPi: f.jiraIndex.pis.find(p => p.pi === 'PI-27.1').sprints }; })())`));
 
-    assert.deepEqual(out.keys.sort(), ['componentsOrder', 'deployments', 'flagStateHistory', 'flagStates', 'flagsMeta', 'issueDeployments', 'issueStatusIndex', 'jiraBrowseUrl', 'jiraIndex', 'jiraIssuesByPi']);
+    assert.deepEqual(out.keys.sort(), ['componentsOrder', 'deployments', 'flagFreshness', 'flagStateHistory', 'flagStates', 'flagsMeta', 'issueDeployments', 'issueStatusIndex', 'jiraBrowseUrl', 'jiraIndex', 'jiraIssuesByPi']);
     assert.equal(out.current, 'PI-27.3');
     assert.deepEqual(out.pis, ['PI-27.3', 'PI-27.2', 'PI-27.1', 'PI-26.5']);
     assert.deepEqual(out.byPi.sort(), ['PI-26.5', 'PI-27.1', 'PI-27.2', 'PI-27.3']);

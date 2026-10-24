@@ -264,6 +264,19 @@ test('settings page: the flags section -- each flag with its state and Jira link
     assert.match(out, /none — the source can&#39;t send anything/);
     assert.match(out, /data-action="create-source"/);
     assert.match(sourcesPage({ error: 'nope' }), /settings-error">nope/);
+
+    // Freshness per environment, and how long a confirmation counts.
+    const fresh = sourcesPage([{ ...sources[0], staleAfterMinutes: 90, effectiveStaleAfterMinutes: 90, environments: [
+        { env: 'prod', state: 'fresh', observedAt: '2026-10-01T10:00:00Z' }, { env: 'qa', state: 'stale', observedAt: '2026-09-01T10:00:00Z' },
+        { env: 'test', state: 'error', observedAt: null },
+    ] }]);
+    assert.match(fresh, /<span class="state-tag ok" title="last full state [^"]+">prod: confirmed \S/);
+    assert.match(fresh, /<span class="state-tag warn"[^>]*>qa: not confirmed since \S/);
+    assert.match(fresh, /<span class="state-tag fail" title="no full state yet">test: refused<\/span>/);
+    assert.match(fresh, /stale after 90 min/);
+    assert.match(fresh, /name="staleAfterMinutes" type="number" min="5" max="43200" placeholder="default" value="90"/);
+    assert.match(sourcesPage([{ ...sources[0], effectiveStaleAfterMinutes: 1440, environments: [] }]), /No environment confirmed yet[\s\S]*stale after 24 h/);
+    assert.match(sourcesPage([{ ...sources[1], effectiveStaleAfterMinutes: null, environments: [] }]), /never stale/);
 });
 
 test('settings page: the Jira section offers the flag convention -- none, prefixed labels, or a field', () => {
@@ -492,7 +505,7 @@ test('settings page: actions send what the API expects, then reload their sectio
 
     calls.length = 0;
     await ui.runAction('create-source', form([['name', ' LD '], ['kind', 'runtime'], ['priority', ''], ['repoIds', '101', false], ['tokenExpiresInDays', '365']], {}, 'flags'));
-    assert.deepStrictEqual(calls[0].body, { name: 'LD', kind: 'runtime', repoIds: [], tokenExpiresInDays: 365 }, 'an empty priority takes the server default');
+    assert.deepStrictEqual(calls[0].body, { name: 'LD', kind: 'runtime', repoIds: [], tokenExpiresInDays: 365, staleAfterMinutes: null }, 'an empty priority takes the server default');
     assert.deepStrictEqual(ui.settingsState.once, { token: 'sst_new' });
     calls.length = 0;
     await ui.runAction('create-source', form([['name', 'Never'], ['kind', 'build'], ['priority', ''], ['tokenExpiresInDays', 'never']], {}, 'flags'));
@@ -512,8 +525,8 @@ test('settings page: actions send what the API expects, then reload their sectio
     assert.deepStrictEqual(calls, [], 'no environment: nothing sent');
     assert.deepStrictEqual(ui.settingsState.messages.flags, { error: true, text: 'Pick at least one environment the token may send.' });
     calls.length = 0;
-    await ui.runAction('save-source', form([['name', 'LD'], ['kind', 'build'], ['priority', '5'], ['repoIds', '101', true], ['repoIds', '102', true], ['repoIds', '103', false]], { sourceId: 's9' }, 'flags'));
-    assert.deepStrictEqual(calls[0], { method: 'PUT', url: `${base}/flag-sources/s9`, body: { name: 'LD', kind: 'build', priority: 5, repoIds: [101, 102] } });
+    await ui.runAction('save-source', form([['name', 'LD'], ['kind', 'build'], ['priority', '5'], ['repoIds', '101', true], ['repoIds', '102', true], ['repoIds', '103', false], ['staleAfterMinutes', '30']], { sourceId: 's9' }, 'flags'));
+    assert.deepStrictEqual(calls[0], { method: 'PUT', url: `${base}/flag-sources/s9`, body: { name: 'LD', kind: 'build', priority: 5, repoIds: [101, 102], staleAfterMinutes: 30 } });
 
     // Deleting the workspace: asks first, sends the typed name, then leaves for / (another workspace, or /start).
     global.location = { pathname: `/t/${TENANT}/settings`, assign: (url) => { global.location.assigned = url; } };

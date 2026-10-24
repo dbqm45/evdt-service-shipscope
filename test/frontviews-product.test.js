@@ -268,11 +268,11 @@ test('a service nobody said anything about puts a "?" on the pill and a note in 
     inCtx(ctx, 'u1', issue('U-1'));
     const row = String(run('issueRowHtml(u1, true, false)'));
 
-    assert.match(row, /title="Partially visible[^"]*\. Not sure: worker has no flag source and is not marked as having no flags">Partial\?<\/span>/);
+    assert.match(row, /title="Partially visible[^"]*\. Not sure — worker: no flag source covers it and it is not marked as having no flags">Partial\?<\/span>/);
     const breakdown = String(run('issueBreakdownHtml(u1)'));
 
     assert.match(breakdown, /PARTIAL/);
-    assert.match(breakdown, /Not sure<\/span><span>worker: no flag source covers it/);
+    assert.match(breakdown, /Not sure<\/span><span>worker: no flag source covers it and it is not marked as having no flags \(Settings\)/);
 
     run('state.componentsOrder[1].flagCoverage = "none"');
     assert.match(String(run('issueRowHtml(u1, true, false)')), />Partial<\/span>/, 'declared flag-free: no doubt');

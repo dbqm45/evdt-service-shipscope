@@ -32,7 +32,7 @@ Każdy punkt to osobny PR, wdrażalny sam; `[ ]` = do zrobienia, `[x]` = zrobion
   próg świeżości per źródło, stany `fresh`/`stale`/`error`/`unknown`.
 - [x] Wspólna ścieżka zapisu `applyObservations()` (wydzielona z `applyIngest()`, najpierw test
   charakteryzujący).
-- [ ] UI: „niepotwierdzone od X", „Released?" z powodem; stan każdego źródła per środowisko w Settings.
+- [x] UI: „niepotwierdzone od X", „Released?" z powodem; stan każdego źródła per środowisko w Settings.
 - [ ] Metryki i strukturalne logi (wiek kolejki `sync_requests`, czas passów, błędy źródeł), alerty dla
   operatora.
 

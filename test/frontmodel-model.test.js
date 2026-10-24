@@ -204,9 +204,9 @@ test('issueStatusForEnv per service (ADR-003): own state per service, neutral se
     // ... but when nobody said whether it has flags, the level stays and the service is listed as uncertain.
     setState({ flagsMeta: { fe: flagsMeta.fe }, deployments: deps('web', 'worker'), componentsOrder: comps({ web: 'tracked', worker: 'unknown' }),
         flagStatesByComponent: { fe: { prod: { web: v('on') } } } });
-    assert.deepEqual(j('(({level, uncertain}) => ({level, uncertain}))(issueStatusForEnv({key:"K-1"},"prod"))'), { level: 'released', uncertain: ['worker'] });
+    assert.deepEqual(j('(({level, uncertain}) => ({level, uncertain}))(issueStatusForEnv({key:"K-1"},"prod"))'), { level: 'released', uncertain: [{ component: 'worker', reason: 'untracked', observedAt: null }] });
     setState({ deployments: deps('worker'), componentsOrder: comps({ worker: 'unknown' }), flagStatesByComponent: {} });
-    assert.deepEqual(j('(({level, uncertain}) => ({level, uncertain}))(issueStatusForEnv({key:"K-1"},"prod"))'), { level: 'deployed_code_only', uncertain: ['worker'] });
+    assert.deepEqual(j('(({level, uncertain}) => ({level, uncertain}))(issueStatusForEnv({key:"K-1"},"prod"))'), { level: 'deployed_code_only', uncertain: [{ component: 'worker', reason: 'untracked', observedAt: null }] });
     assert.deepEqual(j('issueStatusForEnv({key:"K-1"},"qa").uncertain'), [], 'nothing deployed: nothing to doubt');
 
     // A flag reported only through flagStatesByComponent still links its service; a service without the
@@ -215,6 +215,24 @@ test('issueStatusForEnv per service (ADR-003): own state per service, neutral se
         flagStatesByComponent: { fe: { prod: { web: v('on') } } } });
     assert.equal(level(), 'partial');
     assert.deepEqual(j('issueLinks({key:"K-1"})'), [{ component: 'web', flagKey: 'fe' }]);
+
+    // A gate whose values are not confirmed (stale, refused, never confirmed) keeps the level and adds a doubt; a
+    // fresh one, or a service without the issue's code, does not.
+    const fresh = (component, s, observedAt = at) => ({ [component]: { prod: { state: s, observedAt, sources: [] } } });
+    setState({ flagsMeta, deployments: deps('web', 'api'), componentsOrder: comps({ web: 'tracked', api: 'tracked' }),
+        flagStatesByComponent: { fe: { prod: { web: v('on') } }, be: { prod: { api: v('on') } } },
+        flagFreshness: { ...fresh('web', 'fresh'), ...fresh('api', 'stale', '2026-10-01T08:00:00.000Z') } });
+    assert.deepEqual(j('(({level, uncertain}) => ({level, uncertain}))(issueStatusForEnv({key:"K-1"},"prod"))'),
+        { level: 'released', uncertain: [{ component: 'api', reason: 'stale', observedAt: '2026-10-01T08:00:00.000Z' }] });
+    assert.match(run('doubtText(issueStatusForEnv({key:"K-1"},"prod").uncertain[0])'), /^api: flag values not confirmed since 01\.10\.2026 \d\d:\d\d$/);
+    run('state.flagFreshness.api.prod.state = "error"');
+    assert.equal(run('doubtText(issueStatusForEnv({key:"K-1"},"prod").uncertain[0])'), 'api: the last flag message from its source was refused');
+    run('state.flagFreshness.api.prod = { state: "unknown", observedAt: null, sources: [] }');
+    assert.equal(run('doubtText(issueStatusForEnv({key:"K-1"},"prod").uncertain[0])'), 'api: its flag source has not confirmed a full state yet');
+    setState({ flagsMeta, deployments: deps('web'), componentsOrder: comps({ web: 'tracked', api: 'tracked' }),
+        flagStatesByComponent: { fe: { prod: { web: v('on') } }, be: { prod: { api: v('on') } } }, flagFreshness: fresh('api', 'stale') });
+    assert.deepEqual(j('issueStatusForEnv({key:"K-1"},"prod").uncertain'), [], 'api has no code of this issue: its freshness is not the doubt');
+    assert.equal(run('doubtText({ component: "w", reason: "untracked" })'), 'w: no flag source covers it and it is not marked as having no flags');
 
     // Legacy data (no flagStatesByComponent): a partial value is no longer "on".
     setState({ flagsMeta: { fe: flagsMeta.fe }, deployments: deps('web'), flagStates: { fe: { prod: { build: { enabled: true, state: 'partial', rollout: 5 } } } } });
