@@ -63,6 +63,7 @@ const { buildApp } = require('../web');
 const { AUTH, testGitHubApp } = require('./helpers/auth');
 const { requestSync } = require('../lib/webhooks');
 const { webhookTick } = require('../worker');
+const { memoryLogger } = require('./helpers/memory-logger');
 
 async function setup(t, { githubApp = { ...testGitHubApp().app, webhookSecret: GH_SECRET }, atlassian = { clientId: 'atl-client', clientSecret: ATL_SECRET, encryptionKey: crypto.randomBytes(32), webhookUrl: null } } = {}) {
     const { pool, teardown } = await createTestDb();
@@ -133,8 +134,8 @@ test('worker: queued requests become a targeted sync under the regular locks; a 
             return { tenants: 1, issues: 0, failed: 0 };
         },
     };
-    const log = [];
-    await webhookTick(pool, { app: {}, atlassian: {} }, (m) => log.push(m), deps);
+    const { logger, lines } = memoryLogger();
+    await webhookTick(pool, { app: {}, atlassian: {} }, logger, deps);
     assert.deepStrictEqual(seen, [['github', [70104, 70105]], ['jira', ['webhook:1001']]]);
     assert.deepStrictEqual((await pool.query('SELECT external_key FROM sync_requests')).rows.map((r) => r.external_key), ['70105']);
 
@@ -142,14 +143,17 @@ test('worker: queued requests become a targeted sync under the regular locks; a 
     const holder = await pool.connect();
     await holder.query('SELECT pg_advisory_lock(727001)');
     seen.length = 0;
-    await webhookTick(pool, { app: {}, atlassian: null }, () => {}, deps);
+    await webhookTick(pool, { app: {}, atlassian: null }, memoryLogger().logger, deps);
     await holder.query('SELECT pg_advisory_unlock(727001)');
     holder.release();
     assert.deepStrictEqual(seen, []);
     assert.strictEqual((await pool.query('SELECT count(*)::int AS n FROM sync_requests')).rows[0].n, 1);
 
     // A sync that throws as a whole keeps its requests and is logged.
-    await webhookTick(pool, { app: {}, atlassian: null }, (m) => log.push(m), { syncAll: async () => { throw new Error('GitHub down'); } });
-    assert.match(log.at(-1), /github webhook sync failed: GitHub down/);
+    await webhookTick(pool, { app: {}, atlassian: null }, logger, { syncAll: async () => { throw new Error('GitHub down'); } });
+    const failed = lines.at(-1);
+    assert.deepStrictEqual([failed.level, failed.msg, failed.job, failed.source, failed.err.message], ['error', 'github webhook sync failed', 'webhooks', 'github', 'GitHub down']);
+    const { rows: [status] } = await pool.query("SELECT last_ok_at IS NOT NULL AS ever_ok, last_error FROM worker_status WHERE job = 'webhooks'");
+    assert.deepStrictEqual(status, { ever_ok: true, last_error: 'github: GitHub down' }, 'recorded for /health/worker');
     assert.strictEqual((await pool.query('SELECT count(*)::int AS n FROM sync_requests')).rows[0].n, 1);
 });

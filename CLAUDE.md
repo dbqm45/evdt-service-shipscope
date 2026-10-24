@@ -95,7 +95,7 @@ changelog entry by hand outside a `chore(release)` PR.
 
 Deployed to Render per `context/foundation/infrastructure.md`: `render.yaml` builds both the Web Service and the
 Background Worker from the repo root (`npm ci --prefix server`, `node server/web.js`), not `rootDir: server`, which
-would hide `docs/` from the Web Service. Migrations (`server/migrations/001`–`019`, applied by the hand-rolled
+would hide `docs/` from the Web Service. Migrations (`server/migrations/001`–`020`, applied by the hand-rolled
 `lib/migrate.js`) run as each service's `preDeployCommand` under an advisory lock (`test/render-blueprint.test.js`).
 Dependencies, all in `server/package.json`: `pg`, `fastify`, `@fastify/cookie`. Fastify runs with
 `removeAdditional: false, coerceTypes: false`: unknown fields and wrong types are a 400, never silently fixed.
@@ -117,7 +117,17 @@ flag_values, flag_value_history, jira_connections, jira_boards, jira_pis, jira_i
 `lib/withscope-guard.js` (`server/test/withscope-guard.test.js`) fails on any `pool.query(...)` in `server/lib/`
 that names an RLS table. Every tenant table cascades from `tenants`; `DELETE /tenants/:tenantId` (admin, name typed
 back, `deleteTenant()`) relies on it, and `server/test/tenant-delete.test.js` checks every table in `RLS_TABLES` is
-emptied. `sync_requests` (webhook queue) is the one non-RLS table; it holds no tenant data.
+emptied. `sync_requests` (webhook queue) and `worker_status` (migration `020`) are the non-RLS tables; neither holds
+tenant data.
+
+**Logs and health.** Both services log JSON lines through `lib/log.js` (`createLogger()`, `LOG_LEVEL`; the web
+service via Fastify's pino with `loggerOptions()`): `time`, `level`, `service`, `version`, `msg` plus fields, never a
+credential (`redact()`, credential-named fields masked) or a flag value. Web request lines carry `requestId` (also
+`X-Request-Id`), `tenantId` and `userId`; refusals log their `reason`. Worker jobs run through `runJob()` (outcome,
+`durationMs`, `recordRun()` into `worker_status`); the sync modules call `log(msg, { level, tenantId, repo, err })`.
+`GET /health/worker` (`lib/worker-status.js`, `judgeWorker()`) answers 503 for a missing heartbeat, a sync without
+success for 3 × `SYNC_INTERVAL_MINUTES` + 5 minutes, or an undrained webhook queue; an uptime monitor alerts on it
+(`server/README.md`, "Monitoring and logs"). Tested in `server/test/observability.test.js`.
 
 **Features, by PRD requirement:**
 

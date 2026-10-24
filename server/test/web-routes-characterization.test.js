@@ -22,7 +22,8 @@ const FULLY_CONFIGURED = {
 const EXPECTED_ROUTES = `\
 └── / (GET, HEAD)
     ├── health (GET, HEAD)
-    │   └── /db (GET, HEAD)
+    │   ├── /db (GET, HEAD)
+    │   └── /worker (GET, HEAD)
     ├── auth/github/login (GET, HEAD)
     ├── auth/github/callback (GET, HEAD)
     ├── auth/logout (POST)
@@ -95,7 +96,8 @@ test('characterizing: auth-only route tree (no githubApp/atlassian) is unchanged
             `\
 └── / (GET, HEAD)
     ├── health (GET, HEAD)
-    │   └── /db (GET, HEAD)
+    │   ├── /db (GET, HEAD)
+    │   └── /worker (GET, HEAD)
     ├── auth/github/login (GET, HEAD)
     ├── auth/github/callback (GET, HEAD)
     ├── auth/logout (POST)
@@ -142,7 +144,8 @@ test('characterizing: health-only route tree (no auth config) is unchanged by th
             app.printRoutes({ commonPrefix: false }),
             `\
 └── /health (GET, HEAD)
-    └── /db (GET, HEAD)
+    ├── /db (GET, HEAD)
+    └── /worker (GET, HEAD)
 `
         );
     } finally {

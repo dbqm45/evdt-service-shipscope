@@ -33,8 +33,10 @@ Każdy punkt to osobny PR, wdrażalny sam; `[ ]` = do zrobienia, `[x]` = zrobion
 - [x] Wspólna ścieżka zapisu `applyObservations()` (wydzielona z `applyIngest()`, najpierw test
   charakteryzujący).
 - [x] UI: „niepotwierdzone od X", „Released?" z powodem; stan każdego źródła per środowisko w Settings.
-- [ ] Metryki i strukturalne logi (wiek kolejki `sync_requests`, czas passów, błędy źródeł), alerty dla
-  operatora.
+- [x] Strukturalne logi (JSON, `tenantId`/`requestId`/`job`, bez sekretów) i `GET /health/worker` dla monitora
+  dostępności (heartbeat, ostatnia udana synchronizacja, wiek kolejki `sync_requests`).
+- [ ] Metryki (Prometheus `/metrics`: czasy passów, błędy źródeł, odrzucenia ingestu), gdy będzie dla kogo je
+  oglądać.
 
 ### 3. Flagi w kodzie i kreator setupu
 

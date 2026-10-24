@@ -271,7 +271,7 @@ async function syncRepo({ pool, token, tenantId, repo, fetch: fetchFn = fetch, n
  *
  * `repoIds` limits the pass to those repos (in every tenant that tracks them): a webhook's targeted sync.
  *
- * @param {{ pool: import('pg').Pool, app: { appId: string, privateKey: import('crypto').KeyObject }, fetch?: typeof fetch, now?: number, clock?: () => number, log?: (msg: string) => void, options?: object, repoIds?: number[] }} input
+ * @param {{ pool: import('pg').Pool, app: { appId: string, privateKey: import('crypto').KeyObject }, fetch?: typeof fetch, now?: number, clock?: () => number, log?: (msg: string, fields?: { level?: string } & object) => void, options?: object, repoIds?: number[] }} input
  * @returns {Promise<{ repos: number, inserted: number, failed: number, deferred: number }>} deferred: repos left for a later pass (rate limit or time budget)
  */
 async function syncAll({ pool, app, fetch: fetchFn = fetch, now = Date.now(), clock = Date.now, log = () => {}, options = {}, repoIds = null }) {
@@ -330,13 +330,15 @@ async function syncAll({ pool, app, fetch: fetchFn = fetch, now = Date.now(), cl
                 totals.inserted += result.inserted;
                 if (result.partial) totals.deferred += 1;
                 if (result.inserted || result.blocked || result.partial) {
-                    log(`${repo.fullName}: +${result.inserted} deployments, ${result.blocked} pending${result.partial ? ', more next pass (time budget)' : ''}`);
+                    log(`${repo.fullName}: +${result.inserted} deployments, ${result.blocked} pending${result.partial ? ', more next pass (time budget)' : ''}`,
+                        { tenantId, repo: repo.fullName, inserted: result.inserted, pending: result.blocked, partial: !!result.partial });
                 }
             } catch (err) {
                 if (err instanceof GitHubRateLimitError) {
                     totals.deferred += 1;
                     limitedUntil.set(installationId, err.retryAt);
-                    log(`${repo.fullName}: GitHub rate limit, installation ${installationId} paused until ${err.retryAt.toISOString()}`);
+                    log(`${repo.fullName}: GitHub rate limit, installation ${installationId} paused until ${err.retryAt.toISOString()}`,
+                        { level: 'warn', tenantId, repo: repo.fullName, installationId, retryAt: err.retryAt });
                     await withScope(pool, { tenantId }, async (client) => {
                         await client.query(
                             'UPDATE github_installations SET rate_limited_until = $3 WHERE tenant_id = $1 AND installation_id = $2',
@@ -348,7 +350,7 @@ async function syncAll({ pool, app, fetch: fetchFn = fetch, now = Date.now(), cl
                 }
                 totals.failed += 1;
                 const message = String(err.message || err).slice(0, ERROR_MAX_LENGTH);
-                log(`${repo.fullName}: sync failed: ${message}`);
+                log(`${repo.fullName}: sync failed: ${message}`, { level: 'warn', tenantId, repo: repo.fullName, installationId, err });
                 await withScope(pool, { tenantId }, (client) => client.query(
                     'UPDATE tracked_repos SET last_sync_error = $3, last_attempt_at = now() WHERE tenant_id = $1 AND repo_id = $2',
                     [tenantId, repo.repoId, message]
