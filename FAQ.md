@@ -150,7 +150,7 @@ Start with a dry run: it needs no ShipScope, no token, and shows the exact messa
        runs-on: ubuntu-latest
        steps:
          - uses: actions/checkout@v7
-         - uses: dbqm45/evdt-service-shipscope/adapters/flags@v0.2.14   # or a newer release tag
+         - uses: dbqm45/evdt-service-shipscope/adapters/flags@v0.2.17   # or a newer release tag
            with:
              environment: prod
              files: config/flags.prod.json
@@ -188,7 +188,7 @@ more examples: `ONBOARDING.md`, "Sending feature flags".
 
 ### What does a complete workflow look like?
 
-A file to copy into the other repository (adapter version **v0.2.14**). It sends the flags of every environment after
+A file to copy into the other repository (adapter version **v0.2.17**). It sends the flags of every environment after
 each merge that changes them, and can be started by hand, by default as a dry run:
 
 ```yaml
@@ -219,7 +219,7 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v7
-      - uses: dbqm45/evdt-service-shipscope/adapters/flags@v0.2.14
+      - uses: dbqm45/evdt-service-shipscope/adapters/flags@v0.2.17
         with:
           shipscope-url: ${{ vars.SHIPSCOPE_URL }}
           token: ${{ secrets.SHIPSCOPE_FLAGS_TOKEN }}
@@ -243,17 +243,17 @@ Other layouts change only the `with:` lines:
 | Flags switched live at a URL | `environment: prod`, `url: https://…/flags`; trigger `schedule: [{ cron: '*/15 * * * *' }]` instead of `push` |
 
 To send with each deploy instead, put only the adapter step at the end of the deploy job, with `environment:` and that
-environment's file. Pin the version (`@v0.2.14`); a newer ShipScope release is picked up by changing the tag.
+environment's file. Pin the version (`@v0.2.17`); a newer ShipScope release is picked up by changing the tag.
 
 A tag can still be moved on GitHub (the release tags here are not protected, `design-docs/SECURITY.md`). To be sure
 the step runs exactly the code you reviewed, pin the commit of the release instead, with the version in a comment so
 that Dependabot and readers know which one it is:
 
 ```yaml
-      - uses: dbqm45/evdt-service-shipscope/adapters/flags@204105a2ec5a57f5b5a832dfc8ff99d0e7c5e2ac # v0.2.14
+      - uses: dbqm45/evdt-service-shipscope/adapters/flags@7af9d4a499362694e5f194bc56ef5fb0451ecebc # v0.2.17
 ```
 
-The commit of any release: `git ls-remote https://github.com/dbqm45/evdt-service-shipscope 'refs/tags/v0.2.14^{}'`
+The commit of any release: `git ls-remote https://github.com/dbqm45/evdt-service-shipscope 'refs/tags/v0.2.17^{}'`
 (the tag is annotated: without `^{}` you get the tag object, not the commit).
 
 ## Jira
