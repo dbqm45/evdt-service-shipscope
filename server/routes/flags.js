@@ -1,7 +1,21 @@
+const crypto = require('crypto');
 const {
     createFlagSource, updateFlagSource, deleteFlagSource, listFlagSources, createIngestToken, revokeIngestToken, ingestFlags,
     recordIngestError, listFlags, setFlagDetails,
 } = require('../lib/flags');
+const { createLimiter } = require('../lib/request-limiter');
+
+// Per token: a burst of 60 messages, then one a second. A sender posts once per environment per deployment or
+// polling round, far below this; the limit only stops a runaway sender from crowding out everyone else.
+const INGEST_RATE_LIMIT = { capacity: 60, refillPerSecond: 1 };
+
+/** Too many messages from one token; the sender waits `retryAfterSeconds` (sent as Retry-After). */
+class IngestRateLimitError extends Error {
+    constructor(retryAfterSeconds) {
+        super('Too many flag messages from this token; slow down');
+        this.retryAfterSeconds = retryAfterSeconds;
+    }
+}
 // The ingest contract, published as is at GET /api/flags/ingest/schema so senders can check a message before sending it.
 const INGEST_SCHEMA = require('../schemas/flags-ingest.v2.schema.json');
 
@@ -15,6 +29,7 @@ const INGEST_SCHEMA = require('../schemas/flags-ingest.v2.schema.json');
  */
 function registerFlagRoutes(app, ctx) {
     const { pool, requireUser, UUID_PARAM } = ctx;
+    const limiter = createLimiter(ctx.ingestRateLimit || INGEST_RATE_LIMIT);
     const tenantOnlyParams = { type: 'object', required: ['tenantId'], properties: { tenantId: UUID_PARAM } };
     const { flagKey: FLAG_KEY, jiraKey: JIRA_KEY } = INGEST_SCHEMA.definitions;
 
@@ -26,6 +41,9 @@ function registerFlagRoutes(app, ctx) {
     }, async (request) => {
         const match = /^Bearer (\S+)$/.exec(request.headers.authorization || '');
         const token = match ? match[1] : '';
+        // Checked before anything touches the database. Keyed by a hash, so the buckets never hold a token.
+        const { ok, retryAfterSeconds } = limiter.take(crypto.createHash('sha256').update(token).digest('hex'));
+        if (!ok) throw new IngestRateLimitError(retryAfterSeconds);
         if (request.validationError) {
             await recordIngestError(pool, { token, message: request.validationError.message })
                 .catch((err) => request.log.warn({ err: err.message }, 'could not record a refused flag message'));
@@ -120,4 +138,4 @@ function registerFlagRoutes(app, ctx) {
     });
 }
 
-module.exports = { registerFlagRoutes };
+module.exports = { registerFlagRoutes, IngestRateLimitError, INGEST_RATE_LIMIT };

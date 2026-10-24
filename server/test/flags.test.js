@@ -41,7 +41,7 @@ const { createTestDb } = require('./helpers/test-db');
 const { buildApp } = require('../web');
 const { AUTH, fakeGitHub, signIn } = require('./helpers/auth');
 const { withScope } = require('../lib/scope');
-const { ingestFlags } = require('../lib/flags');
+const { ingestFlags, IngestBusyError } = require('../lib/flags');
 
 const USERS = { alice: { id: 870_000_001, login: 'alice' }, bob: { id: 870_000_002, login: 'bob' }, mallory: { id: 870_000_003, login: 'mallory' } };
 
@@ -297,6 +297,63 @@ test('ingest: one tenant\'s ingests run one at a time', async (t) => {
         holder.release();
     }
     assert.strictEqual((await pending).statusCode, 200);
+});
+
+test('ingest: a message stuck behind a slow one gives up after the wait and answers 503 with Retry-After', async (t) => {
+    const { pool, tenantId, newSource } = await setup(t);
+    const { token } = (await newSource({ name: 'CI', kind: 'build' })).token;
+    const holder = await pool.connect();
+    try {
+        await holder.query('BEGIN');
+        await holder.query("SELECT pg_advisory_xact_lock(hashtextextended('flags:' || $1, 0))", [tenantId]);
+        await assert.rejects(ingestFlags(pool, { token, payload: { schemaVersion: 2, observations: [obs('a', 'prod', 'on')] }, lockTimeoutMs: 200 }),
+            (err) => err instanceof IngestBusyError && err.retryAfterSeconds === 5);
+    } finally {
+        await holder.query('COMMIT');
+        holder.release();
+    }
+    const app = buildApp({ pool, auth: AUTH, fetch: fakeGitHub(USERS) });
+    t.after(() => app.close());
+    const res = await app.inject({ method: 'POST', url: '/api/flags/ingest', headers: { authorization: `Bearer ${token}` }, payload: { schemaVersion: 2, observations: [obs('a', 'prod', 'on')] } });
+    assert.strictEqual(res.statusCode, 200, 'the lock is free again: the next message goes through');
+    const rows = await withScope(pool, { tenantId }, async (c) => (await c.query("SELECT current_setting('lock_timeout') AS t")).rows);
+    assert.strictEqual(rows[0].t, '0', 'the wait limit is transaction-local and never leaks onto a pooled connection');
+});
+
+test('ingest: a token over its rate limit gets 429 with Retry-After before anything reaches the database', async (t) => {
+    const { pool, newSource, tenantId } = await setup(t);
+    const { token } = (await newSource({ name: 'CI', kind: 'build' })).token;
+    const app = buildApp({ pool, auth: AUTH, fetch: fakeGitHub(USERS), ingestRateLimit: { capacity: 2, refillPerSecond: 0.01 } });
+    t.after(() => app.close());
+    const send = (tok, payload = { schemaVersion: 2, observations: [obs('a', 'prod', 'on')] }) =>
+        app.inject({ method: 'POST', url: '/api/flags/ingest', headers: { authorization: `Bearer ${tok}` }, payload });
+    assert.deepStrictEqual([(await send(token)).statusCode, (await send(token)).statusCode], [200, 200]);
+    const limited = await send(token, { schemaVersion: 2, observations: 'not a list' });
+    assert.strictEqual(limited.statusCode, 429);
+    assert.strictEqual(limited.headers['retry-after'], '100');
+    assert.match(limited.json().error, /Too many flag messages/);
+    const [source] = await withScope(pool, { tenantId }, async (c) => (await c.query('SELECT last_error FROM flag_sources')).rows);
+    assert.strictEqual(source.last_error, null, 'a limited request is not even recorded as refused');
+    const other = (await newSource({ name: 'LD', kind: 'runtime' })).token.token;
+    assert.strictEqual((await send(other)).statusCode, 200, 'other tokens are not affected');
+});
+
+test('ingest: descriptions and Jira keys of many flags in one message; a field left out keeps its stored value', async (t) => {
+    const { newSource, ingest, dashboard } = await setup(t);
+    const { token } = (await newSource({ name: 'CI', kind: 'build' })).token;
+    const keys = Array.from({ length: 300 }, (_, i) => `f${i}`);
+    let res = await ingest(token, {
+        observations: keys.map((k) => obs(k, 'prod', 'on')),
+        flags: keys.map((k, i) => ({ key: k, description: `Flag ${i} "quoted"`, jiraKeys: [`ABC-${i + 1}`] })),
+    });
+    assert.strictEqual(res.statusCode, 200, res.body);
+    let meta = (await dashboard()).flagsMeta;
+    assert.deepStrictEqual([meta.f0.description, meta.f0.jiraKeys, meta.f299.description, meta.f299.jiraKeys], ['Flag 0 "quoted"', ['ABC-1'], 'Flag 299 "quoted"', ['ABC-300']]);
+    res = await ingest(token, { observations: keys.map((k) => obs(k, 'prod', 'on')), flags: [{ key: 'f0', jiraKeys: [] }, { key: 'f1', description: null }] });
+    assert.strictEqual(res.statusCode, 200, res.body);
+    meta = (await dashboard()).flagsMeta;
+    assert.deepStrictEqual([meta.f0.description, meta.f0.jiraKeys], ['Flag 0 "quoted"', []], 'only the Jira keys were sent');
+    assert.deepStrictEqual([meta.f1.description, meta.f1.jiraKeys], ['', ['ABC-2']], 'only the description was sent (cleared)');
 });
 
 test('RLS: every table with a tenant_id forces row-level security, and flags are invisible across tenants', async (t) => {
