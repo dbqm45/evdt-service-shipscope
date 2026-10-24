@@ -1,6 +1,6 @@
 {
   "name": "evdt-service-shipscope",
-  "version": "0.2.21",
+  "version": "0.2.22",
   "private": true,
   "description": "ShipScope — no dependencies; this file exposes `npm test` and the release scripts (RELEASING.md).",
   "scripts": {
