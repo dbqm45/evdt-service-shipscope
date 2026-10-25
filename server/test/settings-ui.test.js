@@ -590,7 +590,7 @@ test('settings page: actions send what the API expects, then reload their sectio
     assert.deepStrictEqual(ui.settingsState.messages.flags, { error: true, text: 'Pick at least one environment the token may send.' });
     calls.length = 0;
     await ui.runAction('save-source', form([['name', 'LD'], ['kind', 'build'], ['priority', '5'], ['repoIds', '101', true], ['repoIds', '102', true], ['repoIds', '103', false], ['staleAfterMinutes', '30']], { sourceId: 's9' }, 'flags'));
-    assert.deepStrictEqual(calls[0], { method: 'PUT', url: `${base}/flag-sources/s9`, body: { name: 'LD', kind: 'build', priority: 5, repoIds: [101, 102], staleAfterMinutes: 30 } });
+    assert.deepStrictEqual(calls[0], { method: 'PUT', url: `${base}/flag-sources/s9`, body: { name: 'LD', kind: 'build', priority: 5, repoIds: [101, 102], staleAfterMinutes: 30, oidc: null } });
 
     // A source read from code: added with its file; saved keeping what the API set besides the form's fields.
     calls.length = 0;
@@ -925,6 +925,37 @@ test('Flags: suggested links (issues whose commits changed the flag) with link a
     calls.length = 0;
     await ui.runAction('dismiss-link-suggestion', pageButton({ key: 'beta', jiraKey: 'EBO-7' }, 'flags', 'flags'));
     assert.deepStrictEqual(calls[0].body, { jiraKey: 'EBO-7', accept: false });
+});
+
+test('Sources: GitHub Actions without a token -- the switch, branches and environments, and what the workflow needs', async () => {
+    ui.settingsState.tenantId = TENANT;
+    const base = `/tenants/${TENANT}`;
+    const push = { id: 's1', name: 'CI', kind: 'build', priority: 0, repoIds: [101], tokens: [], origin: 'push' };
+    let page = str(ui.renderSourcesPage({ sources: [push], repos: [{ repoId: 101, fullName: 'acme/web' }], admin: true, once: {}, origin: 'https://s' }));
+    assert.match(page, /name="oidcEnabled" value="on" >/, 'off');
+    assert.match(page, /the source can\S+t send anything/);
+    const on = { ...push, oidc: { refs: ['refs/heads/main', 'refs/tags/v*'], environments: ['prod'] }, lastIngestAt: '2026-10-25T10:00:00Z', lastIngest: { flags: 2, changed: 1, removed: 0, stale: 0, sender: 'acme/web@refs/heads/main' } };
+    page = str(ui.renderSourcesPage({ sources: [on], repos: [{ repoId: 101, fullName: 'acme/web' }], admin: true, once: {}, origin: 'https://s' }));
+    assert.match(page, /name="oidcEnabled" value="on" checked>/);
+    assert.match(page, /name="oidcRefs"[^>]*value="refs\/heads\/main refs\/tags\/v\*"/);
+    assert.match(page, /value="prod" checked>/);
+    assert.match(page, /value="test" >/);
+    assert.match(page, new RegExp(`id-token: write.*source: ${TENANT}/s1`, 's'));
+    assert.match(page, /none — only GitHub Actions send/);
+    assert.match(page, /from GitHub Actions of acme\/web@refs\/heads\/main/);
+
+    const { fn, calls } = fakeFetch({ [`PUT ${base}/flag-sources/s1`]: {}, [`GET ${base}/flags`]: { flags: [] }, [`GET ${base}/flag-sources`]: { sources: [] }, [`GET ${base}/secret-events`]: { events: [] } });
+    global.fetch = fn;
+    const fields = (extra) => [['name', 'CI'], ['kind', 'build'], ['priority', '0'], ['repoIds', '101', true], ['staleAfterMinutes', ''], ...extra];
+    await ui.runAction('save-source', form(fields([['oidcEnabled', 'on', true], ['oidcRefs', ' refs/heads/main, refs/tags/v* '], ['oidcEnvironments', 'test', false], ['oidcEnvironments', 'qa', true], ['oidcEnvironments', 'prod', true]]), { sourceId: 's1' }, 'flags'));
+    assert.deepStrictEqual(calls[0].body.oidc, { refs: ['refs/heads/main', 'refs/tags/v*'], environments: ['qa', 'prod'] });
+    calls.length = 0;
+    await ui.runAction('save-source', form(fields([['oidcEnabled', 'on', true], ['oidcRefs', ''], ['oidcEnvironments', 'test', true], ['oidcEnvironments', 'qa', true], ['oidcEnvironments', 'prod', true]]), { sourceId: 's1' }, 'flags'));
+    assert.deepStrictEqual(calls[0].body.oidc, { refs: null, environments: null }, 'any branch, every environment');
+    calls.length = 0;
+    await ui.runAction('save-source', form(fields([['oidcEnabled', 'on', true], ['oidcEnvironments', 'prod', false]]), { sourceId: 's1' }, 'flags'));
+    assert.deepStrictEqual(calls, [], 'no environment: nothing sent');
+    assert.deepStrictEqual(ui.settingsState.messages.flags, { error: true, text: 'Pick at least one environment GitHub Actions may send.' });
 });
 
 test('General: admins see the settings activity, escaped; a change an admin makes reloads it', async () => {

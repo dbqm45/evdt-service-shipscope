@@ -7,6 +7,7 @@ const { recordAuditEvent } = require('./audit-log');
 const {
     IngestPayloadError, checkPayload, planIngestWrites, sourceDescriptors, pickWinningValues, visibleFlagsMeta, historyRecords,
     STALE_AFTER_MINUTES, freshnessOf, freshnessByComponent, FlagSourceConfigError, checkCodeConfig, checkEndpointConfig, POLL,
+    checkOidcConfig, oidcRefAllowed,
 } = require('./flags-logic');
 
 /**
@@ -92,6 +93,7 @@ function toSource(row, repoIds = []) {
         code: row.code_config || null,
         endpoint: row.endpoint_config || null,
         hasEndpointToken: row.has_endpoint_token === true,
+        oidc: row.oidc_config || null,
         ...(row.origin === 'endpoint' ? {
             pollIntervalMinutes: row.poll_interval_minutes ?? null,
             effectivePollIntervalMinutes: row.poll_interval_minutes ?? POLL.defaultMinutes,
@@ -103,7 +105,7 @@ function toSource(row, repoIds = []) {
 }
 
 const SOURCE_COLUMNS = 'id, name, kind, priority, repo_id, created_at, last_ingest_at, last_ingest, last_error, last_error_at, stale_after_minutes, origin, code_config, '
-    + 'endpoint_config, endpoint_token_enc IS NOT NULL AS has_endpoint_token, poll_interval_minutes, last_polled_at, next_poll_at, poll_failures';
+    + 'endpoint_config, endpoint_token_enc IS NOT NULL AS has_endpoint_token, poll_interval_minutes, last_polled_at, next_poll_at, poll_failures, oidc_config';
 
 /** source id -> its environments' freshness (freshnessOf()), by environment name. */
 async function sourceEnvironments(client, tenantId, sourceRows, now) {
@@ -148,26 +150,28 @@ const LOCK_NOT_AVAILABLE = '55P03';
  *   `origin: 'code'` with `code` (checkCodeConfig()): a source ShipScope reads itself from one repository; it has no token.
  *   `origin: 'endpoint'` with `endpoint` (checkEndpointConfig()) and optionally the customer's `endpointToken`, sealed
  *   with `encryptionKey` (TOKEN_ENCRYPTION_KEY): a runtime source ShipScope polls (lib/endpoint-flags.js); no ingest token.
+ *   `oidc` (checkOidcConfig(), push sources only): GitHub Actions runs of its services may send with an OIDC token.
  * @returns {Promise<{ source: FlagSource, token: { id: string, token: string, expiresAt: Date|null, environments: string[]|null } }>}
  * @throws {FlagSourceNotFoundError} a repo in its scope isn't tracked
  * @throws {FlagSourceConflictError} the name is taken
  */
-async function createFlagSource(pool, { tenantId, actorUserId, name, kind, priority, repoIds, repoId, tokenExpiresInDays, tokenEnvironments = null, staleAfterMinutes = null, origin = 'push', code, endpoint, endpointToken, pollIntervalMinutes, encryptionKey = null, sealingKeys = null }) {
+async function createFlagSource(pool, { tenantId, actorUserId, name, kind, priority, repoIds, repoId, tokenExpiresInDays, tokenEnvironments = null, staleAfterMinutes = null, origin = 'push', code, endpoint, endpointToken, pollIntervalMinutes, oidc = null, encryptionKey = null, sealingKeys = null }) {
     return withScope(pool, { tenantId }, async (client) => {
         await assertAdmin(client, { tenantId, userId: actorUserId });
         const scope = scopeOf({ repoIds, repoId });
         if (origin !== 'code' && code !== undefined) throw new FlagSourceConfigError('Only a source read from code has a file to read');
         const codeConfig = origin === 'code' ? checkCodeConfig(code, { kind, repoIds: scope }) : null;
         const endpointConfig = checkEndpointFields({ origin, kind, endpoint, endpointToken, pollIntervalMinutes, encryptionKey });
+        const oidcConfig = oidc === null ? null : checkOidcConfig(oidc, { origin, repoIds: scope });
         if (endpointConfig) {
             const { rows: [{ n }] } = await client.query("SELECT count(*)::int AS n FROM flag_sources WHERE tenant_id = $1 AND origin = 'endpoint'", [tenantId]);
             if (n >= POLL.maxSources) throw new FlagSourceConfigError(`A workspace reads at most ${POLL.maxSources} endpoints`);
         }
         await assertTrackedRepos(client, tenantId, scope);
         let row = await saveSource(client, () => client.query(
-            `INSERT INTO flag_sources (tenant_id, name, kind, priority, stale_after_minutes, origin, code_config, endpoint_config, poll_interval_minutes)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING ${SOURCE_COLUMNS}`,
-            [tenantId, name, kind, priority ?? DEFAULT_PRIORITY[kind], staleAfterMinutes, origin, codeConfig, endpointConfig, pollIntervalMinutes ?? null]
+            `INSERT INTO flag_sources (tenant_id, name, kind, priority, stale_after_minutes, origin, code_config, endpoint_config, poll_interval_minutes, oidc_config)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING ${SOURCE_COLUMNS}`,
+            [tenantId, name, kind, priority ?? DEFAULT_PRIORITY[kind], staleAfterMinutes, origin, codeConfig, endpointConfig, pollIntervalMinutes ?? null, oidcConfig]
         ));
         await setSourceScope(client, tenantId, row.id, scope);
         row = { ...row, repo_id: scope[0] ?? null };
@@ -258,22 +262,26 @@ async function saveSource(client, query) {
  * freshness threshold (`staleAfterMinutes`; left out = unchanged, null = the kind's default); for a source read from
  * code, its `code` (left out = unchanged; a change reads every environment again on the next pass); for one read from
  * an endpoint, its `endpoint` (left out = unchanged), `endpointToken` (left out = unchanged, null = none) and
- * `pollIntervalMinutes` (left out = unchanged, null = the default); saving one reads it at the next tick. Admins only.
+ * `pollIntervalMinutes` (left out = unchanged, null = the default); saving one reads it at the next tick. For a push
+ * source, `oidc` (left out = unchanged, null = off): whether GitHub Actions runs of its services may send. Admins only.
  *
  * @param {import('pg').Pool} pool
- * @param {{ tenantId: string, actorUserId: string, sourceId: string, name: string, kind: 'build'|'runtime', priority: number, repoIds?: number[], repoId?: number|null, staleAfterMinutes?: number|null, code?: object, endpoint?: object, endpointToken?: string|null, pollIntervalMinutes?: number|null, encryptionKey?: Buffer|null, sealingKeys?: { publicKey: object }|null }} input
+ * @param {{ tenantId: string, actorUserId: string, sourceId: string, name: string, kind: 'build'|'runtime', priority: number, repoIds?: number[], repoId?: number|null, staleAfterMinutes?: number|null, code?: object, endpoint?: object, endpointToken?: string|null, pollIntervalMinutes?: number|null, oidc?: { refs?: string[]|null, environments?: string[]|null }|null, encryptionKey?: Buffer|null, sealingKeys?: { publicKey: object }|null }} input
  * @returns {Promise<FlagSource>}
  * @throws {FlagSourceNotFoundError|FlagSourceConflictError}
  */
-async function updateFlagSource(pool, { tenantId, actorUserId, sourceId, name, kind, priority, repoIds, repoId, staleAfterMinutes, code, endpoint, endpointToken, pollIntervalMinutes, encryptionKey = null, sealingKeys = null }) {
+async function updateFlagSource(pool, { tenantId, actorUserId, sourceId, name, kind, priority, repoIds, repoId, staleAfterMinutes, code, endpoint, endpointToken, pollIntervalMinutes, oidc, encryptionKey = null, sealingKeys = null }) {
     return withScope(pool, { tenantId }, async (client) => {
         await assertAdmin(client, { tenantId, userId: actorUserId });
         const scope = scopeOf({ repoIds, repoId });
-        const { rows: [current] } = await client.query('SELECT origin, code_config, endpoint_config FROM flag_sources WHERE tenant_id = $1 AND id = $2', [tenantId, sourceId]);
+        const { rows: [current] } = await client.query('SELECT origin, code_config, endpoint_config, oidc_config FROM flag_sources WHERE tenant_id = $1 AND id = $2', [tenantId, sourceId]);
         if (!current) throw new FlagSourceNotFoundError('No such flag source');
         if (current.origin !== 'code' && code !== undefined) throw new FlagSourceConfigError('Only a source read from code has a file to read');
         const codeConfig = current.origin === 'code' ? checkCodeConfig(code ?? current.code_config, { kind, repoIds: scope }) : null;
         const endpointConfig = checkEndpointFields({ origin: current.origin, kind, endpoint: current.origin === 'endpoint' ? endpoint ?? current.endpoint_config : endpoint, endpointToken, pollIntervalMinutes, encryptionKey });
+        // Left out: the stored settings, checked again against the new scope (no services = none to trust).
+        const oidcWanted = oidc === undefined ? current.oidc_config : oidc;
+        const oidcConfig = oidcWanted === null ? null : checkOidcConfig(oidcWanted, { origin: current.origin, repoIds: scope });
         await assertTrackedRepos(client, tenantId, scope);
         const sealed = typeof endpointToken === 'string' ? sealEndpointToken({ encryptionKey, sealingKeys }, endpointToken, endpointTokenAad(tenantId, sourceId)) : null;
         const row = await saveSource(client, () => client.query(
@@ -283,10 +291,10 @@ async function updateFlagSource(pool, { tenantId, actorUserId, sourceId, name, k
                  endpoint_token_enc = CASE WHEN $11 THEN $12::text ELSE endpoint_token_enc END,
                  poll_interval_minutes = CASE WHEN $13 THEN $14::integer ELSE poll_interval_minutes END,
                  next_poll_at = CASE WHEN origin = 'endpoint' THEN NULL ELSE next_poll_at END,
-                 poll_failures = 0
+                 poll_failures = 0, oidc_config = $15
              WHERE tenant_id = $1 AND id = $2 RETURNING ${SOURCE_COLUMNS}`,
             [tenantId, sourceId, name, kind, priority, scope[0] ?? null, staleAfterMinutes !== undefined, staleAfterMinutes ?? null, codeConfig,
-                endpointConfig, endpointToken !== undefined, sealed, pollIntervalMinutes !== undefined, pollIntervalMinutes ?? null]
+                endpointConfig, endpointToken !== undefined, sealed, pollIntervalMinutes !== undefined, pollIntervalMinutes ?? null, oidcConfig]
         ));
         if (!row) throw new FlagSourceNotFoundError('No such flag source');
         await recordAuditEvent(client, { tenantId, actorUserId, kind: 'flag_source_updated', subject: name });
@@ -480,21 +488,81 @@ async function applyIngest(pool, { token, payload, now, lockTimeoutMs }) {
             throw new IngestTokenExpiredError(`Ingest token expired on ${found.expiresAt.toISOString().slice(0, 10)}; create a new one in Settings`);
         }
         await lockTenantFlags(client, tenantId, lockTimeoutMs);
-
         const { rows: [source] } = await client.query('SELECT name FROM flag_sources WHERE tenant_id = $1 AND id = $2', [tenantId, sourceId]);
-        const { complete, environments, observations, metaByKey } = checkPayload(payload, now);
-        const outside = found.environments ? environments.filter((env) => !found.environments.includes(env)) : [];
-        if (outside.length) {
-            throw new IngestScopeError(`This token may only send ${found.environments.join(', ')}, not ${outside.join(', ')}`);
-        }
-        const changedBy = payload.changedBy || source.name;
-        const result = await applyObservations(client, { tenantId, sourceId, observations, metaByKey, complete, environments, changedBy, now });
+        const result = await applyMessage(client, {
+            tenantId, sourceId, sourceName: source.name, payload, now, allowed: found.environments, refusal: (envs) => `This token may only send ${envs}`,
+        });
         await client.query('UPDATE ingest_tokens SET last_used_at = $3 WHERE tenant_id = $1 AND id = $2', [tenantId, tokenId, now]);
-        const summary = { flags: result.flags, changed: result.changed, removed: result.removed, stale: result.stale };
-        await client.query('UPDATE flag_sources SET last_ingest_at = $3, last_ingest = $4 WHERE tenant_id = $1 AND id = $2', [tenantId, sourceId, now, summary]);
-
-        return { source: source.name, ...summary, created: result.created };
+        return result;
     });
+}
+
+/**
+ * Inside the tenant's scope and its flags lock: writes one checked message for a source, within the environments it
+ * may send (`allowed`, null = all), and records it as the source's last accepted message.
+ */
+async function applyMessage(client, { tenantId, sourceId, sourceName, payload, now, allowed, refusal, sender = null }) {
+    const { complete, environments, observations, metaByKey } = checkPayload(payload, now);
+    const outside = allowed ? environments.filter((env) => !allowed.includes(env)) : [];
+    if (outside.length) throw new IngestScopeError(`${refusal(allowed.join(', '))}, not ${outside.join(', ')}`);
+    const changedBy = payload.changedBy || sourceName;
+    const result = await applyObservations(client, { tenantId, sourceId, observations, metaByKey, complete, environments, changedBy, now });
+    const summary = { flags: result.flags, changed: result.changed, removed: result.removed, stale: result.stale, ...(sender ? { sender } : {}) };
+    await client.query('UPDATE flag_sources SET last_ingest_at = $3, last_ingest = $4 WHERE tenant_id = $1 AND id = $2', [tenantId, sourceId, now, summary]);
+    return { source: sourceName, flags: result.flags, changed: result.changed, removed: result.removed, stale: result.stale, created: result.created };
+}
+
+/**
+ * Applies a message sent from a GitHub Actions run with an OIDC token (lib/github-oidc.js), already verified as
+ * GitHub's and addressed to this server. The sender names the source (`X-ShipScope-Source: <tenantId>/<sourceId>`);
+ * it must take OIDC tokens, cover the run's repository (by id) and allow its ref and the message's environments. An
+ * unknown source, or one that takes no OIDC tokens, is refused like an unknown token (401, nothing recorded: the
+ * caller is not known to be the source's); a run the source does not trust is a 403 noted on the source, so Settings
+ * shows why.
+ *
+ * @param {import('pg').Pool} pool
+ * @param {{ identity: { repository: string, repositoryId: number, ref: string|null }, tenantId: string, sourceId: string, payload: object, now?: Date, lockTimeoutMs?: number }} input
+ * @returns {Promise<{ source: string, flags: number, changed: number, removed: number, stale: number, created: string[] }>}
+ * @throws {IngestTokenError|IngestScopeError|IngestPayloadError|IngestBusyError}
+ */
+async function ingestWithOidc(pool, { identity, tenantId, sourceId, payload, now = new Date(), lockTimeoutMs = INGEST_LOCK_TIMEOUT_MS }) {
+    const sender = `${identity.repository}${identity.ref ? `@${identity.ref}` : ''}`;
+    try {
+        return await withScope(pool, { tenantId }, async (client) => {
+            const { rows: [source] } = await client.query(
+                "SELECT name, oidc_config FROM flag_sources WHERE tenant_id = $1 AND id = $2 AND origin = 'push' AND oidc_config IS NOT NULL",
+                [tenantId, sourceId]
+            );
+            if (!source) throw new IngestTokenError('This source takes no GitHub Actions tokens');
+            const { rows: trusted } = await client.query(
+                `SELECT 1 FROM flag_source_repos s JOIN tracked_repos r ON r.tenant_id = s.tenant_id AND r.repo_id = s.repo_id
+                 WHERE s.tenant_id = $1 AND s.source_id = $2 AND s.repo_id = $3`,
+                [tenantId, sourceId, identity.repositoryId]
+            );
+            if (!trusted.length) throw new IngestScopeError(`GitHub Actions of ${identity.repository} may not send for this source: it does not cover that repository`);
+            if (!oidcRefAllowed(source.oidc_config.refs, identity.ref)) {
+                throw new IngestScopeError(`GitHub Actions on ${identity.ref || 'no branch'} may not send for this source, only on ${source.oidc_config.refs.join(', ')}`);
+            }
+            await lockTenantFlags(client, tenantId, lockTimeoutMs);
+            return applyMessage(client, {
+                tenantId, sourceId, sourceName: source.name, payload, now, sender,
+                allowed: source.oidc_config.environments, refusal: (envs) => 'GitHub Actions may only send ' + envs,
+            });
+        });
+    } catch (err) {
+        if (err instanceof IngestPayloadError || err instanceof IngestScopeError) {
+            await recordSourceError(pool, { tenantId, sourceId, message: `${sender}: ${err.message}`, now }).catch(() => {});
+        }
+        throw err;
+    }
+}
+
+/** Notes a refused message on its source (Settings shows it), after the refusing transaction rolled back. */
+async function recordSourceError(pool, { tenantId, sourceId, message, now }) {
+    await withScope(pool, { tenantId }, (client) => client.query(
+        'UPDATE flag_sources SET last_error = $3, last_error_at = $4 WHERE tenant_id = $1 AND id = $2',
+        [tenantId, sourceId, String(message).slice(0, MAX_ERROR_LENGTH), now]
+    ));
 }
 
 /**
@@ -738,5 +806,6 @@ module.exports = {
     revokeIngestToken,
     checkPayload,
     ingestFlags,
+    ingestWithOidc,
     readDashboardFlags,
 };

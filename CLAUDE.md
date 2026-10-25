@@ -98,7 +98,7 @@ changelog entry by hand outside a `chore(release)` PR.
 
 Deployed to Render per `context/foundation/infrastructure.md`: `render.yaml` builds both the Web Service and the
 Background Worker from the repo root (`npm ci --prefix server`, `node server/web.js`), not `rootDir: server`, which
-would hide `docs/` from the Web Service. Migrations (`server/migrations/001`–`031`, applied by the hand-rolled
+would hide `docs/` from the Web Service. Migrations (`server/migrations/001`–`032`, applied by the hand-rolled
 `lib/migrate.js`) run as each service's `preDeployCommand` under an advisory lock (`test/render-blueprint.test.js`).
 Dependencies, all in `server/package.json`: `pg`, `fastify`, `@fastify/cookie`. Fastify runs with
 `removeAdditional: false, coerceTypes: false`: unknown fields and wrong types are a 400, never silently fixed.
@@ -176,7 +176,13 @@ success for 3 × `SYNC_INTERVAL_MINUTES` + 5 minutes, or an undrained webhook qu
   (`lock_timeout` 10 s, then 503 + `Retry-After`); the adapter retries both. Tokens (migration `017`) expire after a
   chosen lifetime (default 365 days, or never; older tokens never) and may be limited to some environments; an
   expired token is a 401 and an out-of-scope message a 403, both noted on the source, and Settings plus the checklist
-  warn `TOKEN_WARNING_DAYS` (30) before a source's last token runs out.
+  warn `TOKEN_WARNING_DAYS` (30) before a source's last token runs out. Instead of a token, a GitHub Actions run may
+  send GitHub's OIDC token with `X-ShipScope-Source: <tenantId>/<sourceId>` (migration `032`, `oidc_config`,
+  `checkOidcConfig()`/`oidcRefAllowed()`): `lib/github-oidc.js` verifies it (RS256 with GitHub's JWKS only, cached an
+  hour, refetched for an unknown key at most every 5 minutes; `iss`, `aud` = `PUBLIC_BASE_URL`, `exp`), and
+  `ingestWithOidc()` accepts it only for a push source that covers the run's `repository_id` (a tracked repo) on an
+  allowed ref and environment (`server/test/github-oidc.test.js`, `server/test/flags-oidc.test.js`); the adapter's
+  `oidc`/`source` inputs ask GitHub for it (`requestIdToken()`), Settings → Sources has the switch (`OidcFields()`).
   The body schema is `server/schemas/flags-ingest.v2.schema.json`, used by the route and served at
   `GET /api/flags/ingest/schema`; the sender's guide (format, where flags live, the adapter, `jq` recipes) is
   `ONBOARDING.md`. Each source keeps its status (migration `016`): the last accepted message's summary

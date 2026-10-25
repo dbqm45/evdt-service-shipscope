@@ -5,7 +5,14 @@ inputs:
     description: The ShipScope server, e.g. https://shipscope.example.com (not needed with dry-run).
     required: false
   token:
-    description: The flag source's ingest token (shpi_...), from a secret (not needed with dry-run).
+    description: The flag source's ingest token (shpi_...), from a secret (not needed with dry-run or oidc).
+    required: false
+  oidc:
+    description: true sends GitHub's OIDC token instead of a token (the job needs "permissions: id-token: write", and the source must take GitHub Actions tokens from this repository).
+    required: false
+    default: 'false'
+  source:
+    description: With oidc, the source as Settings shows it, <workspace id>/<source id>.
     required: false
   environment:
     description: The ShipScope environment these flags are for, test, qa or prod. Not with {env} in files.

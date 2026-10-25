@@ -454,8 +454,50 @@ function freshnessByComponent(sources) {
     return out;
 }
 
+const OIDC_REF = /^refs\/(heads|tags)\/[A-Za-z0-9._\/-]{1,200}\*?$/;
+
+/**
+ * A push source's GitHub Actions OIDC settings (migration 032), as an admin sent them: `refs` (branches or tags the run
+ * must be on; `*` at the end matches any rest; null = any) and `environments` (the ShipScope environments it may send;
+ * null = all). The trusted repositories are the source's services, so it needs at least one.
+ *
+ * @param {{ refs?: string[]|null, environments?: string[]|null }} oidc
+ * @param {{ origin: string, repoIds: number[] }} source
+ * @returns {{ refs: string[]|null, environments: string[]|null }}
+ * @throws {FlagSourceConfigError}
+ */
+function checkOidcConfig(oidc, { origin, repoIds }) {
+    if (origin !== 'push') throw new FlagSourceConfigError('Only a source that receives flags takes GitHub Actions tokens');
+    if (!oidc || typeof oidc !== 'object' || Array.isArray(oidc)) throw new FlagSourceConfigError('GitHub Actions settings must be an object');
+    if (!repoIds.length) throw new FlagSourceConfigError('Choose the repositories whose GitHub Actions may send: the source\'s services');
+    const refs = oidc.refs ?? null;
+    if (refs !== null && (!Array.isArray(refs) || !refs.length || refs.length > 20 || refs.some((r) => typeof r !== 'string' || !OIDC_REF.test(r) || r.includes('..')))) {
+        throw new FlagSourceConfigError('Branches and tags look like refs/heads/main or refs/tags/v* (at most 20)');
+    }
+    const environments = oidc.environments ?? null;
+    if (environments !== null && (!Array.isArray(environments) || !environments.length || environments.some((e) => !['test', 'qa', 'prod'].includes(e)))) {
+        throw new FlagSourceConfigError('Environments are test, qa and prod');
+    }
+    return { refs: refs && [...new Set(refs)], environments: environments && [...new Set(environments)] };
+}
+
+/**
+ * Whether a run on `ref` may send for a source limited to `refs` (null = any).
+ *
+ * @param {string[]|null} refs
+ * @param {string|null} ref the token's `ref` claim
+ * @returns {boolean}
+ */
+function oidcRefAllowed(refs, ref) {
+    if (!refs) return true;
+    if (typeof ref !== 'string') return false;
+    return refs.some((r) => (r.endsWith('*') ? ref.startsWith(r.slice(0, -1)) : ref === r));
+}
+
 module.exports = {
     FlagSourceConfigError,
+    checkOidcConfig,
+    oidcRefAllowed,
     checkCodeConfig,
     codeFileFor,
     codeFileFormat,

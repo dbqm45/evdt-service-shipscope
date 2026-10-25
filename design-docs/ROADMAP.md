@@ -101,7 +101,8 @@ korporacyjnych.
 - [x] Webhook Jiry bez `exp`: dokumentacja Atlassiana nie wymienia claimów tokenu, więc taka dostawa jest logowana
   (`jira webhook token without exp`), a `JIRA_WEBHOOK_REQUIRE_EXP=1` ją odrzuca; odmowy webhooków logują powód. (#99)
 - [ ] Włączyć `JIRA_WEBHOOK_REQUIRE_EXP=1` na produkcji, gdy przez kilka tygodni w logach nie będzie tokenu bez `exp`.
-- [ ] Tożsamość nadawcy push z GitHub OIDC zamiast trwałego tokenu (dla klientów, którzy zostają przy adapterze).
+- [x] Tożsamość nadawcy push z GitHub OIDC zamiast trwałego tokenu: źródło ufa repozytoriom, które obejmuje (po id),
+  opcjonalnie tylko wybranym gałęziom/tagom i środowiskom; adapter z `oidc: true`, bez sekretu. (#100)
 
 ## Dla klientów korporacyjnych (gdy się pojawią)
 

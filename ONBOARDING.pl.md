@@ -77,6 +77,11 @@ jedno **źródło flag** (flag source):
    GitHub Actions `SHIPSCOPE_FLAGS_TOKEN`). Token jest ważny rok, chyba że wybierzesz inny czas (albo bez wygasania),
    i można go ograniczyć do środowisk, które obsługuje jego nadawca. Settings i checklista ostrzegają 30 dni przed
    wygaśnięciem ostatniego tokenu źródła; drugi token pozwala na rotację bez przerwy.
+   **W GitHub Actions bez sekretu:** zaznacz przy źródle „Runs of the services above may send with GitHub's OIDC
+   token” (usługi źródła muszą obejmować to repozytorium; opcjonalnie tylko wybrane gałęzie lub tagi i środowiska).
+   Job dostaje `permissions: id-token: write`, a krok adaptera `oidc: true` i `source:` (pokazywane w Settings
+   `<id workspace'u>/<id źródła>`) zamiast `token`. GitHub wydaje token ważny kilka minut, tylko dla tego
+   repozytorium: nie ma czego przechowywać, wymieniać ani czym wyciec.
 3. Niech nadawca wysyła **pełny stan** flag źródła po każdej zmianie albo cyklicznie. Ponowne wysłanie tego samego
    stanu niczego nie zmienia, więc harmonogram jest bezpieczny.
 

@@ -25,6 +25,7 @@ const { registerAuthRoutes } = require('./routes/auth');
 const { registerTenantRoutes } = require('./routes/tenants');
 const { registerInvitationRoutes } = require('./routes/invitations');
 const { registerFlagRoutes, IngestRateLimitError } = require('./routes/flags');
+const { createOidcVerifier } = require('./lib/github-oidc');
 const { registerDashboardRoutes } = require('./routes/dashboard');
 const { registerWebhookRoutes } = require('./routes/webhooks');
 const { registerGitHubRoutes } = require('./routes/github');
@@ -130,13 +131,13 @@ function splitCookie(value, first, second) {
  * the small set of cross-domain helpers (requireUser, assertAdminOf, ...) every route file receives through
  * `ctx` instead of its own copy.
  *
- * @param {{ pool: import('pg').Pool, auth?: ReturnType<typeof loadAuthConfig>, githubApp?: ReturnType<typeof loadGitHubAppConfig>, atlassian?: ReturnType<typeof loadAtlassianConfig>, fetch?: typeof fetch, logger?: boolean|object, dashboardDir?: string, mockDashboard?: { data: object, issuesByPi: Record<string, object[]> }|null, ingestRateLimit?: { capacity: number, refillPerSecond: number }, syncIntervalMinutes?: number, encryptionKey?: Buffer|null, sealingKeys?: { publicKey: object, privateKeys: object[] }|null, safeFetch?: Function }} options
+ * @param {{ pool: import('pg').Pool, auth?: ReturnType<typeof loadAuthConfig>, githubApp?: ReturnType<typeof loadGitHubAppConfig>, atlassian?: ReturnType<typeof loadAtlassianConfig>, fetch?: typeof fetch, logger?: boolean|object, dashboardDir?: string, mockDashboard?: { data: object, issuesByPi: Record<string, object[]> }|null, ingestRateLimit?: { capacity: number, refillPerSecond: number }, syncIntervalMinutes?: number, encryptionKey?: Buffer|null, sealingKeys?: { publicKey: object, privateKeys: object[] }|null, safeFetch?: Function, oidcVerifier?: { verify: Function }|null }} options
  *   `encryptionKey` (TOKEN_ENCRYPTION_KEY, default the Atlassian config's) seals endpoint tokens and signs endpoint
  *   requests; `sealingKeys` (the public key only) seals endpoint tokens for the worker; `safeFetch` replaces
  *   lib/safe-fetch.js's in tests
  * @returns {import('fastify').FastifyInstance}
  */
-function buildApp({ pool, auth, githubApp = null, atlassian = null, fetch: fetchFn = fetch, logger = false, dashboardDir = DEFAULT_DASHBOARD_DIR, mockDashboard = null, ingestRateLimit = null, syncIntervalMinutes = 15, encryptionKey = atlassian ? atlassian.encryptionKey : null, sealingKeys = null, safeFetch = null }) {
+function buildApp({ pool, auth, githubApp = null, atlassian = null, fetch: fetchFn = fetch, logger = false, dashboardDir = DEFAULT_DASHBOARD_DIR, mockDashboard = null, ingestRateLimit = null, syncIntervalMinutes = 15, encryptionKey = atlassian ? atlassian.encryptionKey : null, sealingKeys = null, safeFetch = null, oidcVerifier = undefined }) {
     const app = Fastify({
         // A request id on every log line of a request and in the response (X-Request-Id), so a user's report can be
         // matched to the logs; one sent by the caller (Render's proxy, a load balancer) is kept.
@@ -214,6 +215,8 @@ function buildApp({ pool, auth, githubApp = null, atlassian = null, fetch: fetch
 
     const ctx = {
         pool, auth, githubApp, atlassian, fetchFn, baseCookie, encryptionKey, sealingKeys, safeFetch,
+        // GitHub Actions OIDC tokens on the flags ingest are addressed to this server's public origin (lib/github-oidc.js).
+        oidcVerifier: oidcVerifier !== undefined ? oidcVerifier : auth && auth.publicBaseUrl ? createOidcVerifier({ audience: auth.publicBaseUrl }) : null,
         requireUser, requireUserOrSignIn, assertAdminOf,
         safeEqual, splitCookie,
         cookies: { SESSION_COOKIE, LINK_COOKIE },

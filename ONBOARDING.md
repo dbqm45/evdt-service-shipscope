@@ -212,6 +212,11 @@ tool can trigger the pipeline. Sending the same state again changes nothing.
    every flag and environment, and lists skipped files. Check that the keys, values and environments are right.
 6. **Send for real:** remove `dry-run` and add `shipscope-url` and `token`. The log ends with what ShipScope did
    (`3 flags for prod, 3 changed, 0 removed`).
+   **On GitHub Actions, without a token secret:** tick "Runs of the services above may send with GitHub's OIDC token"
+   on the source (its services must include this repository; optionally only some branches or tags and
+   environments), give the job `permissions: id-token: write` and the step `oidc: true` and `source:` (the
+   `<workspace id>/<source id>` Settings shows) instead of `token`. GitHub issues a token valid for minutes, for this
+   repository only; nothing long-lived to store, rotate or leak.
 7. **Check in ShipScope:** the source shows "received" with the counts, the flags are in Settings → Flags and
    on the dashboard. From now on a refused message shows there too, with the reason.
 
@@ -240,7 +245,9 @@ tool can trigger the pipeline. Sending the same state again changes nothing.
 | `… is not written out as a value` | A computed or imported value in a `.ts` file: write it out, or print the flags as JSON in a step before. |
 | `several objects (…); name the one with the flags in path` | Set `path` to the const's name. |
 | `flag x differs between a and b` | Two files give one flag different values for one environment: use one source per file group. |
-| `ShipScope answered 401` | Wrong, revoked or expired token, or the secret is not passed to the step. |
+| `ShipScope answered 401` | Wrong, revoked or expired token, or the secret is not passed to the step. With `oidc`: the source takes no GitHub Actions tokens, or `shipscope-url` is not the server's public address. |
+| `ShipScope answered 403: GitHub Actions of … may not send` | With `oidc`: the source does not cover this repository, or the branch/tag or environment is not one it allows. |
+| `no GitHub Actions OIDC token` | Add `permissions: id-token: write` to the job (a pull request from a fork gets none). |
 | `ShipScope answered 403` | The token may only send some environments (Settings → Sources); use one that covers this environment. |
 | `ShipScope answered 429` or `503` | Temporary; the adapter already waited and tried again three times. Send less often, or try again later. |
 | `ShipScope answered 400: …` | The message breaks a rule (e.g. a key with spaces); the reason is in the line and under the source in Settings. |

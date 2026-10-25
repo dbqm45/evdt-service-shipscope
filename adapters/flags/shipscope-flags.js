@@ -28,7 +28,9 @@ const USAGE = `Usage: shipscope-flags (--env <test|qa|prod> | {env} in --file) (
   --changes-only     send only these flags, remove none (default: full state)
   --dry-run          print the message, send nothing
   --shipscope-url    default $SHIPSCOPE_URL
-  --token            default $SHIPSCOPE_FLAGS_TOKEN (prefer the variable)`;
+  --token            default $SHIPSCOPE_FLAGS_TOKEN (prefer the variable)
+  --oidc             in a GitHub Actions job with id-token: write: send GitHub's OIDC token instead
+  --source <w>/<s>   with --oidc, the source as Settings shows it (default $SHIPSCOPE_FLAGS_SOURCE)`;
 
 /**
  * @param {string[]} argv
@@ -49,6 +51,7 @@ function optionsFromArgs(argv, env) {
                 prefix: { type: 'string' }, 'changed-by': { type: 'string' },
                 'changes-only': { type: 'boolean' }, 'dry-run': { type: 'boolean' },
                 'shipscope-url': { type: 'string' }, token: { type: 'string' }, help: { type: 'boolean', short: 'h' },
+                oidc: { type: 'boolean' }, source: { type: 'string' },
             },
         }));
     } catch (err) {
@@ -61,6 +64,8 @@ function optionsFromArgs(argv, env) {
         rolloutPath: values['rollout-path'], prefix: values.prefix,
         changedBy: values['changed-by'], complete: !values['changes-only'], dryRun: Boolean(values['dry-run']),
         shipscopeUrl: values['shipscope-url'] || env.SHIPSCOPE_URL, token: values.token || env.SHIPSCOPE_FLAGS_TOKEN,
+        oidc: Boolean(values.oidc), source: values.source || env.SHIPSCOPE_FLAGS_SOURCE,
+        idTokenRequest: { url: env.ACTIONS_ID_TOKEN_REQUEST_URL, token: env.ACTIONS_ID_TOKEN_REQUEST_TOKEN },
     };
 }
 
