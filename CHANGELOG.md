@@ -7,6 +7,12 @@ dashboard, not a published package), so entries are grouped by date instead. See
 ShipScope is, `CLAUDE.md` for the technical reference, and `FAQ.md` for how specific numbers/badges are
 calculated.
 
+## [0.2.42] - 2026-10-25
+
+### Added
+
+- **SHP:** expose Prometheus metrics at /metrics behind a token (#101)
+
 ## [0.2.41] - 2026-10-25
 
 ### Added
