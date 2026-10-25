@@ -7,6 +7,12 @@ dashboard, not a published package), so entries are grouped by date instead. See
 ShipScope is, `CLAUDE.md` for the technical reference, and `FAQ.md` for how specific numbers/badges are
 calculated.
 
+## [0.2.47] - 2026-10-25
+
+### Added
+
+- **SHP:** show release lines R1..Rn and flag stages against the plan (#106)
+
 ## [0.2.46] - 2026-10-25
 
 ### Added
