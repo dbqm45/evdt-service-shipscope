@@ -602,6 +602,9 @@ function envMapOf(values){
 // the dashboard then reads its flags, and "no flags" means deployed code is live.
 const FLAG_STANCES = { unknown: 'not set', none: 'none' };
 const FLAG_STANCE_CHOICES = { unknown: 'Not set (a flag source covers it, or not said yet)', none: 'This repository has no feature flags' };
+// Whether a repo is a frontend or a backend (tracked_repos.service_role): the dashboard warns when an issue's flag is
+// on in a frontend while a backend it needs has it off ("FE on, BE off").
+const SERVICE_ROLE_CHOICES = { '': 'Not set', frontend: 'Frontend (what users see)', backend: 'Backend (APIs, services)' };
 
 /** @param {{ enabled: boolean, webhooks: boolean, github: { installations: object[], repos: object[] }|null, installationRepos: object, admin: boolean, picker?: boolean, editing?: number|null }} props */
 function renderGitHub({ enabled, webhooks, github, installationRepos, admin, picker = false, editing = null, sources = null, wizard = { draft: {}, found: null, preview: null } }){
@@ -637,11 +640,12 @@ function renderGitHub({ enabled, webhooks, github, installationRepos, admin, pic
         if (!admin || editing !== r.repoId) {
             return row;
         }
-        return html`${row}<tr class="settings-edit-row"><td colspan="6"><form class="settings-form" data-action="save-repo-settings" data-repo-id="${r.repoId}" data-flag-stance="${r.flagStance || 'unknown'}" data-env-map="${JSON.stringify(r.envMap || {})}">
+        return html`${row}<tr class="settings-edit-row"><td colspan="6"><form class="settings-form" data-action="save-repo-settings" data-repo-id="${r.repoId}" data-flag-stance="${r.flagStance || 'unknown'}" data-service-role="${r.serviceRole || ''}" data-env-map="${JSON.stringify(r.envMap || {})}">
             <label>Version file <input name="versionFile" placeholder="e.g. trigger.properties" value="${r.versionFile || ''}" maxlength="200"></label>
             <label>Paths not counted as drift (one per line) <textarea name="driftIgnorePaths" placeholder=".github/&#10;README.md">${(r.driftIgnorePaths || []).join('\n')}</textarea></label>
             ${EnvironmentMapFields(r)}
             <label>Feature flags <select name="flagStance">${Object.entries(FLAG_STANCE_CHOICES).map(([value, label]) => html`<option value="${value}" ${value === (r.flagStance || 'unknown') ? raw('selected') : ''}>${label}</option>`)}</select></label>
+            <label>Role <select name="serviceRole">${Object.entries(SERVICE_ROLE_CHOICES).map(([value, label]) => html`<option value="${value}" ${value === (r.serviceRole || '') ? raw('selected') : ''}>${label}</option>`)}</select></label>
             <button type="submit" class="btn btn-primary">Save</button>
             <button type="button" class="btn" data-action="edit-repo" data-repo-id="${r.repoId}">Cancel</button></form>
             ${RepoFlagsCard({ r, sources, wizard })}</td></tr>`;
@@ -1383,6 +1387,9 @@ const actions = {
         });
         if (values.flagStance && values.flagStance !== data.flagStance) {
             await api('PUT', tenantPath(`/github/repos/${data.repoId}/flag-stance`), { flagStance: values.flagStance });
+        }
+        if (values.serviceRole !== undefined && values.serviceRole !== (data.serviceRole || '')) {
+            await api('PUT', tenantPath(`/github/repos/${data.repoId}/role`), { serviceRole: values.serviceRole || null });
         }
         const envMap = envMapOf(values);
         if (values.envName0 !== undefined && JSON.stringify(envMap) !== (data.envMap || '{}')) {

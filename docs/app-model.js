@@ -119,6 +119,12 @@ function componentFlagCoverage(component){
 
     return entry ? entry.flagCoverage : undefined;
 }
+/** A service's role, SERVICE_TYPE.FE / .BE, or null when nobody said (componentsOrder[].serviceType). */
+function componentServiceType(component){
+    const entry = (state.componentsOrder || []).find(c => c.name === component);
+
+    return entry && entry.serviceType ? entry.serviceType : null;
+}
 /**
  * One issue's release status on one environment (ADR-003), from the services its code reached:
  * - each such service with a flag linked to the issue is a gate: all its flags on = on, all off = off, else
@@ -129,8 +135,11 @@ function componentFlagCoverage(component){
  *   it is listed in `uncertain` and the pill gets a "?";
  * - so is a gate service whose flag values are not confirmed (`flagFreshness`: stale, error or unknown, ADR-003).
  *   Each entry is `{ component, reason: 'untracked'|'stale'|'error'|'unknown', observedAt }` (doubtText()).
+ * - "FE on, BE off" (ADR-003): a frontend gate on (or partly on) while a backend gate of the same issue is off or
+ *   lacks the code here is a `mismatch` entry `{ frontend, backend, backendGate: 'off'|'absent' }` (mismatchText()),
+ *   shown in red: users may see a feature whose backend is not there.
  *
- * @returns {{ level: string, blocked: boolean, results: object[], uncertain: Array<{ component: string, reason: string, observedAt: string|null }> }}
+ * @returns {{ level: string, blocked: boolean, results: object[], uncertain: Array<{ component: string, reason: string, observedAt: string|null }>, mismatch: Array<{ frontend: string, backend: string, backendGate: 'off'|'absent' }> }}
  */
 function issueStatusForEnv(issue, env){
     const pairs = issueLinks(issue);
@@ -143,7 +152,7 @@ function issueStatusForEnv(issue, env){
         // No flag is linked to this issue: did its code reach this environment at all (or ship in what blocks it)?
         const deployedHere = reached.length > 0 || deployedViaBlockers(issue, env);
 
-        return { level: deployedHere ? RELEASE_LEVEL.DEPLOYED_CODE_ONLY : RELEASE_LEVEL.NONE, blocked: false, results: [], uncertain: deployedHere ? uncertain : [] };
+        return { level: deployedHere ? RELEASE_LEVEL.DEPLOYED_CODE_ONLY : RELEASE_LEVEL.NONE, blocked: false, results: [], uncertain: deployedHere ? uncertain : [], mismatch: [] };
     }
 
     const results = pairs.map(l => ({
@@ -182,6 +191,10 @@ function issueStatusForEnv(issue, env){
         level = RELEASE_LEVEL.PARTIAL;
     }
 
+    const services = [...flagged].map((component, i) => ({ component, gate: gates[i], type: componentServiceType(component) }));
+    const exposed = services.filter(sv => sv.type === SERVICE_TYPE.FE && (sv.gate === 'on' || sv.gate === 'partial'));
+    const missing = services.filter(sv => sv.type === SERVICE_TYPE.BE && (sv.gate === 'off' || sv.gate === 'absent'));
+    const mismatch = level === RELEASE_LEVEL.NONE ? [] : exposed.flatMap(fe => missing.map(be => ({ frontend: fe.component, backend: be.component, backendGate: be.gate })));
     let blocked = false;
 
     if (env === ENVIRONMENT.PROD && issue.dependencyBlocked && level === RELEASE_LEVEL.RELEASED){
@@ -189,7 +202,7 @@ function issueStatusForEnv(issue, env){
         blocked = true;
     }
 
-    return { level, blocked, results, uncertain: level === RELEASE_LEVEL.NONE ? [] : uncertain };
+    return { level, blocked, results, uncertain: level === RELEASE_LEVEL.NONE ? [] : uncertain, mismatch };
 }
 /** Why one service leaves an issue's status uncertain (an `issueStatusForEnv().uncertain` entry), in plain words. */
 function doubtText({ component, reason, observedAt }){
@@ -199,6 +212,10 @@ function doubtText({ component, reason, observedAt }){
         case 'error': return `${component}: the last flag message from its source was refused`;
         default: return `${component}: its flag source has not confirmed a full state yet`;
     }
+}
+/** One "FE on, BE off" warning (an `issueStatusForEnv().mismatch` entry), in plain words. */
+function mismatchText({ frontend, backend, backendGate }){
+    return `${frontend} has it on, but ${backend} ${backendGate === 'absent' ? 'does not have the code yet' : 'has its flag off'}`;
 }
 function statusLabel(level){
     return { [RELEASE_LEVEL.NONE]: 'Not deployed', [RELEASE_LEVEL.DEPLOYED]: 'Deployed (hidden)', [RELEASE_LEVEL.RELEASED]: 'Released', [RELEASE_LEVEL.PARTIAL]: 'Partial', [RELEASE_LEVEL.DEPLOYED_CODE_ONLY]: 'Code deployed' }[level];

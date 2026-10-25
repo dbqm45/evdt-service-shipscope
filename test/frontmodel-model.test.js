@@ -100,7 +100,7 @@ test('a deployment naming only a sub-task counts for its parent (subtaskKeys)', 
     assert.equal(run(`anyDeploymentForIssue(${story},"prod")`), true);
     assert.equal(run(`anyDeploymentForIssue(${story},"qa")`), true);
     assert.equal(run('anyDeploymentForIssue({key:"S-1"},"prod")'), false, 'without subtaskKeys (synced before the field) only the own key');
-    assert.deepEqual(j(`issueStatusForEnv(${story},"prod")`), { level: 'deployed_code_only', blocked: false, results: [], uncertain: [] });
+    assert.deepEqual(j(`issueStatusForEnv(${story},"prod")`), { level: 'deployed_code_only', blocked: false, results: [], uncertain: [], mismatch: [] });
 });
 
 test('an issue with no deployment of its own counts as deployed where all its blockers are (blockedByKeys)', () => {
@@ -111,7 +111,7 @@ test('an issue with no deployment of its own counts as deployed where all its bl
         deployments: [dep('c', 'test', { relatedIssues: ['B-3', 'B-2'] }), dep('c', 'qa', { relatedIssues: ['B-3'] })],
         jiraIssues: [{ key: 'B-1', subtaskKeys: ['B-3'] }],
     });
-    assert.deepEqual(j('issueStatusForEnv({key:"BUG-1",blockedByKeys:["B-1"]},"qa")'), { level: 'deployed_code_only', blocked: false, results: [], uncertain: [] },
+    assert.deepEqual(j('issueStatusForEnv({key:"BUG-1",blockedByKeys:["B-1"]},"qa")'), { level: 'deployed_code_only', blocked: false, results: [], uncertain: [], mismatch: [] },
         'the blocker is matched on its sub-task\'s key');
     assert.equal(run('issueStatusForEnv({key:"BUG-1",blockedByKeys:["B-1"]},"prod").level'), 'none');
     assert.equal(run('issueStatusForEnv({key:"BUG-2",blockedByKeys:["B-1","B-2"]},"test").level'), 'deployed_code_only');
@@ -125,8 +125,8 @@ test('issueStatusForEnv without linked flags: raw deployment presence', () => {
     const { j, setState } = loadApp();
 
     setState({ deployments: [dep('c', 'prod', { relatedIssues: ['K-1'] })] });
-    assert.deepEqual(j('issueStatusForEnv({key:"K-1"},"prod")'), { level: 'deployed_code_only', blocked: false, results: [], uncertain: [] });
-    assert.deepEqual(j('issueStatusForEnv({key:"K-1"},"qa")'), { level: 'none', blocked: false, results: [], uncertain: [] });
+    assert.deepEqual(j('issueStatusForEnv({key:"K-1"},"prod")'), { level: 'deployed_code_only', blocked: false, results: [], uncertain: [], mismatch: [] });
+    assert.deepEqual(j('issueStatusForEnv({key:"K-1"},"qa")'), { level: 'none', blocked: false, results: [], uncertain: [], mismatch: [] });
 });
 
 test('issueStatusForEnv with flags: none / released / deployed / partial / blocked', () => {
@@ -237,6 +237,37 @@ test('issueStatusForEnv per service (ADR-003): own state per service, neutral se
     // Legacy data (no flagStatesByComponent): a partial value is no longer "on".
     setState({ flagsMeta: { fe: flagsMeta.fe }, deployments: deps('web'), flagStates: { fe: { prod: { build: { enabled: true, state: 'partial', rollout: 5 } } } } });
     assert.equal(level(), 'partial');
+});
+
+test('"FE on, BE off" (ADR-003): a frontend gate on while a backend gate is off or lacks the code is a red warning', () => {
+    const { j, run, setState } = loadApp();
+    const at = daysAgo(2);
+    const v = (stateName, rollout = null) => ({ state: stateName, rollout, enabled: stateName === 'on', changedAt: at });
+    const comps = (types) => Object.entries(types).map(([name, serviceType]) => ({ name, flagCoverage: 'tracked', serviceType }));
+    const flagsMeta = { fe: { jiraKeys: ['K-1'], components: ['web'] }, be: { jiraKeys: ['K-1'], components: ['api'] } };
+    const both = { flagsMeta, deployments: [dep('web', 'prod', { relatedIssues: ['K-1'] }), dep('api', 'prod', { relatedIssues: ['K-1'] })] };
+    const mismatch = () => j('issueStatusForEnv({key:"K-1"},"prod").mismatch');
+
+    setState({ ...both, componentsOrder: comps({ web: 'FE', api: 'BE' }), flagStatesByComponent: { fe: { prod: { web: v('on') } }, be: { prod: { api: v('off') } } } });
+    assert.deepEqual(mismatch(), [{ frontend: 'web', backend: 'api', backendGate: 'off' }]);
+    assert.equal(run('mismatchText(issueStatusForEnv({key:"K-1"},"prod").mismatch[0])'), 'web has it on, but api has its flag off');
+    setState({ ...both, componentsOrder: comps({ web: 'FE', api: 'BE' }), flagStatesByComponent: { fe: { prod: { web: v('partial', 10) } }, be: { prod: { api: v('off') } } } });
+    assert.equal(mismatch().length, 1, 'a partial rollout already shows the feature to some users');
+
+    // The backend's flag is on, or the frontend's is off: nothing to warn about. Roles not set: no warning either.
+    setState({ ...both, componentsOrder: comps({ web: 'FE', api: 'BE' }), flagStatesByComponent: { fe: { prod: { web: v('on') } }, be: { prod: { api: v('on') } } } });
+    assert.deepEqual(mismatch(), []);
+    setState({ ...both, componentsOrder: comps({ web: 'FE', api: 'BE' }), flagStatesByComponent: { fe: { prod: { web: v('off') } }, be: { prod: { api: v('off') } } } });
+    assert.deepEqual(mismatch(), []);
+    setState({ ...both, componentsOrder: comps({ web: null, api: null }), flagStatesByComponent: { fe: { prod: { web: v('on') } }, be: { prod: { api: v('off') } } } });
+    assert.deepEqual(mismatch(), []);
+
+    // The backend has a flag for the issue but not its code on this environment.
+    setState({ flagsMeta, deployments: [dep('web', 'prod', { relatedIssues: ['K-1'] })], componentsOrder: comps({ web: 'FE', api: 'BE' }),
+        flagStatesByComponent: { fe: { prod: { web: v('on') } }, be: { prod: { api: v('on') } } } });
+    assert.deepEqual(mismatch(), [{ frontend: 'web', backend: 'api', backendGate: 'absent' }]);
+    assert.equal(run('mismatchText(issueStatusForEnv({key:"K-1"},"prod").mismatch[0])'), 'web has it on, but api does not have the code yet');
+    assert.deepEqual(j('issueStatusForEnv({key:"K-1"},"qa").mismatch'), [], 'nothing deployed: nothing to warn about');
 });
 
 test('prodStatusBucket maps levels to buckets', () => {

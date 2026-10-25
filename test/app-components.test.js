@@ -36,6 +36,14 @@ test('Tag: plain, titled and icon variants', () => {
     assert.match(run(`Tag({ text: 'x', cls: 'c', icon: ICONS.flag })`), /^<span class="tag tag-flagged c"><svg/);
 });
 
+test('StatusPill: plain, or outlined in red with a warning icon for "FE on, BE off"; IssueBreakdown lists the warnings', () => {
+    assert.equal(run(`StatusPill({ cls: 'st-released', label: 'Released', title: 'T' })`), '<span class="status-pill st-released" title="T">Released</span>');
+    assert.match(run(`StatusPill({ cls: 'st-partial', label: 'Partial', title: '<x>', alert: true })`), /^<span class="status-pill st-partial status-pill-alert" title="&lt;x&gt;">Partial<svg/);
+    const breakdown = run(`IssueBreakdown({ issueKey: 'K-1', rows: [], noFlagReason: 'r', mismatch: ['PROD: <web> has it on, but api has its flag off'] })`);
+    assert.match(breakdown, /breakdown-row breakdown-alert.*Frontend on, backend off.*PROD: &lt;web&gt; has it on, but api has its flag off/s);
+    assert.doesNotMatch(run(`IssueBreakdown({ issueKey: 'K-1', rows: [], noFlagReason: 'r' })`), /breakdown-alert/);
+});
+
 test('EmptyState adds the panel class on request', () => {
     assert.equal(run(`EmptyState({ message: 'm' })`), '<div class="empty">m</div>');
     assert.equal(run(`EmptyState({ message: 'm', panel: true })`), '<div class="empty panel">m</div>');

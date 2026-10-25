@@ -55,7 +55,7 @@ function buildFallbackData(){
         { id: 'd9', component: BF, environment: ENVIRONMENT.QA, version: 'v1.1.41', deployedAt: hrsAgo(1.7), deployedBy: 'Maciej Piasecki', status: 'success', relatedIssues: ['EBO-16955'], resolvedFlags: { triggerMessageManualEnabled: true }, durationMs: 125000, workflowRunUrl: RUN },
         { id: 'd10', component: CH, environment: ENVIRONMENT.QA, version: 'v1.4.6', deployedAt: hrsAgo(1), deployedBy: 'Maciej Piasecki', status: 'success', manual: true, durationMs: 72000, workflowRunUrl: RUN, relatedIssues: ['EBO-16955', 'EBO-16702', 'EBO-17001', 'EBO-16970', 'EBO-17101', 'EBO-17102', 'EBO-17103', 'EBO-17105'], resolvedFlags: { triggerMessageManualEnabled: true, ocppDeviationBadgeEnabled: true, triggerRetryEnabled: true, retryQueueViewerEnabled: true, retryQueueExportEnabled: false } },
         { id: 'd11', component: FE, environment: ENVIRONMENT.QA, version: 'v0.8.2', deployedAt: daysAgo(8), deployedBy: 'ci-bot', status: 'success', driftBehind: { behindEnv: ENVIRONMENT.TEST, commitCount: 8, diff: mockDiff(6) }, relatedIssues: ['EBO-16964'], resolvedFlags: { assetNuvoloIntegrationEnabled: false } },
-        { id: 'd12', component: BO, environment: ENVIRONMENT.QA, version: 'v0.0.699', deployedAt: hrsAgo(5), deployedBy: 'ci-bot', status: 'success' },
+        { id: 'd12', component: BO, environment: ENVIRONMENT.QA, version: 'v0.0.699', deployedAt: hrsAgo(5), deployedBy: 'ci-bot', status: 'success', relatedIssues: ['EBO-16702'] },
         { id: 'd13', component: SI, environment: ENVIRONMENT.QA, version: 'v1.0.14', deployedAt: daysAgo(44), deployedBy: 'ci-bot', status: 'success', driftBehind: { behindEnv: ENVIRONMENT.TEST, commitCount: 6, diff: mockDiff(9) }, relatedIssues: ['EBO-16820'] },
         { id: 'd14', component: HO, environment: ENVIRONMENT.QA, version: 'v1.0.21', deployedAt: daysAgo(44), deployedBy: 'ci-bot', status: 'success', driftBehind: { behindEnv: ENVIRONMENT.TEST, commitCount: 5, diff: { unknown: true } }, relatedIssues: ['EBO-99001'], resolvedFlags: { legacyMigrationEnabled: true } },
         // PROD
@@ -92,6 +92,9 @@ function buildFallbackData(){
         triggerMessageManualEnabled: { description: 'Manual trigger message from connector level', source: 'build', jiraKeys: ['EBO-16955'], components: [CH, BF], createdAt: daysAgo(30) },
         ocppDeviationBadgeEnabled: { description: 'Deviation badge in the OCPP templates list (charger side)', source: 'build', jiraKeys: ['EBO-16702'], components: [CH], createdAt: daysAgo(15) },
         ocppDeviationBadgeBffEnabled: { description: 'Deviation badge in the OCPP templates list (BFF side)', source: 'build', jiraKeys: ['EBO-16702'], components: [BF], createdAt: daysAgo(15) },
+        // On in the back-office frontend on QA, where the BFF has its own flag for the same issue but not the code yet:
+        // the red "frontend on, backend off" warning on EBO-16702's QA pill (ADR-003).
+        ocppDeviationBadgeUiEnabled: { description: 'Deviation badge in the OCPP templates list (back-office UI)', source: 'build', jiraKeys: ['EBO-16702'], components: [BO], createdAt: daysAgo(15) },
         triggerRetryEnabled: { description: 'Automatic retry for failed trigger messages', source: 'build', jiraKeys: ['EBO-16970'], components: [CH], createdAt: daysAgo(10) },
         retryQueueViewerEnabled: { description: 'Retry queue viewer and its filters', source: 'build', jiraKeys: ['EBO-17101', 'EBO-17102'], components: [CH], createdAt: daysAgo(22) },
         retryQueueExportEnabled: { description: 'CSV export of the retry queue', source: 'build', jiraKeys: ['EBO-17105'], components: [CH], createdAt: daysAgo(22) },
@@ -115,6 +118,7 @@ function buildFallbackData(){
         triggerMessageManualEnabled: { test: buildState(true, daysAgo(30), 'ci-bot'), qa: buildState(true, daysAgo(30), 'ci-bot'), prod: buildState(true, daysAgo(30), 'ci-bot') },
         ocppDeviationBadgeEnabled: { test: buildState(true, hrsAgo(1), 'Maciej Piasecki'), qa: buildState(true, hrsAgo(1), 'Maciej Piasecki'), prod: buildState(false, daysAgo(15), 'ci-bot') },
         ocppDeviationBadgeBffEnabled: { test: buildState(true, daysAgo(1), 'Kacper Jóźwiak'), qa: buildState(false, daysAgo(15), 'ci-bot'), prod: buildState(false, daysAgo(15), 'ci-bot') },
+        ocppDeviationBadgeUiEnabled: { test: buildState(false, daysAgo(15), 'ci-bot'), qa: buildState(true, hrsAgo(5), 'ci-bot'), prod: buildState(false, daysAgo(15), 'ci-bot') },
         triggerRetryEnabled: { test: buildState(true, daysAgo(10), 'ci-bot'), qa: buildState(true, daysAgo(10), 'ci-bot'), prod: buildState(true, daysAgo(10), 'ci-bot') },
         retryQueueViewerEnabled: { test: buildState(true, daysAgo(20), 'ci-bot'), qa: buildState(true, daysAgo(20), 'ci-bot'), prod: buildState(true, daysAgo(19), 'ci-bot') },
         retryQueueExportEnabled: { test: buildState(true, daysAgo(20), 'ci-bot'), qa: buildState(false, daysAgo(20), 'ci-bot'), prod: buildState(false, daysAgo(20), 'ci-bot') },

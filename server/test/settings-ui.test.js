@@ -108,6 +108,7 @@ test('settings page: GitHub -- installations, the tracked repositories table, th
     assert.match(editing, />\.github\/\nREADME\.md<\/textarea>/);
     assert.ok(!/<form[^>]*>(?:(?!<\/form>).)*<form/s.test(editing), 'no form inside another form');
     assert.match(editing, /data-flag-stance="unknown"[\s\S]*<select name="flagStance"><option value="unknown" selected>Not set[\s\S]*<option value="none" >This repository has no feature flags/);
+    assert.match(editing, /data-service-role=""[\s\S]*<select name="serviceRole"><option value="" selected>Not set<\/option><option value="frontend" >Frontend/, "the role: frontend or backend, for the dashboard's FE on, BE off warning");
     assert.match(editing, /Environments: none seen yet/);
     const withEnvs = str(ui.renderGitHub({ enabled: true, github: { ...github, repos: [{ ...github.repos[0], seenEnvironments: ['staging', 'Production'], envMap: { Staging: 'qa' } }] }, installationRepos: {}, admin: true, editing: 101 }));
     assert.match(withEnvs, /name="envName0" value="staging">staging <select name="envChoice0"><option value="auto" >auto \(skipped\)[\s\S]*<option value="qa" selected>qa/);
@@ -544,6 +545,14 @@ test('settings page: actions send what the API expects, then reload their sectio
     calls.length = 0;
     await ui.runAction('save-repo-settings', form([['versionFile', ''], ['driftIgnorePaths', ''], ['flagStance', 'none']], { repoId: '101', flagStance: 'unknown' }, 'github'));
     assert.deepStrictEqual(calls[1], { method: 'PUT', url: `${base}/github/repos/101/flag-stance`, body: { flagStance: 'none' } });
+    calls.length = 0;
+    await ui.runAction('save-repo-settings', form([['versionFile', ''], ['driftIgnorePaths', ''], ['serviceRole', '']], { repoId: '101', serviceRole: '' }, 'github'));
+    assert.ok(!calls.some((c) => c.url.endsWith('/role')), 'role unchanged: not sent');
+    await ui.runAction('save-repo-settings', form([['versionFile', ''], ['driftIgnorePaths', ''], ['serviceRole', 'frontend']], { repoId: '101', serviceRole: '' }, 'github'));
+    assert.deepStrictEqual(calls.find((c) => c.url.endsWith('/role')), { method: 'PUT', url: `${base}/github/repos/101/role`, body: { serviceRole: 'frontend' } });
+    calls.length = 0;
+    await ui.runAction('save-repo-settings', form([['versionFile', ''], ['driftIgnorePaths', ''], ['serviceRole', '']], { repoId: '101', serviceRole: 'backend' }, 'github'));
+    assert.deepStrictEqual(calls.find((c) => c.url.endsWith('/role')).body, { serviceRole: null }, '"Not set" clears it');
     calls.length = 0;
     const envForm = (choices) => form([['versionFile', ''], ['driftIgnorePaths', ''], ...choices.flatMap(([name, choice], i) => [[`envName${i}`, name], [`envChoice${i}`, choice]])], { repoId: '101', envMap: '{"staging":"qa"}' }, 'github');
     await ui.runAction('save-repo-settings', envForm([['staging', 'qa'], ['Production', 'auto']]));

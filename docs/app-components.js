@@ -32,8 +32,11 @@ function SprintTag({ sprint }){
 }
 
 /** Environment-status pill ("Released", "Deployed (hidden)", …); `title` is the plain-English tooltip. */
-function StatusPill({ cls, label, title }){
-    return html`<span class="status-pill ${cls}" title="${title}">${label}</span>`;
+/** A status pill; `alert` (an "FE on, BE off" warning) outlines it in red with a warning icon. */
+function StatusPill({ cls, label, title, alert = false }){
+    return alert
+        ? html`<span class="status-pill ${cls} status-pill-alert" title="${title}">${label}${ICONS.warn}</span>`
+        : html`<span class="status-pill ${cls}" title="${title}">${label}</span>`;
 }
 
 function StatusDot({ status }){
@@ -185,8 +188,9 @@ function BreakdownRow({ component, flagKey, envs }){
 
 /** Expanded per-component code/flag breakdown under an open issue row. `rows` are `BreakdownRow` props;
  *  with none, `noFlagReason` explains why instead. `dependency` is `{ note }` or null; `uncertain` = why the status
- *  is not certain, one plain sentence per service (doubtText()). */
-function IssueBreakdown({ issueKey, rows, noFlagReason, dependency = null, uncertain = [] }){
+ *  is not certain, one plain sentence per service (doubtText()); `mismatch` = "FE on, BE off" warnings (mismatchText()),
+ *  each already prefixed with its environment. */
+function IssueBreakdown({ issueKey, rows, noFlagReason, dependency = null, uncertain = [], mismatch = [] }){
     return html`<div class="breakdown">
         ${rows.length ? html`
         <table class="breakdown-table">
@@ -197,6 +201,7 @@ function IssueBreakdown({ issueKey, rows, noFlagReason, dependency = null, uncer
         </table>
         <div class="breakdown-hint">"Not found" means no successful deployment of that component carried a commit referencing ${issueKey} yet.</div>
         ` : html`<div class="breakdown-row" style="justify-content:flex-start;">No flag linked to ${issueKey} — ${noFlagReason}</div>`}
+        ${mismatch.length ? html`<div class="breakdown-row breakdown-alert"><span>${ICONS.warn} Frontend on, backend off</span><span>${mismatch.join('; ')}</span></div>` : ''}
         ${uncertain.length ? html`<div class="breakdown-row"><span>Not sure</span><span>${uncertain.join('; ')} (Settings)</span></div>` : ''}
         ${dependency ? html`<div class="breakdown-row"><span>Blocking dependency</span><span style="color:var(--blocked)">${dependency.note}</span></div>` : ''}
     </div>`;

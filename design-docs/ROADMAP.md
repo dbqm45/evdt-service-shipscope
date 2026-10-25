@@ -61,7 +61,7 @@ Każdy punkt to osobny PR, wdrażalny sam; `[ ]` = do zrobienia, `[x]` = zrobion
 
 ### 5. Ostrzeżenie FE/BE i podpowiedzi powiązań
 
-- [ ] Rola serwisu (frontend/backend) i czerwone ostrzeżenie „FE on, BE off".
+- [x] Rola serwisu (frontend/backend) i czerwone ostrzeżenie „FE on, BE off".
 - [ ] Podpowiadanie powiązań flaga → issue: klucz zmieniony w pliku flag przez commity issue.
 
 ### Na żądanie klientów
