@@ -272,7 +272,8 @@ not stripped or coerced).
 - **Deleting a workspace**: admins only, with the name typed back (checked before anything outside ShipScope is
   touched, and again in the deleting transaction, which locks the tenant row). One `DELETE FROM tenants` removes every
   row of it (all tenant tables cascade; `server/test/tenant-delete.test.js` checks each one is empty afterwards and
-  another tenant is untouched). Render's database backups still hold the data until they expire.
+  another tenant is untouched). Render's database backups still hold the data until they expire. Backups, restoring
+  and the quarterly restore test (`npm run verify-restore`): [KOPIE.pl.md](KOPIE.pl.md).
 - **Retention**: records older than the tenant's `deployment_retention_days` are deleted daily, except each
   repo/environment's latest deployment and latest successful one. `issue_deployments` ("issue X first reached
   ENV") is never trimmed. Untracking a repo deletes its deployments. Flag changes (`flag_value_history`, the

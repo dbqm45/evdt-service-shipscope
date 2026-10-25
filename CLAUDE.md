@@ -13,6 +13,9 @@ history of how they came about is in git and `CHANGELOG.md`. Related documents:
 - `FAQ.md` — how each number and badge on the dashboard is computed; `ONBOARDING.md` — setting up a workspace;
   `server/README.md` — routes, security model, local setup; `server/SETUP.pl.md` — setting up a server;
   `server/SEKRETY.pl.md` — the encryption keys (what each is for, first setup, rotation, troubleshooting);
+  `server/KOPIE.pl.md` — database backups (Render's PITR and exports, a copy outside Render), restoring, and the
+  quarterly restore test with `npm run verify-restore --prefix server` (`lib/restore-check.js`, read only, takes
+  `RESTORE_DATABASE_URL`, never `DATABASE_URL`; `server/test/restore-check.test.js`);
   `RELEASING.md` — versions.
 
 ## What this repo is
