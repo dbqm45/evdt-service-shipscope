@@ -75,6 +75,7 @@ const EXPECTED_ROUTES = `\
     │           ├── /sync (POST)
     │           ├── /flag-fields (GET, HEAD)
     │           ├── /flag-link (PUT)
+    │           ├── /release-link (PUT)
     │           ├── /boards (GET, HEAD, PUT)
     │           │   └── /:boardId (PUT)
     │           └── /projects (GET, HEAD)

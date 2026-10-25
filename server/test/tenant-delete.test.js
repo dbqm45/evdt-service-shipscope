@@ -85,6 +85,10 @@ async function populatedTenant({ pool, app, as }, owner, name, { jira = false } 
     }
     // A Jira access token the worker handed over (lib/jira-connections.js), as with a sealing key pair.
     await withScope(pool, { tenantId }, (c) => c.query("INSERT INTO jira_access_grants (tenant_id, error) VALUES ($1, 'none')", [tenantId]));
+    await withScope(pool, { tenantId }, async (c) => {
+        await c.query("INSERT INTO release_lines (tenant_id, item_key, release, origin) VALUES ($1, 'ABC-1', 'R1', 'jira')", [tenantId]);
+        await c.query("INSERT INTO flag_commit_links (tenant_id, flag_key, item_key, repo_id) VALUES ($1, 'newCheckout', 'ABC-1', 1)", [tenantId]);
+    });
     return tenantId;
 }
 

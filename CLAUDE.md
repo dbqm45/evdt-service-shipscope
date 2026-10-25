@@ -102,7 +102,7 @@ changelog entry by hand outside a `chore(release)` PR.
 
 Deployed to Render per `context/foundation/infrastructure.md`: `render.yaml` builds both the Web Service and the
 Background Worker from the repo root (`npm ci --prefix server`, `node server/web.js`), not `rootDir: server`, which
-would hide `docs/` from the Web Service. Migrations (`server/migrations/001`–`035`, applied by the hand-rolled
+would hide `docs/` from the Web Service. Migrations (`server/migrations/001`–`036`, applied by the hand-rolled
 `lib/migrate.js`) run as each service's `preDeployCommand` under an advisory lock (`test/render-blueprint.test.js`).
 Dependencies, all in `server/package.json`: `pg`, `fastify`, `@fastify/cookie`. Fastify runs with
 `removeAdditional: false, coerceTypes: false`: unknown fields and wrong types are a 400, never silently fixed.
@@ -118,7 +118,7 @@ New rules go into the pure file; the I/O file orchestrates.
 
 **Tenant isolation (RLS).** Every query on an RLS table — the list is `RLS_TABLES` in `lib/scope.js` (memberships,
 invitations, github_installations, tracked_repos, deployments, issue_deployments, flag_sources, flag_source_repos, flag_source_envs, ingest_tokens, flags,
-flag_values, flag_value_history, jira_connections, jira_boards, jira_pis, jira_issues, audit_events, endpoint_tests, jira_access_grants) — must run inside
+flag_values, flag_value_history, jira_connections, jira_boards, jira_pis, jira_issues, audit_events, endpoint_tests, jira_access_grants, release_lines, flag_commit_links) — must run inside
 `withScope()`, which sets `app.current_tenant_id`/`app.current_user_id` with transaction-local
 `set_config(..., true)`. An unscoped read returns zero rows; an unscoped write is an RLS error.
 `lib/withscope-guard.js` (`server/test/withscope-guard.test.js`) fails on any `pool.query(...)` in `server/lib/`
@@ -275,10 +275,14 @@ the web service fills once a minute (`sampleStatus()`, web.js); a day is an outa
   environment at its own deployment. Settings → Sources: Find flags files, Use this, Preview, then Read from code
   (`server/test/flag-discovery.test.js`).
   Sources of one kind fold into the dashboard's `build`/`runtime-be` slot by priority. Flags link to Jira issues
-  from three origins merged in `readDashboardFlags()`: the sender's `jira_keys`, hand-set
-  `manual_jira_keys`/`manual_description` (`PUT /tenants/:tenantId/flags/:key`, never overwritten by a sender), and
+  from four origins merged in `readDashboardFlags()`: the sender's `jira_keys`, hand-set
+  `manual_jira_keys`/`manual_description` (`PUT /tenants/:tenantId/flags/:key`, never overwritten by a sender),
   Jira's own, read at sync time by the tenant's `jira_connections.flag_link` convention (a custom field or a label
-  prefix, `extractFlagKeys()`). The file-based `schemaVersion: 1` contract was not ported.
+  prefix, `extractFlagKeys()`), and deployed commits: a `Flag: <key>` trailer (tf talos-story-run, next to
+  `Change: TSK-n`) links the flag to the keys of that same commit (`flagLinksFromMessages()` in
+  `lib/deployment-logic.js`, stored by the deployment sync in `flag_commit_links`, migration `036`, read by
+  `commitLinks()` without the flag's `dismissed_jira_keys`; Settings shows them as `links.commit`, and a commit-linked
+  key is no longer a suggestion) (`server/test/flag-commit-links.test.js`). The file-based `schemaVersion: 1` contract was not ported.
 - **Jira (FR-007–009)** — connected per tenant through Atlassian OAuth 2.0 (3LO) (`lib/atlassian.js`,
   `lib/jira-connections.js`). Only the refresh token is stored, AES-256-GCM-sealed with the tenant id as associated
   data (`lib/secret-box.js`, key `TOKEN_ENCRYPTION_KEY`; format `v2.<key id>…`, any key of the ring opens it, old keys
@@ -297,6 +301,13 @@ the web service fills once a minute (`sampleStatus()`, web.js); a day is an outa
   increment. When boards are in different current increments the index starts with a synthetic `@now` entry
   (`kind: "now"`, `includes`), which `selectedIncrements()`/`incrementLabel()` in `docs/app-model.js` understand.
   The dashboard data carries `jiraBrowseUrl` (the tenant's site + `/browse`, `null` without Jira) for issue links.
+  Release lines (G1.3, pdi contract 0.4.0): each issue's line `R1…Rn` (R1 = MVP) by the tenant's
+  `jira_connections.release_link` (migration `036`, default `{ type: 'label', prefix: 'release:' }`; `fixVersion` with
+  an optional prefix, a text/select `field`, or `none`; `PUT …/jira/release-link`, audited `jira_release_link_changed`,
+  Settings → Jira `ReleaseLinkForm()`), read by `extractReleaseLine()` in `lib/jira-model.js` (the lowest of several)
+  into the issue's `releaseLine`; the sync keeps `release_lines` (origin `jira`) in step with every issue it read
+  (`writeReleaseLines()`) (`server/test/release-lines.test.js`). The repo mode (`changes/CHG-n/release.yaml`, origin
+  `repo`, a pinned copy of the contract's schema) waits for F1 (design-docs/G1.3-PLAN.pl.md).
 - **Webhooks** (`lib/webhooks.js`, migration `013`) — `POST /webhooks/github` (HMAC, `GITHUB_APP_WEBHOOK_SECRET`)
   and `POST /webhooks/jira` (HS256 JWT signed with the Atlassian client secret; a token without `exp` is logged as
   `jira webhook token without exp` and accepted unless `JIRA_WEBHOOK_REQUIRE_EXP=1`, since Atlassian does not
@@ -333,7 +344,11 @@ the web service fills once a minute (`sampleStatus()`, web.js); a day is an outa
 `server/test/dashboard-contract.test.js`: both syncs against fake APIs, the real routes, the real `docs/app-*.js`
 reading it through `loadData()` in a `vm`; `server-test.yml` also runs on `docs/app-*.js` changes for it):
 `deployments`, `flagsMeta`, `flagStates`, `flagStateHistory`, `jiraIndex`, `issueStatusIndex`, `issueDeployments`,
-`flagStatesByComponent`, `flagFreshness`, `componentsOrder` (the tracked repos), `lastSyncedAt`, `jiraBrowseUrl`. The `FALLBACK` sample data has the same shape.
+`flagStatesByComponent`, `flagFreshness`, `componentsOrder` (the tracked repos), `lastSyncedAt`, `jiraBrowseUrl`,
+`releasePlan` (`readReleasePlan()`: `{ mode: 'jira', lines: [{ key, release, title, type, epicKey, epicTitle,
+subtaskKeys, blockedByKeys, dependencyBlocked, featureFlags }], plans: [] }`, every item with a line, from its newest
+synced copy whatever its increment; `plans` = release.yaml objects in the contract's shape, none until the repo mode).
+The `FALLBACK` sample data has the same shape.
 
 - **Deployment record**: `component`, environment (`test`/`qa`/`prod`; `environmentFor()`: the repo's
   `tracked_repos.env_map` first — migration `022`, names without case, `skip`, set by
@@ -385,7 +400,7 @@ reading it through `loadData()` in a `vm`; `server-test.yml` also runs on `docs/
 **Files.** Classic `<script>` tags (not ES modules — those do not load over `file://`, which `FALLBACK` needs),
 loaded by `docs/index.html` in this order: `app-html`, `app-icons`, `app-core`, `app-components`, `app-data`, `app-model`,
 `app-product`, `app-technical`, `app-technical-matrix`, `app-technical-timeline`, `app-technical-flags`,
-`app-release-notes`, `app-insights`, `app-main` (last; it calls `init()`). They share one global scope. Function
+`app-release-notes`, `app-release-plan`, `app-insights`, `app-main` (last; it calls `init()`). They share one global scope. Function
 declarations hoist only within one file, so code that *runs* at load time may use only the same or earlier files —
 `const FALLBACK = buildFallbackData()` sits in `app-main.js` for that reason. New code goes in the file for its area;
 `app-technical.js` keeps the helpers shared by the three `app-technical-*` files.
@@ -465,6 +480,18 @@ bugs fixed), "Features & improvements" and "Bug fixes". Each item: title (the li
 and first prod date (`earliestProdDeployedAt()`, omitted when unknown). "Copy as Markdown" (`data-copy-notes`) puts
 `releaseNotesMarkdown()` on the clipboard. A PI switch calls `resetReleaseNotesFilters()`. Unreleased issues are not
 shown; empty with fallback stubs.
+
+**Release plan** (G1.3; `app-release-plan.js`, `renderReleasePlan()` into `#releasePlanBody`; the PI and sprint
+selectors are hidden there, lines span increments). `releasePlanModel()` (`app-model.js`): repo plans group by change
+(lines from `releases`, flags from `flags`), Jira lines of items no plan lists group by Epic; each line R1…Rn lists
+its items with `issueStatusForEnv()` on PROD (`StatusPill`), `onProdCount` and `released` (every item
+`issueIsReleasedToProd()`, "R1 released"), the group's `mvpReleased`. `flagPlanStatus(planFlag, key)`: the PROD
+exposure (`flagProdExposure()`: widest across services, on = 100, off = 0), the last planned stage reached (a `N%`
+stage once the rollout is ≥ N, a named stage once on for anyone), `daysInStage` from the value's `changedAt` against
+`min_days` (`waiting`/`ready`/`final`/`not_started`), `overdue`/`daysPastRemoveBy` after `remove_by`; without a plan
+(Jira mode) `no_plan`. Markup: `ReleasePlanGroup`, `ReleaseLineCard`, `ReleasePlanItem`, `ReleasePlanFlag`
+(`test/app-release-plan.test.js`). The `FALLBACK` shows the retry-queue Epic's lines and a `CHG-12` plan with a flag
+past its remove-by.
 
 **Insights** (behind `?insights=1`, `INSIGHTS_ENABLED`). Hand-rolled charts over existing data: release status per
 sprint on prod (`sprintReleaseStatusBreakdown()`, labels from `sprintLabelFor()`) and lead time Done → prod

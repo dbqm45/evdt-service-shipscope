@@ -47,6 +47,46 @@ function toLegacyRecord(row, component) {
 }
 
 /** A commit sha shortened for display; a tag/release name as is. */
+/**
+ * The release plan (G1.3): every work item with a release line, in the shape the Release plan tab reads, its fields
+ * from the newest synced copy of the issue (whatever increment it is in); a line whose issue is no longer synced (a
+ * board deselected, another site) is left out. `plans` holds plans read from a repo's
+ * changes/CHG-n/release.yaml (pdi contract 0.4.0); none yet, so Jira mode only.
+ *
+ * @param {import('pg').PoolClient} client inside withScope()
+ * @param {string} tenantId
+ * @returns {Promise<{ mode: 'jira', lines: Array<{ key: string, release: string, title: string, type: string|null, epicKey: string|null, epicTitle: string|null, subtaskKeys: string[], blockedByKeys: string[], dependencyBlocked: boolean, featureFlags: string[] }>, plans: object[] }>}
+ */
+async function readReleasePlan(client, tenantId) {
+    const { rows } = await client.query(
+        `SELECT DISTINCT ON (l.item_key) l.item_key, l.release, i.data
+         FROM release_lines l
+         JOIN jira_issues i ON i.tenant_id = l.tenant_id AND i.key = l.item_key
+         WHERE l.tenant_id = $1
+         ORDER BY l.item_key, i.synced_at DESC`,
+        [tenantId]
+    );
+    const lines = rows.map((r) => {
+        const d = r.data || {};
+        return {
+            key: r.item_key,
+            release: r.release,
+            title: d.title || r.item_key,
+            type: d.type || null,
+            epicKey: d.epicKey || null,
+            epicTitle: d.epicTitle || null,
+            subtaskKeys: Array.isArray(d.subtaskKeys) ? d.subtaskKeys : [],
+            blockedByKeys: Array.isArray(d.blockedByKeys) ? d.blockedByKeys : [],
+            dependencyBlocked: d.dependencyBlocked === true,
+            featureFlags: Array.isArray(d.featureFlags) ? d.featureFlags : [],
+        };
+    });
+    // Line order (R1, R2, … R10), then key.
+    const n = (release) => Number(release.slice(1));
+    lines.sort((a, b) => n(a.release) - n(b.release) || a.key.localeCompare(b.key, 'en', { numeric: true }));
+    return { mode: 'jira', lines, plans: [] };
+}
+
 function shortRef(ref) {
     return /^[0-9a-f]+$/.test(ref) ? ref.slice(0, 12) : ref;
 }
@@ -56,7 +96,7 @@ function shortRef(ref) {
  * @param {{ tenantId: string, actorUserId: string }} input
  * @returns {Promise<{ deployments: object[], flagsMeta: object, flagStates: object, jiraIndex: { currentPi: string|null, pis: object[] },
  *   flagStateHistory: [], componentsOrder: object[], issueStatusIndex: object, issueDeployments: object,
- *   lastSyncedAt: string|null, jiraBrowseUrl: string|null }>}
+ *   lastSyncedAt: string|null, jiraBrowseUrl: string|null, releasePlan: { mode: string, lines: object[], plans: object[] } }>}
  * @throws {TenantNotFoundError} the user isn't a member
  */
 async function buildDashboardData(pool, { tenantId, actorUserId }) {
@@ -100,6 +140,7 @@ async function buildDashboardData(pool, { tenantId, actorUserId }) {
         });
 
         const { jiraIndex, issueStatusIndex } = await readDashboardJira(client, { tenantId });
+        const releasePlan = await readReleasePlan(client, tenantId);
         const { flagsMeta, flagStates, flagStatesByComponent, flagFreshness, flagStateHistory, coveredComponents } = await readDashboardFlags(client, {
             tenantId, componentOf: (repoId) => names.get(repoId),
         });
@@ -132,6 +173,7 @@ async function buildDashboardData(pool, { tenantId, actorUserId }) {
             })),
             lastSyncedAt: synced.length ? synced[0].toISOString() : null,
             jiraBrowseUrl,
+            releasePlan,
         };
     });
 }

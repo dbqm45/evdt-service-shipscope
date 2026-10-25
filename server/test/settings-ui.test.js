@@ -335,6 +335,20 @@ test('settings page: the Jira section offers the flag convention -- none, prefix
     assert.ok(!/save-flag-link/.test(str(ui.renderJira({ enabled: true, jira, boards: null, admin: false }))), 'members don\'t');
 });
 
+test('settings page: the Jira section offers the release-line convention -- release: labels by default, a fixVersion, a field', () => {
+    const jira = { connected: true, site: { cloudId: 'c1', name: 'acme', url: 'https://acme.atlassian.net' }, lastError: null, flagLink: null, releaseLink: { type: 'label', prefix: 'release:' } };
+    const fields = [{ id: 'customfield_10050', name: 'Release line', type: 'options' }, { id: 'customfield_10051', name: 'Flags', type: 'labels' }];
+    const byLabel = str(ui.renderJira({ enabled: true, jira, boards: [], admin: true, flagFields: fields }));
+    assert.match(byLabel, /data-action="save-release-link"/);
+    assert.match(byLabel, /<option value="label" selected>In labels with a prefix/);
+    assert.match(byLabel, /name="prefix" maxlength="30" value="release:" >/);
+    assert.match(byLabel, /release:R1/, 'the convention is explained with an example');
+    assert.doesNotMatch(byLabel.split('save-release-link')[1], /Flags \(labels\)/, 'a labels field can\'t hold one line');
+    const byVersion = str(ui.renderJira({ enabled: true, jira: { ...jira, releaseLink: { type: 'fixVersion', prefix: '' } }, boards: [], admin: true, flagFields: fields }));
+    assert.match(byVersion, /<option value="fixVersion" selected>/);
+    assert.ok(!/save-release-link/.test(str(ui.renderJira({ enabled: true, jira, boards: [], admin: false }))), 'members don\'t');
+});
+
 test('flag source status: none yet, accepted with what it did, refused with why (until a later message is accepted)', () => {
     const src = (extra) => ({ lastIngestAt: null, lastIngest: null, lastError: null, ...extra });
     assert.match(str(ui.SourceStatus(src())), /state-tag warn">no message yet/);
@@ -679,6 +693,17 @@ test('settings page: actions send what the API expects, then reload their sectio
         [`${base}/jira/flag-link`, { type: 'field', id: 'customfield_10050' }],
         [`${base}/jira/flag-link`, { type: 'none' }],
     ], 'only what the chosen convention needs');
+    calls.length = 0;
+    await ui.runAction('save-release-link', form([['type', 'label'], ['prefix', ' release: '], ['id', 'customfield_1']]));
+    await ui.runAction('save-release-link', form([['type', 'fixVersion'], ['prefix', '']]));
+    await ui.runAction('save-release-link', form([['type', 'field'], ['prefix', 'release:'], ['id', 'customfield_10050']]));
+    await ui.runAction('save-release-link', form([['type', 'none'], ['prefix', 'release:']]));
+    assert.deepStrictEqual(calls.filter((c) => c.method === 'PUT').map((c) => [c.url, c.body]), [
+        [`${base}/jira/release-link`, { type: 'label', prefix: 'release:' }],
+        [`${base}/jira/release-link`, { type: 'fixVersion', prefix: '' }],
+        [`${base}/jira/release-link`, { type: 'field', id: 'customfield_10050' }],
+        [`${base}/jira/release-link`, { type: 'none' }],
+    ]);
     calls.length = 0;
     await ui.runAction('save-flag', form([['description', '  '], ['jiraKeys', 'abc-1, ABC-2;abc-1  ']], { key: 'new.Checkout' }, 'flags'));
     assert.deepStrictEqual(calls[0], { method: 'PUT', url: `${base}/flags/new.Checkout`, body: { description: null, jiraKeys: ['ABC-1', 'ABC-2'] } });

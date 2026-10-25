@@ -396,8 +396,28 @@ function buildFallbackData(){
         [CH]: { prod: { state: 'stale', observedAt: daysAgo(3), sources: [{ name: 'Charger runtime', state: 'stale', observedAt: daysAgo(3) }] } },
     };
 
+    // The Release plan tab: the retry-queue Epic's issues carry Jira lines (release:R1 / release:R2 labels), and a
+    // change planned in a repo (release.yaml, pdi contract 0.4.0) shows a flag against its stages, past its remove-by.
+    const lineOf = { 'EBO-17101': 'R1', 'EBO-17102': 'R1', 'EBO-17103': 'R1', 'EBO-17105': 'R2', 'EBO-17104': 'R2', 'EBO-16955': 'R1', 'EBO-99001': 'R2' };
+    const releasePlan = {
+        mode: 'jira',
+        lines: jiraIssues.filter(i => lineOf[i.key]).map(i => ({
+            key: i.key, release: lineOf[i.key], title: i.title, type: i.type, epicKey: i.epicKey || null, epicTitle: i.epicTitle || null,
+            subtaskKeys: i.subtaskKeys || [], blockedByKeys: i.blockedByKeys || [], dependencyBlocked: !!i.dependencyBlocked, featureFlags: [],
+        })),
+        plans: [{
+            change: 'CHG-12',
+            mvp: { release: 'R1', outcome: 'Operators trigger an OCPP message from the connector level' },
+            releases: [{ id: 'R1', name: 'MVP', tasks: ['EBO-16955'] }, { id: 'R2', tasks: ['EBO-99001'] }],
+            flags: [{
+                key: 'legacyMigrationEnabled', tasks: ['EBO-99001'], owner: 'PO Sparks', remove_by: daysAgo(12).slice(0, 10),
+                rollout: [{ stage: 'internal', min_days: 3 }, { stage: '25%', min_days: 7, exit: 'no failed backfills' }, { stage: '100%' }],
+            }],
+        }],
+    };
+
     // No Jira site behind the sample keys: they are shown unlinked.
-    return { deployments, flagsMeta, flagStates, flagStateHistory, flagFreshness, jiraIssuesByPi, jiraIndex, issueStatusIndex, componentsOrder, issueDeployments, jiraBrowseUrl: null };
+    return { deployments, flagsMeta, flagStates, flagStateHistory, flagFreshness, jiraIssuesByPi, jiraIndex, issueStatusIndex, componentsOrder, issueDeployments, jiraBrowseUrl: null, releasePlan };
 }
 
 // FALLBACK itself is initialised in app-main.js (right before init()): buildFallbackData() calls helpers from
@@ -415,7 +435,7 @@ const API_TENANT_ID = (() => {
 
 const emptyDashboardData = () => ({
     deployments: [], flagsMeta: {}, flagStates: {}, flagFreshness: {}, jiraIndex: { currentPi: null, pis: [] }, flagStateHistory: [],
-    componentsOrder: [], issueStatusIndex: {}, issueDeployments: {},
+    componentsOrder: [], issueStatusIndex: {}, issueDeployments: {}, releasePlan: { mode: 'jira', lines: [], plans: [] },
 });
 
 /**

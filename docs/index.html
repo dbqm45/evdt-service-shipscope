@@ -55,6 +55,10 @@
                 <svg class="tab-icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H7a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7z"/><path d="M14 2v5h5"/><path d="M9 13h6M9 17h6"/></svg>
                 <span>Delivery summary</span>
             </button>
+            <button type="button" role="tab" class="tab" data-view="plan">
+                <svg class="tab-icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6h10M4 12h16M4 18h7"/><circle cx="17" cy="6" r="2"/><circle cx="14" cy="18" r="2"/></svg>
+                <span>Release plan</span>
+            </button>
             <button type="button" role="tab" class="tab" data-view="insights" style="display:none">
                 <svg class="tab-icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 20v-6M12 20V6M18 20v-10"/></svg>
                 <span>Insights</span>
@@ -176,6 +180,10 @@
         </div>
     </div>
 
+    <div class="view" id="view-plan">
+        <div id="releasePlanBody"></div>
+    </div>
+
     <div class="view" id="view-notes">
         <div class="dn-toolbar">
             <div class="ctrl-select">
@@ -232,6 +240,7 @@
 <script src="app-technical-timeline.js"></script>
 <script src="app-technical-flags.js"></script>
 <script src="app-release-notes.js"></script>
+<script src="app-release-plan.js"></script>
 <script src="app-insights.js"></script>
 <script src="app-main.js"></script>
 </body>

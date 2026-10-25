@@ -197,8 +197,9 @@ async function syncTenant(pool, { tenantId, atlassian, fetch: fetchFn = fetch, n
 }
 
 async function syncTenantUnrecorded(pool, { tenantId, atlassian, fetch: fetchFn, now, deadline, clock }) {
-    const { boards, boardsWithIssues, flagLink } = await withScope(pool, { tenantId }, async (client) => ({
-        flagLink: (await client.query('SELECT flag_link FROM jira_connections WHERE tenant_id = $1', [tenantId])).rows[0]?.flag_link || null,
+    const { boards, boardsWithIssues, flagLink, releaseLink } = await withScope(pool, { tenantId }, async (client) => ({
+        ...(await client.query('SELECT flag_link, release_link FROM jira_connections WHERE tenant_id = $1', [tenantId])).rows
+            .map((r) => ({ flagLink: r.flag_link || null, releaseLink: r.release_link || null }))[0],
         // Longest-waiting first: when the time budget cuts a pass short, the boards left out go first next time.
         boards: (await client.query(
             'SELECT board_id, name, project_key, rhythm, pi_template FROM jira_boards WHERE tenant_id = $1 ORDER BY last_synced_at NULLS FIRST, board_id',
@@ -209,7 +210,7 @@ async function syncTenantUnrecorded(pool, { tenantId, atlassian, fetch: fetchFn,
     if (!boards.length) return { boards: 0, issues: 0, currentPi: null, partial: false };
 
     const { accessToken, cloudId } = await accessTokenFor(pool, { tenantId, atlassian, fetch: fetchFn });
-    const fieldIds = { ...(await fetchFieldIds({ accessToken, cloudId, fetch: fetchFn })), flagLink };
+    const fieldIds = { ...(await fetchFieldIds({ accessToken, cloudId, fetch: fetchFn })), flagLink, releaseLink };
     const plan = [];
     const currentByBoard = new Map();
     for (const [i, board] of boards.entries()) {
@@ -250,6 +251,7 @@ async function syncTenantUnrecorded(pool, { tenantId, atlassian, fetch: fetchFn,
                 [tenantId, pi, boardId, issues.map((i) => i.key)]
             );
         }
+        await writeReleaseLines(client, tenantId, plan.flatMap((p) => p.issues), now);
         for (const [boardId, current] of currentByBoard) {
             await client.query(
                 'UPDATE jira_boards SET current_increment = $3, last_synced_at = $4 WHERE tenant_id = $1 AND board_id = $2',
@@ -267,6 +269,27 @@ async function syncTenantUnrecorded(pool, { tenantId, atlassian, fetch: fetchFn,
     });
     await ensureWebhook(pool, { tenantId, atlassian, accessToken, cloudId, fetch: fetchFn, now });
     return { boards: currentByBoard.size, issues: plan.reduce((n, p) => n + p.issues.length, 0), currentPi, partial: currentByBoard.size < boards.length };
+}
+
+/**
+ * The release line of every issue this pass synced (release_lines, origin 'jira'): set when the issue names one by
+ * the tenant's convention, removed when it no longer does. Issues not synced this pass keep theirs.
+ */
+async function writeReleaseLines(client, tenantId, issues, now) {
+    const byKey = new Map(issues.map((i) => [i.key, i.releaseLine || null]));
+    const withLine = [...byKey].filter(([, line]) => line);
+    if (withLine.length) {
+        await client.query(
+            `INSERT INTO release_lines (tenant_id, item_key, release, origin, synced_at)
+             SELECT $1, k, r, 'jira', $4 FROM unnest($2::text[], $3::text[]) AS t(k, r)
+             ON CONFLICT (tenant_id, item_key) DO UPDATE SET release = EXCLUDED.release, origin = EXCLUDED.origin, synced_at = EXCLUDED.synced_at`,
+            [tenantId, withLine.map(([k]) => k), withLine.map(([, r]) => r), now]
+        );
+    }
+    const without = [...byKey].filter(([, line]) => !line).map(([k]) => k);
+    if (without.length) {
+        await client.query("DELETE FROM release_lines WHERE tenant_id = $1 AND origin = 'jira' AND item_key = ANY($2)", [tenantId, without]);
+    }
 }
 
 /**
@@ -324,6 +347,8 @@ async function ensureWebhook(pool, { tenantId, atlassian, accessToken, cloudId, 
 }
 
 const FLAG_PREFIX = /^[A-Za-z0-9_.:-]{1,30}$/;
+// A fixVersion prefix may end in a space ("Release R1").
+const RELEASE_VERSION_PREFIX = /^[A-Za-z0-9_.:-][A-Za-z0-9_.: -]{0,29}$/;
 
 /**
  * The site's fields an issue can name feature flags in: custom fields holding text, labels or select options.
@@ -364,6 +389,40 @@ async function setFlagLink(pool, { tenantId, actorUserId, atlassian, flagLink, f
         if (!rowCount) throw new JiraNotConnectedError('Jira is not connected');
         const described = stored === null ? 'none' : stored.type === 'label' ? `labels ${stored.prefix}…` : `field ${stored.name}`;
         await recordAuditEvent(client, { tenantId, actorUserId, kind: 'jira_flag_link_changed', subject: described });
+    });
+    return stored;
+}
+
+/**
+ * How the tenant's Jira issues name their release line R1…Rn (G1.3; pdi contract 0.4.0, default a `release:` label):
+ * labels with a prefix, a fixVersion named after the line (after an optional prefix), a text or select field (one of
+ * listFlagFields()), or not at all. Takes effect with the next sync of each board's current increment. Admins only.
+ *
+ * @param {import('pg').Pool} pool
+ * @param {{ tenantId: string, actorUserId: string, atlassian: object, releaseLink: { type: 'none' }|{ type: 'label', prefix: string }|{ type: 'fixVersion', prefix?: string }|{ type: 'field', id: string }, fetch?: typeof fetch }} input
+ * @returns {Promise<object>} what was stored
+ * @throws {JiraBoardError} an invalid prefix, or a field that can't hold a line
+ */
+async function setReleaseLink(pool, { tenantId, actorUserId, atlassian, releaseLink, fetch: fetchFn = fetch }) {
+    let stored = { type: 'none' };
+    if (releaseLink.type === 'label' || releaseLink.type === 'fixVersion') {
+        const prefix = releaseLink.prefix ?? '';
+        if (prefix !== '' && !FLAG_PREFIX.test(prefix) && !(releaseLink.type === 'fixVersion' && RELEASE_VERSION_PREFIX.test(prefix))) {
+            throw new JiraBoardError('A prefix is 1-30 letters, digits or _ . : -');
+        }
+        if (releaseLink.type === 'label' && prefix === '') throw new JiraBoardError('Labels need a prefix, e.g. release:');
+        stored = { type: releaseLink.type, prefix };
+    } else if (releaseLink.type === 'field') {
+        const field = (await listFlagFields(pool, { tenantId, actorUserId, atlassian, fetch: fetchFn })).find((f) => f.id === releaseLink.id && f.type !== 'labels');
+        if (!field) throw new JiraBoardError('That Jira field can\'t hold a release line (a text or select field is needed)');
+        stored = { type: 'field', id: field.id, name: field.name };
+    }
+    await withScope(pool, { tenantId }, async (client) => {
+        await assertAdmin(client, { tenantId, userId: actorUserId });
+        const { rowCount } = await client.query('UPDATE jira_connections SET release_link = $2 WHERE tenant_id = $1', [tenantId, stored]);
+        if (!rowCount) throw new JiraNotConnectedError('Jira is not connected');
+        const described = stored.type === 'none' ? 'none' : stored.type === 'field' ? `field ${stored.name}` : `${stored.type === 'label' ? 'labels' : 'fixVersion'} ${stored.prefix}R1…`;
+        await recordAuditEvent(client, { tenantId, actorUserId, kind: 'jira_release_link_changed', subject: described });
     });
     return stored;
 }
@@ -521,4 +580,4 @@ async function listPiIssues(pool, { tenantId, actorUserId, pi }) {
     });
 }
 
-module.exports = { WEBHOOK_RECONNECT, removeJiraWebhooks, listFlagFields, setFlagLink, JiraBoardError, listBoards, setBoards, configureBoard, syncTenant, syncAllJira, readDashboardJira, listPiIssues };
+module.exports = { WEBHOOK_RECONNECT, removeJiraWebhooks, listFlagFields, setFlagLink, setReleaseLink, JiraBoardError, listBoards, setBoards, configureBoard, syncTenant, syncAllJira, readDashboardJira, listPiIssues };

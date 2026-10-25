@@ -8,7 +8,7 @@ const url = require('node:url');
 const vm = require('node:vm');
 
 const NOW = new Date('2026-10-09T12:00:00Z').getTime();
-const FILES = ['app-html', 'app-icons', 'app-core', 'app-components', 'app-data', 'app-model', 'app-product', 'app-technical', 'app-technical-matrix', 'app-technical-timeline', 'app-technical-flags', 'app-release-notes', 'app-insights', 'app-main'];
+const FILES = ['app-html', 'app-icons', 'app-core', 'app-components', 'app-data', 'app-model', 'app-product', 'app-technical', 'app-technical-matrix', 'app-technical-timeline', 'app-technical-flags', 'app-release-notes', 'app-release-plan', 'app-insights', 'app-main'];
 const settle = async () => { for (let i = 0; i < 20; i++) { await new Promise(r => setImmediate(r)); } };
 const plain = v => JSON.parse(JSON.stringify(v));
 
@@ -32,7 +32,7 @@ function stubElement(extra = {}) {
     return el;
 }
 
-function loadApp({ fetchImpl, search = '', pathname = '/', patch = s => s, tabs = ['tech', 'product', 'notes', 'insights'] } = {}) {
+function loadApp({ fetchImpl, search = '', pathname = '/', patch = s => s, tabs = ['tech', 'product', 'notes', 'plan', 'insights'] } = {}) {
     const boxes = {};
     const created = [];
     const tabEls = tabs.map(v => stubElement({ dataset: { view: v } }));
@@ -170,6 +170,12 @@ test('tab clicks switch views and toggle the PI / sprint selectors', async () =>
     byView.notes.onclick();
     assert.deepEqual(activeViews(), ['notes']);
     assert.equal(boxes.globalPiSelectWrap.style.display, '');
+    assert.equal(boxes.sprintSelectWrap.style.display, 'none');
+
+    // The release plan spans increments: no PI or sprint selector.
+    byView.plan.onclick();
+    assert.deepEqual(activeViews(), ['plan']);
+    assert.equal(boxes.globalPiSelectWrap.style.display, 'none');
     assert.equal(boxes.sprintSelectWrap.style.display, 'none');
 
     byView.insights.onclick();

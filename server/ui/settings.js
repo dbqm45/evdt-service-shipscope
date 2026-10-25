@@ -714,6 +714,33 @@ function FlagLinkForm(flagLink, fields){
         </form>`;
 }
 
+/** How the tenant's Jira issues name their release line R1…Rn (the Release plan tab): labels with a prefix (default
+ *  release:), a fixVersion, a text or select field, or not at all. */
+function ReleaseLinkForm(releaseLink, fields){
+    const link = releaseLink || { type: 'none' };
+    const option = (value, label) => html`<option value="${value}" ${value === link.type ? raw('selected') : ''}>${label}</option>`;
+    const usable = Array.isArray(fields) ? fields.filter((f) => f.type !== 'labels') : fields;
+    let fieldSelect = html`<select name="id" ${link.type === 'field' ? '' : raw('disabled')}><option value="">Loading fields…</option></select>`;
+    if (usable && usable.error) {
+        fieldSelect = html`<span class="settings-error">${usable.error}</span>`;
+    } else if (Array.isArray(usable)) {
+        fieldSelect = usable.length
+            ? html`<select name="id" ${link.type === 'field' ? '' : raw('disabled')}>${usable.map((f) => html`<option value="${f.id}" ${link.type === 'field' && f.id === link.id ? raw('selected') : ''}>${f.name} (${f.type})</option>`)}</select>`
+            : html`<span class="settings-hint">No text or select field yet.</span>`;
+    }
+    const prefixed = link.type === 'label' || link.type === 'fixVersion';
+    return html`<h3>Release lines in Jira</h3>
+        <p class="settings-hint">Which release line each issue belongs to: R1 is the MVP, then R2, R3… The Release plan tab shows each line with its
+        issues' status on PROD. By default a label: <span class="mono">release:R1</span>. A fixVersion named <span class="mono">R1</span> works too,
+        though fixVersions usually name deploy versions.</p>
+        <form class="settings-form" data-action="save-release-link">
+            <label>Issues name their line <select name="type" data-action-change="release-link-type">${option('label', 'In labels with a prefix')}${option('fixVersion', 'In a fixVersion')}${option('field', 'In a field')}${option('none', 'Not at all')}</select></label>
+            <label>Prefix <input name="prefix" maxlength="30" value="${prefixed ? link.prefix : 'release:'}" ${prefixed ? '' : raw('disabled')}></label>
+            <label>Field ${fieldSelect}</label>
+            <button type="submit" class="btn">Save</button>
+        </form>`;
+}
+
 /** @param {{ enabled: boolean, webhooks: boolean, jira: object|null, boards: object[]|null|{ error: string }, admin: boolean, flagFields?: object[]|null|{ error: string } }} props */
 function renderJira({ enabled, webhooks, jira, boards, admin, flagFields = null }){
     const section = (body) => Page({ id: 'jira', title: 'Jira', hint: 'Read-only access through Atlassian: issues, boards and sprints of the boards you choose.', body: Card({ body }) });
@@ -748,7 +775,8 @@ function renderJira({ enabled, webhooks, jira, boards, admin, flagFields = null 
                 <table class="settings-table"><tbody>${boards.map((b) => BoardRow(b, admin))}</tbody></table>
                 <form id="jiraBoardSelection" class="settings-actions" data-action="save-boards"><button type="submit" class="btn btn-primary">Save selection</button>
                 <button type="button" class="btn" data-action="sync-jira">Sync now</button></form>
-                ${FlagLinkForm(jira.flagLink || null, flagFields)}`;
+                ${FlagLinkForm(jira.flagLink || null, flagFields)}
+                ${ReleaseLinkForm(jira.releaseLink || null, flagFields)}`;
         }
     }
     return section(html`${status}${site}${boardBlock}
@@ -1068,7 +1096,7 @@ const AUDIT_EVENT_LABELS = {
     flag_source_created: 'added the flag source', flag_source_updated: 'changed the flag source', flag_source_deleted: 'deleted the flag source',
     ingest_token_created: 'created a token for', ingest_token_revoked: 'revoked a token of',
     flag_details_changed: 'edited the flag', flag_link_accepted: 'linked the suggested issue', flag_link_dismissed: 'dismissed the suggested issue',
-    jira_site_selected: 'chose the Jira site', jira_flag_link_changed: 'set how Jira names flags:', jira_boards_changed: 'chose the Jira boards',
+    jira_site_selected: 'chose the Jira site', jira_flag_link_changed: 'set how Jira names flags:', jira_release_link_changed: 'set how Jira names release lines:', jira_boards_changed: 'chose the Jira boards',
     jira_board_changed: 'changed the increments of the board',
 };
 
@@ -1204,7 +1232,7 @@ function renderSources({ flags, repos, once, origin, now = new Date(), wizard = 
 }
 
 const ENVS = ['test', 'qa', 'prod'];
-const LINK_ORIGINS = [['sender', 'from its source'], ['jira', 'from Jira'], ['manual', 'set here']];
+const LINK_ORIGINS = [['sender', 'from its source'], ['jira', 'from Jira'], ['commit', 'from commits (Flag:)'], ['manual', 'set here']];
 
 /** One flag: state per environment, description, Jira links by origin; for admins the hand-set fields. */
 function FlagRow(flag, { admin, jiraUrl }){
@@ -1218,7 +1246,7 @@ function FlagRow(flag, { admin, jiraUrl }){
         return html`<span class="state-tag ${v.state === 'on' ? 'ok' : v.state === 'partial' ? 'warn' : ''}" title="${v.sourceName || ''}">${env}: ${label}</span>`;
     };
     const issue = (key) => (jiraUrl ? html`<a href="${jiraUrl}/browse/${key}" target="_blank" rel="noopener">${key}</a>` : html`${key}`);
-    const links = LINK_ORIGINS.filter(([origin]) => flag.links[origin].length)
+    const links = LINK_ORIGINS.filter(([origin]) => (flag.links[origin] || []).length)
         .map(([origin, label]) => html`<span>${flag.links[origin].map((k, i) => html`${i ? ', ' : ''}${issue(k)}`)} <span class="settings-row-meta">(${label})</span></span>`);
     const edit = admin ? html`<form class="settings-form" data-action="save-flag" data-key="${flag.key}">
             <label>Description (shown instead of the source's) <input name="description" maxlength="500" value="${flag.manualDescription || ''}" placeholder="${flag.senderDescription || ''}"></label>
@@ -1522,6 +1550,14 @@ const actions = {
         await api('PUT', tenantPath('/jira/flag-link'), body);
         return { section: 'jira', ok: 'Saved; issues are read this way from the next sync ("Sync now" to apply it right away).' };
     },
+    'save-release-link': async (form) => {
+        const values = formValues(form);
+        const body = values.type === 'label' ? { type: 'label', prefix: values.prefix.trim() }
+            : values.type === 'fixVersion' ? { type: 'fixVersion', prefix: (values.prefix || '').trimStart() }
+                : values.type === 'field' ? { type: 'field', id: values.id } : { type: 'none' };
+        await api('PUT', tenantPath('/jira/release-link'), body);
+        return { section: 'jira', ok: 'Saved; release lines are read this way from the next sync ("Sync now" to apply it right away).' };
+    },
     'save-flag': async (form, data) => {
         const values = formValues(form);
         const jiraKeys = [...new Set(values.jiraKeys.split(/[\s,;]+/).map((k) => k.trim().toUpperCase()).filter(Boolean))];
@@ -1780,6 +1816,14 @@ function wireEvents(root){
         if (event.target.matches('select[data-action-change="flag-link-type"]')) {
             const elements = event.target.form.elements;
             elements.namedItem('prefix').disabled = event.target.value !== 'label';
+            const field = elements.namedItem('id');
+            if (field) {
+                field.disabled = event.target.value !== 'field';
+            }
+        }
+        if (event.target.matches('select[data-action-change="release-link-type"]')) {
+            const elements = event.target.form.elements;
+            elements.namedItem('prefix').disabled = !['label', 'fixVersion'].includes(event.target.value);
             const field = elements.namedItem('id');
             if (field) {
                 field.disabled = event.target.value !== 'field';

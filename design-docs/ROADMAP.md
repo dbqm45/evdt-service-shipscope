@@ -78,6 +78,13 @@ korporacyjnych.
   podłączeniu, webhook z podpisem, oknem czasowym i deduplikacją, stan zawsze z API, okresowe uzgodnienie.
 - [ ] Jawne zależności między flagami różnych serwisów (łańcuchy FE ← BE ← X), jeśli rola serwisu nie wystarczy.
 - [ ] Cykl życia flagi (np. „gotowa do usunięcia z kodu") jako rozszerzenie ghost/stale flag.
+  - [x] Zakładka „Release plan” (G1.3 z planu G1/G2 w pdi, tryb Jira; `design-docs/G1.3-PLAN.pl.md`). Pokazuje linie
+    R1…Rn z etykiety `release:R1` (albo fixVersion lub pola), status każdego elementu na PROD i „R1 released”. Przy
+    flagach widać procent udostępnienia na PROD, etap wobec planu, dni w etapie wobec `min_days` i dni po
+    `remove_by`. Dopisek `Flag:` w commicie silnie wiąże flagę z TSK albo historyjką.
+  - [ ] Tryb repo: `changes/CHG-n/release.yaml` przez Contents API, walidowany przypiętą kopią schematu z kontraktu
+    pdi 0.4.0, z widocznym błędem syncu przy złym pliku. Czeka na F1 z planu jednego flow (elementy CHG/TSK z repo).
+  - [ ] Zdarzenia `release.stage_changed` i `feature.released` z polem `release` (G1.5, po wychodzących webhookach z F5).
 - [ ] Wysyłanie flag do panelu Jiry przez jej Feature Flags API (wymaga aplikacji Forge).
 
 ## Niezawodność usługi (przed płatnymi klientami)

@@ -3,6 +3,12 @@
 // ones that changed the flags; the Jira keys in their messages are suggested for each changed flag. A suggestion is
 // only that: an admin links it (Settings → Flags) or dismisses it, and a dismissed one is never suggested again.
 //
+// Stronger than a suggestion: a `Flag: <key>` trailer in a deployed commit (tf talos-story-run, next to
+// `Change: TSK-n`) links the flag to the work items of that same commit at once (flag_commit_links, written by the
+// deployment sync; flagLinksFromMessages() in lib/deployment-logic.js, read by commitLinks() in lib/flags.js). A key
+// linked that way is no longer suggested. Neither overrides an admin: a dismissed key is never linked from a commit,
+// and a hand-set link (manual_jira_keys) stays whatever commits say.
+//
 // Two GitHub calls, only when flags changed: the compare of the two refs (its commits, and whether the file is among
 // its changed files) and the commits touching the file up to the new ref; the issue keys come from their intersection.
 const { withScope } = require('./scope');

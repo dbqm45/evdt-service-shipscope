@@ -6,7 +6,8 @@ function switchToTab(view){
     // Technical view has nothing scoped per-PI (component × environment matrix, deployment timeline, flat
     // flag list) — the global PI selector would be a dead control there, so it's hidden rather than shown
     // but inert.
-    document.getElementById('globalPiSelectWrap').style.display = view === 'tech' ? 'none' : '';
+    // Release plan spans increments too: lines are read from every synced issue, not one PI.
+    document.getElementById('globalPiSelectWrap').style.display = view === 'tech' || view === 'plan' ? 'none' : '';
     // The Sprint scope control only ever affects Product view (issuesInSprintScope() is read by
     // piWorkItemCounts()/renderIssues() alone — see CLAUDE.md's Frontend section) — unlike the PI
     // selector, which Release Notes and Insights also read. Shown only there, same reasoning as above.
@@ -279,6 +280,7 @@ async function init(){
 
     initReleaseNotesFilters();
     renderReleaseNotes();
+    renderReleasePlan();
 
     if (INSIGHTS_ENABLED) {
         renderInsights();
