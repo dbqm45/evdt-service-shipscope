@@ -46,8 +46,8 @@ Każdy punkt to osobny PR, wdrażalny sam; `[ ]` = do zrobienia, `[x]` = zrobion
   rozmiaru, aliasów i głębokości; komunikaty błędów bez wartości; wymagany prefiks albo lista kluczy.
 - [x] Automatyczne wykrywanie plików flag w repozytorium i propozycja do potwierdzenia.
 - [x] Jawna mapa nazw środowisk per repozytorium (zamiast samego `mapEnvironment()`).
-- [ ] Kreator setupu: karta per repozytorium (środowiska, flagi, mapowanie) z podglądem przed zapisem. Częściowo:
-  wykrywanie i podgląd są w Settings → Sources, mapa środowisk w Settings → GitHub; brakuje jednej karty łączącej je.
+- [x] Kreator setupu: karta per repozytorium (środowiska, flagi, mapowanie) z podglądem przed zapisem (Settings →
+  GitHub, ołówek przy repozytorium).
 - [x] Reguła w `scripts/lib/module-boundaries.js`: serwer może wymagać tylko parserów adaptera.
 
 ### 4. Endpoint z flagami

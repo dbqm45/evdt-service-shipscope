@@ -595,7 +595,7 @@ const FLAG_STANCES = { unknown: 'not set', none: 'none' };
 const FLAG_STANCE_CHOICES = { unknown: 'Not set (a flag source covers it, or not said yet)', none: 'This repository has no feature flags' };
 
 /** @param {{ enabled: boolean, webhooks: boolean, github: { installations: object[], repos: object[] }|null, installationRepos: object, admin: boolean, picker?: boolean, editing?: number|null }} props */
-function renderGitHub({ enabled, webhooks, github, installationRepos, admin, picker = false, editing = null }){
+function renderGitHub({ enabled, webhooks, github, installationRepos, admin, picker = false, editing = null, sources = null, wizard = { draft: {}, found: null, preview: null } }){
     const hint = 'ShipScope reads deployments, releases and tags of the repositories you track, through the GitHub App.';
     const page = (body, action) => Page({ id: 'github', title: 'GitHub', hint, action, body });
     if (!enabled) {
@@ -634,7 +634,8 @@ function renderGitHub({ enabled, webhooks, github, installationRepos, admin, pic
             ${EnvironmentMapFields(r)}
             <label>Feature flags <select name="flagStance">${Object.entries(FLAG_STANCE_CHOICES).map(([value, label]) => html`<option value="${value}" ${value === (r.flagStance || 'unknown') ? raw('selected') : ''}>${label}</option>`)}</select></label>
             <button type="submit" class="btn btn-primary">Save</button>
-            <button type="button" class="btn" data-action="edit-repo" data-repo-id="${r.repoId}">Cancel</button></form></td></tr>`;
+            <button type="button" class="btn" data-action="edit-repo" data-repo-id="${r.repoId}">Cancel</button></form>
+            ${RepoFlagsCard({ r, sources, wizard })}</td></tr>`;
     });
     const table = rows.length
         ? Card({ cls: 'flush', body: html`<table class="settings-table settings-repos"><thead><tr><th>Repository</th><th>Version file</th><th>Ignored for drift</th><th>Last sync</th><th>Flags</th>${admin ? html`<th></th>` : ''}</tr></thead><tbody>${rows}</tbody></table>` })
@@ -790,6 +791,11 @@ function codeOf(values, current){
     return code;
 }
 
+/** Which "read flags from code" form a button is in: the Sources page's or a repository's card on GitHub. */
+function placeOf(el){
+    return (el.form && el.form.dataset && el.form.dataset.place) || 'sources';
+}
+
 /** The draft fields of the "Read flags from code" form. */
 function draftOf(values){
     return { name: values.name || '', repoId: Number(values.repoId), file: values.file || '', path: values.path || '', prefix: values.prefix || '' };
@@ -849,6 +855,61 @@ function NewTokenForm(source){
 }
 
 /** @param {{ flags: object[]|null|{ error: string }, repos: object[], admin: boolean, once: object, origin: string, now?: Date }} props */
+/**
+ * The fields of a source read from code: the repository (a choice, or fixed on a repository's own card), the file, the
+ * object with the flags and the key prefix.
+ */
+function CodeSourceFields({ repos, code = {}, repoId, fixedRepo = false }){
+    const repoField = fixedRepo
+        ? html`<input type="hidden" name="repoId" value="${repoId}">`
+        : html`<label>Repository <select name="repoId" required>${repos.map((r) => html`<option value="${r.repoId}" ${repoId === r.repoId ? raw('selected') : ''}>${r.fullName}</option>`)}</select></label>`;
+    return html`${repoField}
+            <label>File <input name="file" required maxlength="200" placeholder="config/flags.{env}.json" value="${code.file || ''}"></label>
+            <label>Object with the flags (optional) <input name="path" maxlength="100" placeholder="features" value="${code.path || ''}"></label>
+            <label>Key prefix (needed for .env/.properties) <input name="prefix" maxlength="100" placeholder="FF_" value="${code.prefix || ''}"></label>`;
+}
+
+/** The buttons of the "read flags from code" form: find the files, preview a reading, add the source. */
+const CODE_SOURCE_BUTTONS = raw('<button type="button" class="btn" data-action="find-flag-files">Find flags files</button>'
+    + ' <button type="button" class="btn" data-action="preview-code-source">Preview</button>'
+    + ' <button type="submit" class="btn btn-primary">Read from code</button>');
+
+/**
+ * A repository's flags, on its card in GitHub: the sources read from its code with each environment's state, the
+ * sources that send flags for it, or the way to set one up here (find, preview, add) when there is none.
+ */
+function RepoFlagsCard({ r, sources, wizard }){
+    if (sources && sources.error) {
+        return html`<p class="settings-error">${sources.error}</p>`;
+    }
+    if (!Array.isArray(sources)) {
+        return html`<p class="settings-loading">Loading flag sources…</p>`;
+    }
+    const covering = sources.filter((s) => (s.repoIds || []).includes(r.repoId));
+    const fromCode = covering.filter((s) => s.origin === 'code');
+    const pushed = covering.filter((s) => s.origin !== 'code');
+    const sent = pushed.length ? html`<p class="settings-row-meta">Sent by ${pushed.map((s) => s.name).join(', ')} (Sources).</p>` : '';
+    if (fromCode.length) {
+        return html`<div class="settings-repo-flags"><strong>Feature flags</strong>
+            ${fromCode.map((s) => html`<p class="settings-row-meta">${s.name}: ShipScope reads <code>${s.code.file}</code> at each deployment (edit it under <a href="#sources">Sources</a>).</p>${SourceFreshness(s)}`)}
+            ${sent}</div>`;
+    }
+    if (r.flagStance === 'none') {
+        return html`<div class="settings-repo-flags"><strong>Feature flags</strong>
+            <p class="settings-row-meta">Declared without feature flags: deployed code is live code. Change it with Feature flags above.</p>${sent}</div>`;
+    }
+    const mine = wizard.place === 'github' && wizard.draft.repoId === r.repoId;
+    const name = r.fullName.split('/').pop();
+    return html`<div class="settings-repo-flags"><strong>Feature flags</strong>
+        <p class="settings-hint">${pushed.length ? 'Its flags are sent by a source. ' : ''}Kept in a file in this repository? ShipScope can read it at every deployment.</p>
+        <form class="settings-form" data-action="create-code-source" data-place="github" data-section="github">
+            <label>Name <input name="name" required maxlength="100" value="${mine && wizard.draft.name ? wizard.draft.name : `${name} flags`}"></label>
+            ${CodeSourceFields({ repos: [], code: mine ? wizard.draft : {}, repoId: r.repoId, fixedRepo: true })}
+            ${CODE_SOURCE_BUTTONS}
+        </form>
+        ${mine ? CodeWizard(wizard) : ''}${sent}</div>`;
+}
+
 /** One flag state as a short word: on, off, or the rollout. */
 function stateWord(v){
     return v.state === 'partial' ? (v.rollout !== undefined && v.rollout !== null ? `${v.rollout}%` : 'partial') : v.state;
@@ -880,7 +941,7 @@ function CodeWizard(wizard){
     return html`${list}${preview}`;
 }
 
-function renderSources({ flags, repos, once, origin, now = new Date(), wizard = { draft: {}, found: null, preview: null } }){
+function renderSources({ flags, repos, once, origin, now = new Date(), wizard = { draft: {}, found: null, preview: null, place: 'sources' } }){
     if (flags === null) {
         return html`<p class="settings-loading">Loading…</p>`;
     }
@@ -894,15 +955,8 @@ function renderSources({ flags, repos, once, origin, now = new Date(), wizard = 
     const kindOptions = (selected) => ['build', 'runtime'].map((k) => html`<option value="${k}" ${k === selected ? raw('selected') : ''}>${k}</option>`);
     const repoName = (id) => (repos.find((r) => r.repoId === id) || {}).fullName || `repository ${id}`;
     // A source read from code: one repository, a file (with {env} for one per environment), and how to read it.
-    const codeFields = (s, draft = {}) => {
-        const code = s ? s.code : draft;
-        const repoId = s ? (s.repoIds || [])[0] : draft.repoId;
-        return html`
-            <label>Repository <select name="repoId" required>${repos.map((r) => html`<option value="${r.repoId}" ${repoId === r.repoId ? raw('selected') : ''}>${r.fullName}</option>`)}</select></label>
-            <label>File <input name="file" required maxlength="200" placeholder="config/flags.{env}.json" value="${code.file || ''}"></label>
-            <label>Object with the flags (optional) <input name="path" maxlength="100" placeholder="features" value="${code.path || ''}"></label>
-            <label>Key prefix (needed for .env/.properties) <input name="prefix" maxlength="100" placeholder="FF_" value="${code.prefix || ''}"></label>`;
-    };
+    const sourcesWizard = wizard.place === 'github' ? { draft: {}, found: null, preview: null } : wizard;
+    const codeFields = (s, draft = {}) => CodeSourceFields({ repos, code: s ? s.code : draft, repoId: s ? (s.repoIds || [])[0] : draft.repoId });
     const codeRow = (s) => html`<tr><td>
         <form class="settings-form" data-action="save-source" data-source-id="${s.id}" data-origin="code">
             <label>Name <input name="name" required maxlength="100" value="${s.name}"></label>
@@ -937,14 +991,12 @@ function renderSources({ flags, repos, once, origin, now = new Date(), wizard = 
         ${rows.length ? html`<table class="settings-table"><tbody>${rows}</tbody></table>` : html`<p class="settings-hint">No flag source yet.</p>`}
         <h3>Read flags from code</h3>
         <p class="settings-hint">For flags kept in a file in the repository (JSON, YAML, .properties, .env, TypeScript/JavaScript): ShipScope reads it at every new deployment. Nothing to set up in your pipelines.</p>
-        ${repos.length ? html`<form class="settings-form" data-action="create-code-source">
-            <label>Name <input name="name" required maxlength="100" placeholder="e.g. Web flags" value="${wizard.draft.name || ''}"></label>
-            ${codeFields(null, wizard.draft)}
-            <button type="button" class="btn" data-action="find-flag-files">Find flags files</button>
-            <button type="button" class="btn" data-action="preview-code-source">Preview</button>
-            <button type="submit" class="btn btn-primary">Read from code</button>
+        ${repos.length ? html`<form class="settings-form" data-action="create-code-source" data-place="sources">
+            <label>Name <input name="name" required maxlength="100" placeholder="e.g. Web flags" value="${sourcesWizard.draft.name || ''}"></label>
+            ${codeFields(null, sourcesWizard.draft)}
+            ${CODE_SOURCE_BUTTONS}
         </form>
-        ${CodeWizard(wizard)}` : html`<p class="settings-hint">Track a repository first (GitHub).</p>`}
+        ${CodeWizard(sourcesWizard)}` : html`<p class="settings-hint">Track a repository first (GitHub).</p>`}
         <h3>Add a source that sends its flags</h3>
         <form class="settings-form" data-action="create-source">
             <label>Name <input name="name" required maxlength="100" placeholder="e.g. LaunchDarkly"></label>
@@ -1026,7 +1078,7 @@ function renderSettings(){
         'getting-started': () => renderGettingStarted({ steps }),
         general: () => renderGeneral({ workspace: s.workspace, admin }),
         members: () => renderMembers({ workspace: s.workspace, admin, meId: s.me && s.me.user.id, once: s.once }),
-        github: () => renderGitHub({ enabled: s.features.githubApp, webhooks: s.features.githubWebhooks, github: s.github, installationRepos: s.installationRepos, admin, picker: s.trackPicker, editing: s.editingRepo }),
+        github: () => renderGitHub({ enabled: s.features.githubApp, webhooks: s.features.githubWebhooks, github: s.github, installationRepos: s.installationRepos, admin, picker: s.trackPicker, editing: s.editingRepo, sources: s.flags, wizard: s.codeWizard }),
         jira: () => renderJira({ enabled: s.features.jira, webhooks: s.features.jiraWebhooks, jira: s.jira, boards: s.boards, admin, flagFields: s.flagFields }),
         flags: () => renderFlags({ flagList: s.flagList, admin, jiraUrl: s.jira && s.jira.site ? s.jira.site.url : null }),
         sources: () => renderSourcesPage({ sources: s.flags, repos, admin, once: s.once, origin: location.origin, wizard: s.codeWizard }),
@@ -1302,13 +1354,18 @@ const actions = {
             name: values.name.trim(), kind: 'build', origin: 'code', repoIds: [Number(values.repoId)], code: codeOf(values, wizardExtras(values)),
         });
         settingsState.codeWizard = { draft: {}, found: null, preview: null };
+        if (form.dataset && form.dataset.section === 'github') {
+            // Added from the repository's card: the card shows the new source, and the message stays on GitHub.
+            await load('flags');
+            return { section: 'github', ok: 'Added: its flags are read at the next sync.' };
+        }
         return { section: 'flags', ok: 'Added: its flags are read at the next sync.' };
     },
     'find-flag-files': async (el) => {
         const values = formValues(el.form);
         const repoId = Number(values.repoId);
         const found = await api('GET', tenantPath(`/github/repos/${repoId}/flag-files`));
-        settingsState.codeWizard = { draft: { ...draftOf(values), repoId }, found, preview: null };
+        settingsState.codeWizard = { draft: { ...draftOf(values), repoId }, found, preview: null, place: placeOf(el) };
         return {};
     },
     'use-flag-file': async (el, data) => {
@@ -1327,7 +1384,7 @@ const actions = {
             throw new Error('Name the file to preview (or find one with Find flags files).');
         }
         const { envs } = await api('POST', tenantPath(`/github/repos/${Number(values.repoId)}/flag-preview`), { code: codeOf(values, wizardExtras(values)) });
-        settingsState.codeWizard = { ...settingsState.codeWizard, draft: { ...settingsState.codeWizard.draft, ...draftOf(values) }, preview: envs };
+        settingsState.codeWizard = { ...settingsState.codeWizard, draft: { ...settingsState.codeWizard.draft, ...draftOf(values) }, preview: envs, place: placeOf(el) };
         return {};
     },
     'save-source': async (form, data) => {
