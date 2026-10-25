@@ -4,7 +4,7 @@ const { assertAdmin, roleOf, TenantNotFoundError } = require('./tenants');
 const { seal } = require('./secret-box');
 const {
     IngestPayloadError, checkPayload, planIngestWrites, sourceDescriptors, pickWinningValues, visibleFlagsMeta, historyRecords,
-    STALE_AFTER_MINUTES, freshnessOf, freshnessByComponent, FlagSourceConfigError, checkCodeConfig, checkEndpointConfig,
+    STALE_AFTER_MINUTES, freshnessOf, freshnessByComponent, FlagSourceConfigError, checkCodeConfig, checkEndpointConfig, POLL,
 } = require('./flags-logic');
 
 /**
@@ -90,13 +90,18 @@ function toSource(row, repoIds = []) {
         code: row.code_config || null,
         endpoint: row.endpoint_config || null,
         hasEndpointToken: row.has_endpoint_token === true,
+        ...(row.origin === 'endpoint' ? {
+            pollIntervalMinutes: row.poll_interval_minutes ?? null,
+            effectivePollIntervalMinutes: row.poll_interval_minutes ?? POLL.defaultMinutes,
+            lastPolledAt: row.last_polled_at, nextPollAt: row.next_poll_at, pollFailures: row.poll_failures,
+        } : {}),
         staleAfterMinutes: row.stale_after_minutes ?? null,
         effectiveStaleAfterMinutes: row.stale_after_minutes ?? STALE_AFTER_MINUTES[row.kind],
     };
 }
 
 const SOURCE_COLUMNS = 'id, name, kind, priority, repo_id, created_at, last_ingest_at, last_ingest, last_error, last_error_at, stale_after_minutes, origin, code_config, '
-    + 'endpoint_config, endpoint_token_enc IS NOT NULL AS has_endpoint_token';
+    + 'endpoint_config, endpoint_token_enc IS NOT NULL AS has_endpoint_token, poll_interval_minutes, last_polled_at, next_poll_at, poll_failures';
 
 /** source id -> its environments' freshness (freshnessOf()), by environment name. */
 async function sourceEnvironments(client, tenantId, sourceRows, now) {
@@ -136,7 +141,7 @@ const LOCK_NOT_AVAILABLE = '55P03';
  * Creates a flag source with its first token. Admins only. The token is returned once and never stored.
  *
  * @param {import('pg').Pool} pool
- * @param {{ tenantId: string, actorUserId: string, name: string, kind: 'build'|'runtime', priority?: number, repoIds?: number[], repoId?: number|null, tokenExpiresInDays?: number|null, tokenEnvironments?: string[]|null, staleAfterMinutes?: number|null, origin?: 'push'|'code'|'endpoint', code?: object, endpoint?: object, endpointToken?: string|null, encryptionKey?: Buffer|null }} input
+ * @param {{ tenantId: string, actorUserId: string, name: string, kind: 'build'|'runtime', priority?: number, repoIds?: number[], repoId?: number|null, tokenExpiresInDays?: number|null, tokenEnvironments?: string[]|null, staleAfterMinutes?: number|null, origin?: 'push'|'code'|'endpoint', code?: object, endpoint?: object, endpointToken?: string|null, pollIntervalMinutes?: number|null, encryptionKey?: Buffer|null }} input
  *   the first token's lifetime and environments, as for createIngestToken(); `staleAfterMinutes` null = the kind's default.
  *   `origin: 'code'` with `code` (checkCodeConfig()): a source ShipScope reads itself from one repository; it has no token.
  *   `origin: 'endpoint'` with `endpoint` (checkEndpointConfig()) and optionally the customer's `endpointToken`, sealed
@@ -145,18 +150,22 @@ const LOCK_NOT_AVAILABLE = '55P03';
  * @throws {FlagSourceNotFoundError} a repo in its scope isn't tracked
  * @throws {FlagSourceConflictError} the name is taken
  */
-async function createFlagSource(pool, { tenantId, actorUserId, name, kind, priority, repoIds, repoId, tokenExpiresInDays, tokenEnvironments = null, staleAfterMinutes = null, origin = 'push', code, endpoint, endpointToken, encryptionKey = null }) {
+async function createFlagSource(pool, { tenantId, actorUserId, name, kind, priority, repoIds, repoId, tokenExpiresInDays, tokenEnvironments = null, staleAfterMinutes = null, origin = 'push', code, endpoint, endpointToken, pollIntervalMinutes, encryptionKey = null }) {
     return withScope(pool, { tenantId }, async (client) => {
         await assertAdmin(client, { tenantId, userId: actorUserId });
         const scope = scopeOf({ repoIds, repoId });
         if (origin !== 'code' && code !== undefined) throw new FlagSourceConfigError('Only a source read from code has a file to read');
         const codeConfig = origin === 'code' ? checkCodeConfig(code, { kind, repoIds: scope }) : null;
-        const endpointConfig = checkEndpointFields({ origin, kind, endpoint, endpointToken, encryptionKey });
+        const endpointConfig = checkEndpointFields({ origin, kind, endpoint, endpointToken, pollIntervalMinutes, encryptionKey });
+        if (endpointConfig) {
+            const { rows: [{ n }] } = await client.query("SELECT count(*)::int AS n FROM flag_sources WHERE tenant_id = $1 AND origin = 'endpoint'", [tenantId]);
+            if (n >= POLL.maxSources) throw new FlagSourceConfigError(`A workspace reads at most ${POLL.maxSources} endpoints`);
+        }
         await assertTrackedRepos(client, tenantId, scope);
         let row = await saveSource(client, () => client.query(
-            `INSERT INTO flag_sources (tenant_id, name, kind, priority, stale_after_minutes, origin, code_config, endpoint_config)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING ${SOURCE_COLUMNS}`,
-            [tenantId, name, kind, priority ?? DEFAULT_PRIORITY[kind], staleAfterMinutes, origin, codeConfig, endpointConfig]
+            `INSERT INTO flag_sources (tenant_id, name, kind, priority, stale_after_minutes, origin, code_config, endpoint_config, poll_interval_minutes)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING ${SOURCE_COLUMNS}`,
+            [tenantId, name, kind, priority ?? DEFAULT_PRIORITY[kind], staleAfterMinutes, origin, codeConfig, endpointConfig, pollIntervalMinutes ?? null]
         ));
         await setSourceScope(client, tenantId, row.id, scope);
         row = { ...row, repo_id: scope[0] ?? null };
@@ -204,9 +213,11 @@ function endpointTokenAad(tenantId, sourceId) {
 }
 
 /** The endpoint fields of a create/update: checked config for an endpoint source, else none may be given. */
-function checkEndpointFields({ origin, kind, endpoint, endpointToken, encryptionKey }) {
+function checkEndpointFields({ origin, kind, endpoint, endpointToken, pollIntervalMinutes, encryptionKey }) {
     if (origin !== 'endpoint') {
-        if (endpoint !== undefined || endpointToken !== undefined) throw new FlagSourceConfigError('Only a source read from an endpoint has an address and a token');
+        if (endpoint !== undefined || endpointToken !== undefined || pollIntervalMinutes !== undefined) {
+            throw new FlagSourceConfigError('Only a source read from an endpoint has an address, a token and a polling interval');
+        }
         return null;
     }
     const config = checkEndpointConfig(endpoint, { kind });
@@ -229,14 +240,15 @@ async function saveSource(client, query) {
  * Changes a source's name, kind, priority, the services it covers (`repoIds`; the older `repoId` sets one) or its
  * freshness threshold (`staleAfterMinutes`; left out = unchanged, null = the kind's default); for a source read from
  * code, its `code` (left out = unchanged; a change reads every environment again on the next pass); for one read from
- * an endpoint, its `endpoint` (left out = unchanged) and `endpointToken` (left out = unchanged, null = none). Admins only.
+ * an endpoint, its `endpoint` (left out = unchanged), `endpointToken` (left out = unchanged, null = none) and
+ * `pollIntervalMinutes` (left out = unchanged, null = the default); saving one reads it at the next tick. Admins only.
  *
  * @param {import('pg').Pool} pool
- * @param {{ tenantId: string, actorUserId: string, sourceId: string, name: string, kind: 'build'|'runtime', priority: number, repoIds?: number[], repoId?: number|null, staleAfterMinutes?: number|null, code?: object, endpoint?: object, endpointToken?: string|null, encryptionKey?: Buffer|null }} input
+ * @param {{ tenantId: string, actorUserId: string, sourceId: string, name: string, kind: 'build'|'runtime', priority: number, repoIds?: number[], repoId?: number|null, staleAfterMinutes?: number|null, code?: object, endpoint?: object, endpointToken?: string|null, pollIntervalMinutes?: number|null, encryptionKey?: Buffer|null }} input
  * @returns {Promise<FlagSource>}
  * @throws {FlagSourceNotFoundError|FlagSourceConflictError}
  */
-async function updateFlagSource(pool, { tenantId, actorUserId, sourceId, name, kind, priority, repoIds, repoId, staleAfterMinutes, code, endpoint, endpointToken, encryptionKey = null }) {
+async function updateFlagSource(pool, { tenantId, actorUserId, sourceId, name, kind, priority, repoIds, repoId, staleAfterMinutes, code, endpoint, endpointToken, pollIntervalMinutes, encryptionKey = null }) {
     return withScope(pool, { tenantId }, async (client) => {
         await assertAdmin(client, { tenantId, userId: actorUserId });
         const scope = scopeOf({ repoIds, repoId });
@@ -244,17 +256,20 @@ async function updateFlagSource(pool, { tenantId, actorUserId, sourceId, name, k
         if (!current) throw new FlagSourceNotFoundError('No such flag source');
         if (current.origin !== 'code' && code !== undefined) throw new FlagSourceConfigError('Only a source read from code has a file to read');
         const codeConfig = current.origin === 'code' ? checkCodeConfig(code ?? current.code_config, { kind, repoIds: scope }) : null;
-        const endpointConfig = checkEndpointFields({ origin: current.origin, kind, endpoint: current.origin === 'endpoint' ? endpoint ?? current.endpoint_config : endpoint, endpointToken, encryptionKey });
+        const endpointConfig = checkEndpointFields({ origin: current.origin, kind, endpoint: current.origin === 'endpoint' ? endpoint ?? current.endpoint_config : endpoint, endpointToken, pollIntervalMinutes, encryptionKey });
         await assertTrackedRepos(client, tenantId, scope);
         const sealed = typeof endpointToken === 'string' ? seal(encryptionKey, endpointToken, endpointTokenAad(tenantId, sourceId)) : null;
         const row = await saveSource(client, () => client.query(
             `UPDATE flag_sources SET name = $3, kind = $4, priority = $5, repo_id = $6,
                  stale_after_minutes = CASE WHEN $7 THEN $8::integer ELSE stale_after_minutes END,
                  code_config = $9, endpoint_config = $10,
-                 endpoint_token_enc = CASE WHEN $11 THEN $12::text ELSE endpoint_token_enc END
+                 endpoint_token_enc = CASE WHEN $11 THEN $12::text ELSE endpoint_token_enc END,
+                 poll_interval_minutes = CASE WHEN $13 THEN $14::integer ELSE poll_interval_minutes END,
+                 next_poll_at = CASE WHEN origin = 'endpoint' THEN NULL ELSE next_poll_at END,
+                 poll_failures = 0
              WHERE tenant_id = $1 AND id = $2 RETURNING ${SOURCE_COLUMNS}`,
             [tenantId, sourceId, name, kind, priority, scope[0] ?? null, staleAfterMinutes !== undefined, staleAfterMinutes ?? null, codeConfig,
-                endpointConfig, endpointToken !== undefined, sealed]
+                endpointConfig, endpointToken !== undefined, sealed, pollIntervalMinutes !== undefined, pollIntervalMinutes ?? null]
         ));
         if (!row) throw new FlagSourceNotFoundError('No such flag source');
         if (codeConfig && JSON.stringify(codeConfig) !== JSON.stringify(current.code_config)) {

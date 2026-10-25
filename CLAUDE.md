@@ -96,7 +96,7 @@ changelog entry by hand outside a `chore(release)` PR.
 
 Deployed to Render per `context/foundation/infrastructure.md`: `render.yaml` builds both the Web Service and the
 Background Worker from the repo root (`npm ci --prefix server`, `node server/web.js`), not `rootDir: server`, which
-would hide `docs/` from the Web Service. Migrations (`server/migrations/001`–`023`, applied by the hand-rolled
+would hide `docs/` from the Web Service. Migrations (`server/migrations/001`–`024`, applied by the hand-rolled
 `lib/migrate.js`) run as each service's `preDeployCommand` under an advisory lock (`test/render-blueprint.test.js`).
 Dependencies, all in `server/package.json`: `pg`, `fastify`, `@fastify/cookie`. Fastify runs with
 `removeAdditional: false, coerceTypes: false`: unknown fields and wrong types are a 400, never silently fixed.
@@ -118,7 +118,7 @@ flag_values, flag_value_history, jira_connections, jira_boards, jira_pis, jira_i
 `lib/withscope-guard.js` (`server/test/withscope-guard.test.js`) fails on any `pool.query(...)` in `server/lib/`
 that names an RLS table. Every tenant table cascades from `tenants`; `DELETE /tenants/:tenantId` (admin, name typed
 back, `deleteTenant()`) relies on it, and `server/test/tenant-delete.test.js` checks every table in `RLS_TABLES` is
-emptied. `sync_requests` (webhook queue) and `worker_status` (migration `020`) are the non-RLS tables; neither holds
+emptied. `sync_requests` (webhook and dashboard-refresh queue: `github`/`jira`/`flags`) and `worker_status` (migration `020`) are the non-RLS tables; neither holds
 tenant data.
 
 **Logs and health.** Both services log JSON lines through `lib/log.js` (`createLogger()`, `LOG_LEVEL`; the web
@@ -207,7 +207,13 @@ success for 3 × `SYNC_INTERVAL_MINUTES` + 5 minutes, or an undrained webhook qu
   `signingSecret()`: HKDF of `TOKEN_ENCRYPTION_KEY` per tenant, `loadEncryptionKey()`; `GET …/flag-endpoint-signing`).
   `refreshEndpointSource()` writes each environment's full state through `applyObservations()` (`changedAt` = now); a
   failure is `recordSourceEnvError()` and keeps the flags. `POST …/flag-endpoint-test` (admin, per-workspace limit)
-  returns only parsed flags (`server/test/endpoint-flags.test.js`).
+  returns only parsed flags (`server/test/endpoint-flags.test.js`). Polling (migration `024`, `lib/flag-poll.js`
+  `pollEndpoints()`): the worker's `flagsTick()` every minute (`FLAGS_LOCK`) reads due sources (`next_poll_at`, at most
+  `POLL.perTenantPerTick` per tenant) and schedules the next read with `nextPollAt()` (`pollIntervalMinutes`, default 5,
+  min 2, ±10% jitter, doubling backoff to an hour on `poll_failures`); at most `POLL.maxSources` endpoint sources per
+  tenant. The dashboard-data route queues a `flags` `sync_requests` row per tenant; `webhookTick()` drains it with
+  `onDemand` (not read in the last minute, not failing). `/health/worker` checks `flags` when the key is set
+  (`server/test/flag-poll.test.js`).
   Setting one up (`lib/flag-discovery.js`, admin, read only): `GET …/github/repos/:repoId/flag-files` proposes files
   named like flags (`flagFileCandidates()`: json/yaml/ts, outside tests/builds, a file per environment folded into one
   `{env}` template with `envNames`; never `.env`/`.properties`) at the latest prod deployment (else any, else `HEAD`),

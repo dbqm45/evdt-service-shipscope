@@ -56,7 +56,7 @@ Każdy punkt to osobny PR, wdrażalny sam; `[ ]` = do zrobienia, `[x]` = zrobion
   bez przekierowań, limity czasu i rozmiaru po dekompresji) z testami listy adresów zakazanych.
 - [ ] Źródło typu endpoint: adres per środowisko, token w `secret-box` z zakresem (tenant, źródło, cel),
   mapowanie jak w adapterze, „Testuj" zwracający tylko sparsowane flagi, podpis żądań per tenant.
-- [ ] Tick flag w workerze (osobna blokada), `next_poll_at`, backoff z jitterem, minimalny interwał, limity
+- [x] Tick flag w workerze (osobna blokada), `next_poll_at`, backoff z jitterem, minimalny interwał, limity
   źródeł na tenanta; odświeżenie przy wejściu na dashboard przez `sync_requests`.
 
 ### 5. Ostrzeżenie FE/BE i podpowiedzi powiązań

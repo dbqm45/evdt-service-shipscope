@@ -92,7 +92,7 @@ place in this repo with third-party dependencies** (`pg`, `fastify`, `@fastify/c
 |---|---|---|
 | `GET /health` | — | Liveness (Render health check). |
 | `GET /health/db` | — | Postgres reachability; 503 if not. |
-| `GET /health/worker` | — | For an uptime monitor: `{ status: "ok" \| "degraded" \| "down", checks }`. 503 (`down`) when the worker sent no heartbeat for 2 minutes, a configured sync (deployments, Jira) has not succeeded for 3 × `SYNC_INTERVAL_MINUTES` + 5 minutes, or a webhook request waits over 10 minutes; 200 `degraded` when syncs run but some tenants' fail. Ages and counts only, never tenant data or error text. |
+| `GET /health/worker` | — | For an uptime monitor: `{ status: "ok" \| "degraded" \| "down", checks }`. 503 (`down`) when the worker sent no heartbeat for 2 minutes, a configured sync (deployments, Jira, and the flags tick when `TOKEN_ENCRYPTION_KEY` is set) has not succeeded for 3 × `SYNC_INTERVAL_MINUTES` + 5 minutes, or a webhook request waits over 10 minutes; 200 `degraded` when syncs run but some tenants' fail. Ages and counts only, never tenant data or error text. |
 | `GET /auth/github/login` | — | Sets a short-lived `oauth_state` cookie and redirects to GitHub. |
 | `GET /auth/github/callback` | — | Checks `state` against the cookie (CSRF), exchanges the code, upserts the user, sets the `sid` session cookie, redirects to `/me`. |
 | `POST /auth/logout` | session | Deletes the session, clears the cookie. 204. |
@@ -257,6 +257,12 @@ not stripped or coerced).
   route returns it. Each request is signed per workspace (HMAC-SHA256 with a secret derived from the key). The answer
   is read like a flags file (isolated parser, value-free errors); "Test" returns only the parsed flags, and is limited
   per workspace because it calls out.
+- **Polling endpoints** (worker, `lib/flag-poll.js`): a `flags` tick every minute under its own advisory lock reads the
+  sources whose `next_poll_at` is due, at most 10 per workspace per tick, tenant by tenant under its own scope. Each
+  source is read every `pollIntervalMinutes` (default 5, at least 2) with ±10% jitter; consecutive failures double the
+  wait up to an hour, and a success resets it. A workspace has at most 20 endpoint sources. Opening a dashboard queues a
+  `flags` request in `sync_requests` (keyed by the tenant), which the webhook tick drains by reading only the sources not
+  read in the last minute and not failing, so reloading a page never hammers the customer's endpoint.
 - **Deleting a workspace**: admins only, with the name typed back (checked before anything outside ShipScope is
   touched, and again in the deleting transaction, which locks the tenant row). One `DELETE FROM tenants` removes every
   row of it (all tenant tables cascade; `server/test/tenant-delete.test.js` checks each one is empty afterwards and
@@ -388,7 +394,7 @@ own logger with the same shape), which Render keeps under each service's **Logs*
 |---|---|---|
 | `requestId` | every line of one HTTP request; also sent back as `X-Request-Id` (a caller's own is kept) | follow one request a user reports |
 | `tenantId`, `userId` | requests under `/tenants/:tenantId/...`, signed-in requests | see everything that happened for one workspace |
-| `job`, `durationMs` | worker jobs: `heartbeat`, `deployments`, `jira`, `webhooks`, `cleanup` | see how long syncs take and which failed |
+| `job`, `durationMs` | worker jobs: `heartbeat`, `deployments`, `jira`, `flags`, `webhooks`, `cleanup` | see how long syncs take and which failed |
 | `repo`, `installationId`, `retryAt` | per-repo and per-tenant sync lines | find the repo or connection behind a failure |
 | `err` (`type`, `message`, `code`, `status`, `stack`) | every logged error | see where it failed |
 

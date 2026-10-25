@@ -4,6 +4,7 @@ const { listPiIssues } = require('../lib/jira-sync');
 const { getSessionUser } = require('../lib/sessions');
 const { listTenantsForUser, roleOf, TenantNotFoundError } = require('../lib/tenants');
 const { withScope } = require('../lib/scope');
+const { requestSync } = require('../lib/webhooks');
 
 /**
  * The dashboard for one tenant (the existing docs/ page, whose app-data.js recognizes /t/<tenantId>/ and
@@ -23,7 +24,7 @@ const { withScope } = require('../lib/scope');
 function registerDashboardRoutes(app, ctx) {
     const {
         pool, githubApp, atlassian, requireUser, requireUserOrSignIn, dashboardDir, UI_DIR, DASHBOARD_HEADERS,
-        UUID_PARAM, ui, cookies: { SESSION_COOKIE }, mockDashboard,
+        UUID_PARAM, ui, cookies: { SESSION_COOKIE }, mockDashboard, encryptionKey,
     } = ctx;
     // `npm run dev:mock` (lib/mock-dashboard.js): members get the sample dataset instead of their tenant's data.
     const assertMember = (tenantId, userId) => withScope(pool, { tenantId }, async (client) => {
@@ -108,7 +109,14 @@ function registerDashboardRoutes(app, ctx) {
             await assertMember(request.params.tenantId, request.user.id);
             return mockDashboard.data;
         }
-        return buildDashboardData(pool, { tenantId: request.params.tenantId, actorUserId: request.user.id });
+        const data = await buildDashboardData(pool, { tenantId: request.params.tenantId, actorUserId: request.user.id });
+        // Someone is looking: ask the worker to read this tenant's endpoint sources now (lib/flag-poll.js onDemand,
+        // which skips the ones read in the last minute). One small insert; a failure never fails the dashboard.
+        if (encryptionKey) {
+            await requestSync(pool, { source: 'flags', keys: [request.params.tenantId] })
+                .catch((err) => request.log.warn({ err: err.message }, 'could not ask for a flags refresh'));
+        }
+        return data;
     });
 
     // One PI's Jira issues (what a data/jira-issues/<PI>.json shard holds); app-data.js's loadJiraIssuesForPi.

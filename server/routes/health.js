@@ -9,7 +9,7 @@ const { workerHealth } = require('../lib/worker-status');
  * 200 with `degraded` when syncs run but some tenants' fail. Ages and counts only, never tenant data or error text.
  *
  * @param {import('fastify').FastifyInstance} app
- * @param {{ pool: import('pg').Pool, expectWorker: { deployments: boolean, jira: boolean }, syncIntervalMinutes: number }} ctx
+ * @param {{ pool: import('pg').Pool, expectWorker: { deployments: boolean, jira: boolean, flags?: boolean }, syncIntervalMinutes: number }} ctx
  */
 function registerHealthRoutes(app, { pool, expectWorker, syncIntervalMinutes }) {
     app.get('/health', async () => ({ status: 'ok', version: APP_VERSION }));

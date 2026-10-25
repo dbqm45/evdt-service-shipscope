@@ -186,7 +186,7 @@ function buildApp({ pool, auth, githubApp = null, atlassian = null, fetch: fetch
         if (tenantId && request.log.setBindings) request.log.setBindings({ tenantId });
     });
 
-    registerHealthRoutes(app, { pool, expectWorker: { deployments: !!githubApp, jira: !!atlassian }, syncIntervalMinutes });
+    registerHealthRoutes(app, { pool, expectWorker: { deployments: !!githubApp, jira: !!atlassian, flags: !!encryptionKey }, syncIntervalMinutes });
 
     if (!auth) return app;
 

@@ -84,6 +84,8 @@ function registerFlagRoutes(app, ctx) {
             // A runtime source ShipScope polls (lib/endpoint-flags.js); checked further by checkEndpointConfig().
             endpoint: ENDPOINT_CONFIG,
             endpointToken: ENDPOINT_TOKEN,
+            // How often ShipScope polls it; null = every 5 minutes (lib/flags-logic.js POLL).
+            pollIntervalMinutes: { anyOf: [{ type: 'null' }, { type: 'integer', minimum: 2, maximum: 1440 }] },
             ...extra,
         },
     });
