@@ -369,6 +369,12 @@ test('getting started: each step read off the loaded sections -- todo, waiting, 
         ['waiting', 'Waiting for a deployment: Web code is read at the next sync of its repository.']);
     assert.deepStrictEqual([byId({ ...empty, sources: [code([{ env: 'prod', state: 'error' }])] }).flags.state, byId({ ...empty, sources: [code([{ env: 'prod', state: 'error' }])] }).flags.hint],
         ['problem', 'Could not read the flags file of Web code: see the source for why.']);
+    // A source read from an endpoint: waiting for its first read, or an endpoint it could not read.
+    const endpoint = (environments) => ({ name: 'Flags API', origin: 'endpoint', tokens: [], environments, lastError: null });
+    assert.deepStrictEqual([byId({ ...empty, sources: [endpoint([])] }).flags.state, byId({ ...empty, sources: [endpoint([])] }).flags.hint],
+        ['waiting', 'Waiting for the first read: ShipScope reads the endpoint of Flags API within a minute.']);
+    assert.deepStrictEqual([byId({ ...empty, sources: [endpoint([{ env: 'qa', state: 'error' }])] }).flags.state, byId({ ...empty, sources: [endpoint([{ env: 'qa', state: 'error' }])] }).flags.hint],
+        ['problem', 'Could not read the endpoint of Flags API: see the source for why.']);
     assert.match(byId(empty).flags.hint, /flags file in your code/);
 
     const repo = (extra) => ({ fullName: 'acme/web', deployments: 0, lastSyncedAt: null, lastSyncError: null, rateLimitedUntil: null, ...extra });
@@ -816,3 +822,79 @@ test('get started: someone without a workspace lands on /start and creates one; 
     t.after(() => full.close());
     assert.deepStrictEqual((await full.inject({ method: 'GET', url: '/api/features' })).json(), { githubApp: true, jira: true, githubWebhooks: false, jiraWebhooks: false });
 });
+
+test('Sources: reading flags from an endpoint -- addresses per environment, a token never shown back, Test, the signing secret', async () => {
+    ui.settingsState.tenantId = TENANT;
+    const base = `/tenants/${TENANT}`;
+    const repos = [{ repoId: 101, fullName: 'acme/api' }];
+    const endpointSource = {
+        id: 's5', name: 'Flags <API>', kind: 'runtime', priority: 100, origin: 'endpoint', repoIds: [101], tokens: [],
+        endpoint: { urls: { prod: 'https://flags.acme.io/f?env=prod' }, path: 'features', keys: ['a'] }, hasEndpointToken: true,
+        pollIntervalMinutes: null, effectivePollIntervalMinutes: 5, lastPolledAt: '2026-10-25T10:00:00Z', nextPollAt: '2026-10-25T10:05:00Z', pollFailures: 2,
+        environments: [{ env: 'prod', state: 'error', observedAt: null }],
+    };
+    const page = (extra = {}) => str(ui.renderSourcesPage({ sources: [endpointSource], repos, admin: true, once: {}, origin: 'https://s', ...extra }));
+    const shown = page();
+    assert.match(shown, /data-action="save-source" data-source-id="s5" data-origin="endpoint"/);
+    assert.match(shown, /value="https:\/\/flags.acme.io\/f\?env=prod"/);
+    assert.match(shown, /Flags &lt;API&gt;/);
+    assert.match(shown, /stored encrypted; empty keeps it/);
+    assert.match(shown, /name="endpointToken" type="password" autocomplete="off" maxlength="4096" value=""/, 'the token field is always empty');
+    assert.match(shown, /every 5 min .*token stored encrypted .*2 failed read\(s\) in a row/s);
+    assert.doesNotMatch(shown, /data-action="new-token" data-source-id="s5"/, 'no ingest tokens for an endpoint source');
+    assert.match(shown, /<form class="settings-form" data-action="create-endpoint-source">/);
+    assert.match(shown, /data-action="show-endpoint-signing"/);
+    assert.match(page({ endpointTest: { place: 's5', envs: [{ env: 'prod', host: 'flags.acme.io', flags: { newCheckout: { state: 'on' } } }, { env: 'qa', host: 'flags.acme.io', error: 'flags.acme.io answered HTTP 401' }] } }),
+        /<strong>Test<\/strong>.*newCheckout on.*answered HTTP 401/s);
+    assert.match(page({ once: { signing: { secret: 'ab'.repeat(32) } } }), new RegExp(`Signing secret of this workspace</strong><code>${'ab'.repeat(32)}</code>.*X-ShipScope-Signature`, 's'));
+
+    const card = str(ui.renderGitHub({ enabled: true, webhooks: true, admin: true, installationRepos: {}, editing: 101, sources: [endpointSource],
+        github: { installations: [], repos: [{ repoId: 101, fullName: 'acme/api', installationId: 7, flagStance: 'unknown' }] } }));
+    assert.match(card, /Read from the endpoint of Flags &lt;API&gt; \(Sources\)/);
+
+    const { fn, calls } = fakeFetch({ [`POST ${base}/flag-endpoint-test`]: { envs: [{ env: 'prod', host: 'flags.acme.io', flags: {} }] }, [`GET ${base}/flag-endpoint-signing`]: { secret: 'cd'.repeat(32) } });
+    global.fetch = fn;
+    const fields = (extra = []) => [['name', ' Flags API '], ['repoIds', '101', true], ['url_test', ''], ['url_qa', ' https://flags.acme.io/f?env=qa '], ['url_prod', 'https://flags.acme.io/f?env=prod'],
+        ['path', 'features'], ['tokenHeader', ''], ['endpointToken', ''], ['pollIntervalMinutes', ''], ['staleAfterMinutes', ''], ...extra];
+    await ui.runAction('create-endpoint-source', form(fields([['endpointToken', 'cust-1']]), {}, 'flags'));
+    assert.deepStrictEqual(calls[0], { method: 'POST', url: `${base}/flag-sources`, body: {
+        name: 'Flags API', kind: 'runtime', origin: 'endpoint', repoIds: [101], endpoint: { urls: { qa: 'https://flags.acme.io/f?env=qa', prod: 'https://flags.acme.io/f?env=prod' }, path: 'features' },
+        staleAfterMinutes: null, pollIntervalMinutes: null, endpointToken: 'cust-1',
+    } });
+    calls.length = 0;
+    await ui.runAction('create-endpoint-source', form([['name', 'X'], ['url_test', ''], ['url_qa', ''], ['url_prod', '']], {}, 'flags'));
+    assert.deepStrictEqual(calls, [], 'no address: nothing sent');
+    assert.deepStrictEqual(ui.settingsState.messages.flags, { error: true, text: 'Give the https address of at least one environment.' });
+
+    // Saving: the API's other fields kept; an empty token keeps the stored one, the box removes it.
+    ui.settingsState.flags = [endpointSource];
+    calls.length = 0;
+    await ui.runAction('save-source', form([...fields([['priority', '90'], ['pollIntervalMinutes', '15']])], { sourceId: 's5', origin: 'endpoint' }, 'flags'));
+    assert.deepStrictEqual(calls[0].body, {
+        name: 'Flags API', kind: 'runtime', priority: 90, repoIds: [101], endpoint: { urls: { qa: 'https://flags.acme.io/f?env=qa', prod: 'https://flags.acme.io/f?env=prod' }, path: 'features', keys: ['a'] },
+        staleAfterMinutes: null, pollIntervalMinutes: 15,
+    });
+    ui.settingsState.flags = [endpointSource];
+    calls.length = 0;
+    await ui.runAction('save-source', form([...fields([['priority', '90'], ['clearToken', '1', true]])], { sourceId: 's5', origin: 'endpoint' }, 'flags'));
+    assert.strictEqual(calls[0].body.endpointToken, null);
+
+    // Test: a saved source with its stored token; a typed token instead; the new-source form without one.
+    const testButton = (dataset, extra = []) => ({ dataset: {}, form: form(fields(extra), dataset, 'flags'), closest: () => ({ id: 'flags' }) });
+    ui.settingsState.flags = [endpointSource];
+    calls.length = 0;
+    await ui.runAction('test-endpoint-source', testButton({ sourceId: 's5', origin: 'endpoint' }));
+    assert.deepStrictEqual(calls[0].body, { endpoint: { urls: { qa: 'https://flags.acme.io/f?env=qa', prod: 'https://flags.acme.io/f?env=prod' }, path: 'features', keys: ['a'] }, sourceId: 's5' });
+    assert.deepStrictEqual(ui.settingsState.endpointTest, { place: 's5', envs: [{ env: 'prod', host: 'flags.acme.io', flags: {} }] });
+    calls.length = 0;
+    await ui.runAction('test-endpoint-source', testButton({ sourceId: 's5' }, [['endpointToken', 'typed']]));
+    assert.deepStrictEqual([calls[0].body.endpointToken, calls[0].body.sourceId], ['typed', undefined]);
+    calls.length = 0;
+    await ui.runAction('test-endpoint-source', testButton({}));
+    assert.deepStrictEqual([calls[0].body.sourceId, calls[0].body.endpointToken, ui.settingsState.endpointTest.place], [undefined, undefined, 'new']);
+
+    calls.length = 0;
+    await ui.runAction('show-endpoint-signing', pageButton({}, 'sources', 'flags'));
+    assert.deepStrictEqual(ui.settingsState.once, { signing: { secret: 'cd'.repeat(32) } });
+});
+

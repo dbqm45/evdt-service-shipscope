@@ -56,6 +56,8 @@ const settingsState = {
     once: {}, messages: {},
     // The "Read flags from code" helper: the form's draft, the files found in a repository, a preview of a reading.
     codeWizard: { draft: {}, found: null, preview: null },
+    // "Test" of an endpoint source: which form asked (a source id, or 'new') and what each environment read.
+    endpointTest: null,
 };
 
 const tenantPath = (suffix) => `/tenants/${settingsState.tenantId}${suffix}`;
@@ -270,9 +272,16 @@ function onboardingSteps({ features, github, jira, boards, sources, flagList, wo
         const failing = sources.filter((src) => src.origin === 'code' && (src.environments || []).some((e) => e.state === 'error'));
         steps.push(step('flags', 'Send feature flags', true, 'problem',
             `Could not read the flags file of ${failing.map((src) => src.name).join(', ')}: see the source for why.`, '#sources'));
+    } else if (sources.some((src) => src.origin === 'endpoint' && (src.environments || []).some((e) => e.state === 'error'))) {
+        const failing = sources.filter((src) => src.origin === 'endpoint' && (src.environments || []).some((e) => e.state === 'error'));
+        steps.push(step('flags', 'Send feature flags', true, 'problem',
+            `Could not read the endpoint of ${failing.map((src) => src.name).join(', ')}: see the source for why.`, '#sources'));
     } else if (sources.some((src) => src.origin === 'code')) {
         steps.push(step('flags', 'Send feature flags', true, 'waiting',
             `Waiting for a deployment: ${sources.filter((src) => src.origin === 'code').map((src) => src.name).join(', ')} is read at the next sync of its repository.`, '#sources'));
+    } else if (sources.some((src) => src.origin === 'endpoint')) {
+        steps.push(step('flags', 'Send feature flags', true, 'waiting',
+            `Waiting for the first read: ShipScope reads the endpoint of ${sources.filter((src) => src.origin === 'endpoint').map((src) => src.name).join(', ')} within a minute.`, '#sources'));
     } else if (sources.some((src) => activeTokens(src, now).length)) {
         steps.push(step('flags', 'Send feature flags', true, 'waiting',
             `Waiting for the first message from ${sources.filter((src) => activeTokens(src, now).length).map((src) => src.name).join(', ')} (POST /api/flags/ingest with its token).`, '#sources'));
@@ -791,6 +800,34 @@ function codeOf(values, current){
     return code;
 }
 
+/** An endpoint source's reading from its form: the addresses and fields shown, over what the API set besides (key list, ...). */
+function endpointOf(values, current = {}){
+    const endpoint = { ...current, urls: {} };
+    for (const env of ENVS) {
+        const url = (values[`url_${env}`] || '').trim();
+        if (url) {
+            endpoint.urls[env] = url;
+        }
+    }
+    for (const field of ['path', 'tokenHeader']) {
+        const value = (values[field] || '').trim();
+        if (value) {
+            endpoint[field] = value;
+        } else {
+            delete endpoint[field];
+        }
+    }
+    if (!Object.keys(endpoint.urls).length) {
+        throw new Error('Give the https address of at least one environment.');
+    }
+    return endpoint;
+}
+
+/** '' -> null (every 5 minutes), else the number of minutes. */
+function pollIntervalOf(value){
+    return value === '' || value === undefined ? null : Number(value);
+}
+
 /** Which "read flags from code" form a button is in: the Sources page's or a repository's card on GitHub. */
 function placeOf(el){
     return (el.form && el.form.dataset && el.form.dataset.place) || 'sources';
@@ -887,8 +924,10 @@ function RepoFlagsCard({ r, sources, wizard }){
     }
     const covering = sources.filter((s) => (s.repoIds || []).includes(r.repoId));
     const fromCode = covering.filter((s) => s.origin === 'code');
-    const pushed = covering.filter((s) => s.origin !== 'code');
-    const sent = pushed.length ? html`<p class="settings-row-meta">Sent by ${pushed.map((s) => s.name).join(', ')} (Sources).</p>` : '';
+    const pushed = covering.filter((s) => s.origin !== 'code' && s.origin !== 'endpoint');
+    const polled = covering.filter((s) => s.origin === 'endpoint');
+    const sent = html`${pushed.length ? html`<p class="settings-row-meta">Sent by ${pushed.map((s) => s.name).join(', ')} (Sources).</p>` : ''}${polled.length
+        ? html`<p class="settings-row-meta">Read from the endpoint of ${polled.map((s) => s.name).join(', ')} (Sources).</p>` : ''}`;
     if (fromCode.length) {
         return html`<div class="settings-repo-flags"><strong>Feature flags</strong>
             ${fromCode.map((s) => html`<p class="settings-row-meta">${s.name}: ShipScope reads <code>${s.code.file}</code> at each deployment (edit it under <a href="#sources">Sources</a>).</p>${SourceFreshness(s)}`)}
@@ -901,7 +940,7 @@ function RepoFlagsCard({ r, sources, wizard }){
     const mine = wizard.place === 'github' && wizard.draft.repoId === r.repoId;
     const name = r.fullName.split('/').pop();
     return html`<div class="settings-repo-flags"><strong>Feature flags</strong>
-        <p class="settings-hint">${pushed.length ? 'Its flags are sent by a source. ' : ''}Kept in a file in this repository? ShipScope can read it at every deployment.</p>
+        <p class="settings-hint">${pushed.length || polled.length ? 'Its runtime flags come from a source. ' : ''}Kept in a file in this repository? ShipScope can read it at every deployment.</p>
         <form class="settings-form" data-action="create-code-source" data-place="github" data-section="github">
             <label>Name <input name="name" required maxlength="100" value="${mine && wizard.draft.name ? wizard.draft.name : `${name} flags`}"></label>
             ${CodeSourceFields({ repos: [], code: mine ? wizard.draft : {}, repoId: r.repoId, fixedRepo: true })}
@@ -941,7 +980,41 @@ function CodeWizard(wizard){
     return html`${list}${preview}`;
 }
 
-function renderSources({ flags, repos, once, origin, now = new Date(), wizard = { draft: {}, found: null, preview: null, place: 'sources' } }){
+/**
+ * The fields of a source ShipScope polls: an https address per environment, the object with the flags, where the token
+ * goes, the read-only token (never shown back: empty keeps the stored one) and how often it is read.
+ */
+function EndpointSourceFields({ endpoint = {}, hasToken = false, pollIntervalMinutes = null }){
+    const urls = endpoint.urls || {};
+    return html`${ENVS.map((env) => html`<label>${env} address <input name="url_${env}" type="url" maxlength="500" placeholder="https://flags.example.com/api/flags?env=${env}" value="${urls[env] || ''}"></label>`)}
+            <label>Object with the flags (optional) <input name="path" maxlength="100" placeholder="features" value="${endpoint.path || ''}"></label>
+            <label>Token header (optional) <input name="tokenHeader" maxlength="64" placeholder="Authorization: Bearer" value="${endpoint.tokenHeader || ''}"></label>
+            <label>Read-only token ${hasToken ? '(stored encrypted; empty keeps it)' : '(optional)'} <input name="endpointToken" type="password" autocomplete="off" maxlength="4096" value=""></label>
+            ${hasToken ? html`<label class="inline"><input type="checkbox" name="clearToken" value="1"> remove the stored token</label>` : ''}
+            <label>Read every (minutes) <input name="pollIntervalMinutes" type="number" min="2" max="1440" placeholder="5" value="${pollIntervalMinutes ?? ''}"></label>`;
+}
+
+/** The buttons of an endpoint form: read it now without saving, then save. */
+function EndpointButtons(submitLabel){
+    return html`<button type="button" class="btn" data-action="test-endpoint-source">Test</button> <button type="submit" class="btn${submitLabel === 'Save' ? '' : ' btn-primary'}">${submitLabel}</button>`;
+}
+
+/** What "Test" read: per environment its host and flags, or why not (never the answer itself). */
+function EndpointTest(envs){
+    return html`<div class="settings-wizard"><strong>Test</strong><ul class="settings-list">${envs.map((e) => html`<li>
+            <span class="state-tag ${e.error ? 'fail' : 'ok'}">${e.env}</span> <code>${e.host}</code>
+            ${e.error ? html`<span class="settings-error-inline">${e.error}</span>` : html`<span class="settings-row-meta">${FlagStates(e.flags)}</span>`}
+        </li>`)}</ul></div>`;
+}
+
+/** When an endpoint source was read and will be next, and whether it is backing off. */
+function EndpointSchedule(s){
+    const every = s.effectivePollIntervalMinutes || 5;
+    const backoff = s.pollFailures ? html` · <span class="state-tag warn">${s.pollFailures} failed read(s) in a row: waiting longer</span>` : '';
+    return html`<p class="settings-row-meta">Read from its endpoint every ${every} min (and when someone opens the dashboard): last ${fmtDateTime(s.lastPolledAt)}, next ${s.nextPollAt ? fmtDateTime(s.nextPollAt) : 'within a minute'} · token ${s.hasEndpointToken ? 'stored encrypted' : 'none'}${backoff}</p>`;
+}
+
+function renderSources({ flags, repos, once, origin, now = new Date(), wizard = { draft: {}, found: null, preview: null, place: 'sources' }, endpointTest = null }){
     if (flags === null) {
         return html`<p class="settings-loading">Loading…</p>`;
     }
@@ -968,7 +1041,22 @@ function renderSources({ flags, repos, once, origin, now = new Date(), wizard = 
         <div class="settings-source-status">${SourceStatus(s)}</div>
         ${SourceFreshness(s)}
         </td><td class="actions"><button type="button" class="btn btn-danger" data-action="delete-source" data-source-id="${s.id}">Delete</button></td></tr>`;
-    const rows = flags.map((s) => (s.origin === 'code' ? codeRow(s) : html`<tr><td>
+    const testFor = (place) => (endpointTest && endpointTest.place === place ? EndpointTest(endpointTest.envs) : '');
+    const endpointRow = (s) => html`<tr><td>
+        <form class="settings-form" data-action="save-source" data-source-id="${s.id}" data-origin="endpoint">
+            <label>Name <input name="name" required maxlength="100" value="${s.name}"></label>
+            <label>Priority <input name="priority" type="number" min="0" max="1000" required value="${s.priority}"></label>
+            ${services(s.repoIds || [])}
+            ${EndpointSourceFields({ endpoint: s.endpoint || {}, hasToken: s.hasEndpointToken, pollIntervalMinutes: s.pollIntervalMinutes })}
+            ${StaleAfterInput(s.staleAfterMinutes)}
+            ${EndpointButtons('Save')}
+        </form>
+        ${testFor(s.id)}
+        ${EndpointSchedule(s)}
+        <div class="settings-source-status">${SourceStatus(s)}</div>
+        ${SourceFreshness(s)}
+        </td><td class="actions"><button type="button" class="btn btn-danger" data-action="delete-source" data-source-id="${s.id}">Delete</button></td></tr>`;
+    const rows = flags.map((s) => (s.origin === 'code' ? codeRow(s) : s.origin === 'endpoint' ? endpointRow(s) : html`<tr><td>
         <form class="settings-form" data-action="save-source" data-source-id="${s.id}">
             <label>Name <input name="name" required maxlength="100" value="${s.name}"></label>
             <label>Kind <select name="kind">${kindOptions(s.kind)}</select></label>
@@ -987,6 +1075,10 @@ function renderSources({ flags, repos, once, origin, now = new Date(), wizard = 
         label: 'Ingest token — shown only once',
         value: once.token,
         note: `The source sends POST ${origin}/api/flags/ingest with the header "Authorization: Bearer <token>".`,
+    }) : ''}${once.signing ? SecretBox({
+        label: 'Signing secret of this workspace',
+        value: once.signing.secret,
+        note: `Every request ShipScope sends your endpoint carries X-ShipScope-Timestamp (Unix seconds) and X-ShipScope-Signature: v1=<hex HMAC-SHA256 of "<timestamp>.GET.<the full URL>">. Recompute it with this secret and refuse a mismatch or a timestamp older than 5 minutes.`,
     }) : ''}
         ${rows.length ? html`<table class="settings-table"><tbody>${rows}</tbody></table>` : html`<p class="settings-hint">No flag source yet.</p>`}
         <h3>Read flags from code</h3>
@@ -997,6 +1089,17 @@ function renderSources({ flags, repos, once, origin, now = new Date(), wizard = 
             ${CODE_SOURCE_BUTTONS}
         </form>
         ${CodeWizard(sourcesWizard)}` : html`<p class="settings-hint">Track a repository first (GitHub).</p>`}
+        <h3>Read flags from an endpoint</h3>
+        <p class="settings-hint">For runtime flags your backend serves: ShipScope reads an https address per environment (JSON or YAML, a map of flags), with a read-only token if it needs one. Only public https addresses on port 443; no redirects.</p>
+        <form class="settings-form" data-action="create-endpoint-source">
+            <label>Name <input name="name" required maxlength="100" placeholder="e.g. Flags API"></label>
+            ${services([])}
+            ${EndpointSourceFields({})}
+            ${StaleAfterInput(null)}
+            ${EndpointButtons('Read from endpoint')}
+        </form>
+        ${testFor('new')}
+        <p class="settings-row-meta">Requests are signed so your endpoint can tell ShipScope's calls from anyone else's. <button type="button" class="btn-link btn" data-action="show-endpoint-signing">Show the signing secret</button></p>
         <h3>Add a source that sends its flags</h3>
         <form class="settings-form" data-action="create-source">
             <label>Name <input name="name" required maxlength="100" placeholder="e.g. LaunchDarkly"></label>
@@ -1055,13 +1158,13 @@ function renderFlags({ flagList, admin, jiraUrl = null }){
 }
 
 /** @param {{ sources: object[]|null|{ error: string }, repos: object[], admin: boolean, once: object, origin: string }} props */
-function renderSourcesPage({ sources, repos, admin, once, origin, wizard }){
+function renderSourcesPage({ sources, repos, admin, once, origin, wizard, endpointTest = null }){
     return Page({
         id: 'sources',
         section: 'flags',
         title: 'Sources',
         hint: 'Where flags come from: a file in your code that ShipScope reads at each deployment, or a source (a flag service, a backend, a build step) that sends their full state to the ingest URL with its own token.',
-        body: Card({ body: admin ? renderSources({ flags: sources, repos, once, origin, wizard }) : html`<p class="settings-hint">Only admins manage flag sources.</p>` }),
+        body: Card({ body: admin ? renderSources({ flags: sources, repos, once, origin, wizard, endpointTest }) : html`<p class="settings-hint">Only admins manage flag sources.</p>` }),
     });
 }
 
@@ -1081,7 +1184,7 @@ function renderSettings(){
         github: () => renderGitHub({ enabled: s.features.githubApp, webhooks: s.features.githubWebhooks, github: s.github, installationRepos: s.installationRepos, admin, picker: s.trackPicker, editing: s.editingRepo, sources: s.flags, wizard: s.codeWizard }),
         jira: () => renderJira({ enabled: s.features.jira, webhooks: s.features.jiraWebhooks, jira: s.jira, boards: s.boards, admin, flagFields: s.flagFields }),
         flags: () => renderFlags({ flagList: s.flagList, admin, jiraUrl: s.jira && s.jira.site ? s.jira.site.url : null }),
-        sources: () => renderSourcesPage({ sources: s.flags, repos, admin, once: s.once, origin: location.origin, wizard: s.codeWizard }),
+        sources: () => renderSourcesPage({ sources: s.flags, repos, admin, once: s.once, origin: location.origin, wizard: s.codeWizard, endpointTest: s.endpointTest }),
         danger: () => renderDangerZone({ tenantName: s.tenant && s.tenant.name }),
     };
     const counts = {
@@ -1361,6 +1464,37 @@ const actions = {
         }
         return { section: 'flags', ok: 'Added: its flags are read at the next sync.' };
     },
+    'create-endpoint-source': async (form) => {
+        const values = formValues(form);
+        const body = {
+            name: values.name.trim(), kind: 'runtime', origin: 'endpoint', repoIds: (values.repoIds || []).map(Number), endpoint: endpointOf(values),
+            staleAfterMinutes: staleAfterOf(values.staleAfterMinutes), pollIntervalMinutes: pollIntervalOf(values.pollIntervalMinutes),
+        };
+        if (values.endpointToken) {
+            body.endpointToken = values.endpointToken;
+        }
+        await api('POST', tenantPath('/flag-sources'), body);
+        settingsState.endpointTest = null;
+        return { section: 'flags', ok: 'Added: ShipScope reads it within a minute.' };
+    },
+    'test-endpoint-source': async (el) => {
+        const values = formValues(el.form);
+        const sourceId = el.form.dataset && el.form.dataset.sourceId;
+        const current = sourceId && (Array.isArray(settingsState.flags) ? settingsState.flags : []).find((s) => s.id === sourceId);
+        const body = { endpoint: endpointOf(values, (current && current.endpoint) || {}) };
+        if (values.endpointToken) {
+            body.endpointToken = values.endpointToken;
+        } else if (sourceId && !(values.clearToken || []).length) {
+            body.sourceId = sourceId;
+        }
+        const { envs } = await api('POST', tenantPath('/flag-endpoint-test'), body);
+        settingsState.endpointTest = { place: sourceId || 'new', envs };
+        return {};
+    },
+    'show-endpoint-signing': async () => {
+        settingsState.once = { signing: await api('GET', tenantPath('/flag-endpoint-signing')) };
+        return { section: 'flags' };
+    },
     'find-flag-files': async (el) => {
         const values = formValues(el.form);
         const repoId = Number(values.repoId);
@@ -1396,6 +1530,22 @@ const actions = {
                 code: codeOf(values, (current && current.code) || {}),
             });
             return { section: 'flags', ok: 'Saved; the file is read again at the next sync.' };
+        }
+        if (data.origin === 'endpoint') {
+            const current = (Array.isArray(settingsState.flags) ? settingsState.flags : []).find((s) => s.id === data.sourceId);
+            const body = {
+                name: values.name.trim(), kind: 'runtime', priority: Number(values.priority), repoIds: (values.repoIds || []).map(Number),
+                endpoint: endpointOf(values, (current && current.endpoint) || {}),
+                staleAfterMinutes: staleAfterOf(values.staleAfterMinutes), pollIntervalMinutes: pollIntervalOf(values.pollIntervalMinutes),
+            };
+            if ((values.clearToken || []).length) {
+                body.endpointToken = null;
+            } else if (values.endpointToken) {
+                body.endpointToken = values.endpointToken;
+            }
+            await api('PUT', tenantPath(`/flag-sources/${data.sourceId}`), body);
+            settingsState.endpointTest = null;
+            return { section: 'flags', ok: 'Saved; ShipScope reads it again within a minute.' };
         }
         await api('PUT', tenantPath(`/flag-sources/${data.sourceId}`), {
             name: values.name.trim(), kind: values.kind, priority: Number(values.priority), repoIds: (values.repoIds || []).map(Number),
