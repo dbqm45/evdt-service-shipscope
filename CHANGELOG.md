@@ -7,6 +7,12 @@ dashboard, not a published package), so entries are grouped by date instead. See
 ShipScope is, `CLAUDE.md` for the technical reference, and `FAQ.md` for how specific numbers/badges are
 calculated.
 
+## [0.2.45] - 2026-10-25
+
+### Added
+
+- **SHP:** add a public status page and the service's SLOs (#104)
+
 ## [0.2.44] - 2026-10-25
 
 ### Added
