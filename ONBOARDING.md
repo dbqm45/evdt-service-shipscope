@@ -59,8 +59,46 @@ no workflow, no GitHub Actions minutes (`design-docs/ADR-003-flag-sources.md`).
 A file that is missing at a deployed commit, or that no longer reads as flags, never removes flags. The
 environment shows an error in Settings and a "?" on the dashboard, with the reason. Error messages never quote a
 value from the file. Values are read without running any code: a value computed at build time, such as
-`process.env.X`, is reported as unreadable. Flags switched at runtime (a backend endpoint, a flag service) need a
-source that sends them, as below.
+`process.env.X`, is reported as unreadable. Flags switched at runtime are read from an endpoint (next section) or sent
+by a source (below).
+
+## Feature flags from an endpoint
+
+When a backend serves its runtime flags over https, ShipScope reads them itself: every 5 minutes (or the interval you
+set, at least 2), and again when someone opens the dashboard if the last read is over a minute old. Nothing to run in
+your pipelines.
+
+1. In Settings → Sources, under **Read flags from an endpoint**, name the source, tick the services it covers and give
+   the address of each environment, e.g. `https://flags.example.com/api/flags?env=prod`. Only public https addresses
+   on port 443; ShipScope does not follow redirects and reads at most 1 MB within 10 seconds.
+2. The answer is JSON or YAML holding a map of flags, read like a flags file: `{ "newCheckout": true, "search": 25 }`
+   (`true`/`false`, `"on"`/`"off"`, or a rollout percentage), optionally under an object you name (`features`).
+   Every answer is the full state of that environment: a flag no longer listed is marked removed.
+3. If the endpoint needs a token, give a **read-only** one. It goes in `Authorization: Bearer <token>`, or as is in a
+   header of your own named `x-...` (**Token header**). It is stored encrypted and never shown again; an empty field
+   keeps it, **remove the stored token** deletes it.
+4. **Test** reads every address now and shows what each environment gives (or why not) before you save.
+
+Every request is signed for your workspace, so the endpoint can refuse anyone else. It carries
+`X-ShipScope-Timestamp` (Unix seconds) and `X-ShipScope-Signature: v1=<hex>`, an HMAC-SHA256 of
+`<timestamp>.GET.<the full URL>` with the workspace's secret (**Show the signing secret**). For example, in Node:
+
+```js
+const crypto = require('crypto');
+function fromShipScope(req, secret) {
+    const ts = req.headers['x-shipscope-timestamp'];
+    const url = `https://${req.headers.host}${req.url}`;
+    const expected = `v1=${crypto.createHmac('sha256', secret).update(`${ts}.GET.${url}`).digest('hex')}`;
+    const got = String(req.headers['x-shipscope-signature'] || '');
+    return Math.abs(Date.now() / 1000 - Number(ts)) < 300 && got.length === expected.length
+        && crypto.timingSafeEqual(Buffer.from(got), Buffer.from(expected));
+}
+```
+
+A read that fails (an error status, a timeout, an answer that is not flags) never removes flags: the environment
+shows an error in Settings and a "?" on the dashboard, and ShipScope waits longer before each retry (up to an hour).
+Error messages never quote the answer. An endpoint inside a private network is not reachable yet; send its flags
+instead, as below.
 
 ## Sending feature flags
 

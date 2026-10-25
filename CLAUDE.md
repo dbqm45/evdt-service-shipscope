@@ -207,7 +207,9 @@ success for 3 × `SYNC_INTERVAL_MINUTES` + 5 minutes, or an undrained webhook qu
   `signingSecret()`: HKDF of `TOKEN_ENCRYPTION_KEY` per tenant, `loadEncryptionKey()`; `GET …/flag-endpoint-signing`).
   `refreshEndpointSource()` writes each environment's full state through `applyObservations()` (`changedAt` = now); a
   failure is `recordSourceEnvError()` and keeps the flags. `POST …/flag-endpoint-test` (admin, per-workspace limit)
-  returns only parsed flags (`server/test/endpoint-flags.test.js`). Polling (migration `024`, `lib/flag-poll.js`
+  returns only parsed flags (`server/test/endpoint-flags.test.js`). Settings → Sources, Read flags from an endpoint
+  (`EndpointSourceFields()`: `url_<env>`, path, token header, a password field that is never filled, "remove the stored
+  token", interval; Test shows `EndpointTest()`, the signing secret shows once in a `SecretBox`). Polling (migration `024`, `lib/flag-poll.js`
   `pollEndpoints()`): the worker's `flagsTick()` every minute (`FLAGS_LOCK`) reads due sources (`next_poll_at`, at most
   `POLL.perTenantPerTick` per tenant) and schedules the next read with `nextPollAt()` (`pollIntervalMinutes`, default 5,
   min 2, ±10% jitter, doubling backoff to an hour on `poll_failures`); at most `POLL.maxSources` endpoint sources per
