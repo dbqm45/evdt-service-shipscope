@@ -434,7 +434,7 @@ function renderGeneral({ workspace, admin, auditEvents = null }){
     return page(html`${Card({
         title: 'Deployment history',
         body: admin
-            ? html`<p class="settings-hint">Older deployments are removed daily; each environment's latest and latest successful deployment always stay.</p>
+            ? html`<p class="settings-hint">Older deployments and flag changes are removed daily; each environment's latest and latest successful deployment, and each flag's latest change, always stay.</p>
                 <form class="settings-form" data-action="save-retention">
                 <label>Keep deployment history (days, 7–730) <input name="deploymentRetentionDays" type="number" min="7" max="730" required value="${days}"></label>
                 <button type="submit" class="btn">Save</button></form>`
