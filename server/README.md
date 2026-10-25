@@ -385,6 +385,9 @@ Postgres database. Step-by-step setup (in Polish): `SETUP.pl.md`, section 6.
 
 ## Rotating TOKEN_ENCRYPTION_KEY
 
+The operator's guide to every key (what it protects, first setup, rotation, troubleshooting) is
+[SEKRETY.pl.md](SEKRETY.pl.md).
+
 `TOKEN_ENCRYPTION_KEY` seals every stored customer secret: Jira refresh tokens, endpoint tokens and each workspace's
 signing secret (`lib/secret-box.js`). Sealed values carry the id of the key that sealed them (a hash, never the key),
 so a key can be replaced without anyone reconnecting:

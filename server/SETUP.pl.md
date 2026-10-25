@@ -88,7 +88,9 @@ serwisów (`render.yaml` ustawia `DATABASE_URL` sam; sekrety mają `sync: false`
 | `SYNC_TENANT_BUDGET_SECONDS` | — | opcjonalnie | Ile sekund jednego przebiegu synchronizacji dostaje jeden workspace (10–3600, domyślnie 120); resztę dokończy w następnym, żeby duży workspace nie blokował pozostałych |
 | `DASHBOARD_DIR` | opcjonalnie | — | Gdzie są pliki dashboardu (`docs/`); bez nich strona `/t/<id>/` odpowiada 503 |
 | `ATLASSIAN_CLIENT_ID`, `ATLASSIAN_CLIENT_SECRET` | tak | tak | Aplikacja OAuth w Atlassian (sekcja 5); bez nich połączenie z Jirą jest wyłączone |
-| `TOKEN_ENCRYPTION_KEY` | tak | tak | Klucz szyfrujący zapisane tokeny Jiry: `openssl rand -base64 32`. Zmiana klucza = każdy tenant łączy Jirę od nowa |
+| `TOKEN_ENCRYPTION_KEY` | tak | tak | Klucz szyfrujący sekrety klientów: `openssl rand -base64 32`. Wymiana bez ponownego łączenia: `TOKEN_ENCRYPTION_KEY_PREVIOUS`, zob. [SEKRETY.pl.md](SEKRETY.pl.md) |
+| `SECRETS_PUBLIC_KEY` | tak | tak | Zalecane w produkcji: tokeny Jiry i endpointów czytelne tylko dla workera (`npm run sealing-keys`), zob. [SEKRETY.pl.md](SEKRETY.pl.md) |
+| `SECRETS_PRIVATE_KEY` | **nigdy** | tak | Prywatna połowa tej pary |
 
 ## 3. Pierwsze uruchomienie (po stronie użytkownika)
 
@@ -263,7 +265,8 @@ Gdy wybrane tablice są w różnych bieżących przyrostach (np. jeden zespół 
 otwiera się na „Now: PI-27.3, Sprint 7” — zadaniach bieżącego przyrostu każdej tablicy razem (pusty przyrost, np. miesiąc
 bez zadań, się nie liczy). Pozostałe przyrosty
 są dalej do wyboru w selektorze. Zmiana witryny Jira usuwa wybrane tablice i pobrane zadania.
-Worker potrzebuje tych samych trzech zmiennych (`ATLASSIAN_*`, `TOKEN_ENCRYPTION_KEY`) co serwis web.
+Worker potrzebuje tych samych trzech zmiennych (`ATLASSIAN_*`, `TOKEN_ENCRYPTION_KEY`) co serwis web, a przy parze
+kluczy także `SECRETS_PRIVATE_KEY` (tylko on), zob. [SEKRETY.pl.md](SEKRETY.pl.md).
 
 
 ## 6. Wdrożenie na Render
@@ -278,8 +281,10 @@ Wszystko jest opisane w `render.yaml` (Blueprint): serwis web `shipscope-web`, w
    Adres serwisu to zwykle `https://shipscope-web.onrender.com` (Render dopisuje końcówkę, gdy nazwa jest zajęta —
    dokładny adres zobaczysz po utworzeniu serwisu i wtedy go poprawisz).
 2. Przygotuj wartości (w menedżerze haseł, nigdzie indziej):
-   - `TOKEN_ENCRYPTION_KEY`: `openssl rand -base64 32` — **zachowaj kopię**; jej utrata albo zmiana oznacza, że każdy
-     tenant łączy Jirę od nowa;
+   - `TOKEN_ENCRYPTION_KEY`: `openssl rand -base64 32` — **zachowaj kopię**; jej utrata oznacza, że każdy tenant
+     łączy Jirę od nowa (wymiana jest bezpieczna, zob. [SEKRETY.pl.md](SEKRETY.pl.md));
+   - para `SECRETS_PUBLIC_KEY`/`SECRETS_PRIVATE_KEY`: `npm run sealing-keys --prefix server` — prywatny tylko w
+     workerze, też z kopią;
    - `GITHUB_APP_WEBHOOK_SECRET`: `openssl rand -hex 32` (ten sam wpisujesz w GitHub App → Webhook secret);
    - z GitHub App: Client ID, client secret, App ID, slug, klucz prywatny (zawartość `.pem`);
    - z aplikacji Atlassian: Client ID i Secret.
