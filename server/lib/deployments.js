@@ -1,4 +1,5 @@
 const { withScope } = require('./scope');
+const { recordAuditEvent } = require('./audit-log');
 const { assertAdmin, roleOf, TenantNotFoundError } = require('./tenants');
 
 const MAX_LIMIT = 500;
@@ -76,6 +77,7 @@ async function updateSettings(pool, { tenantId, actorUserId, deploymentRetention
             'UPDATE tenants SET deployment_retention_days = $2 WHERE id = $1 RETURNING name, deployment_retention_days',
             [tenantId, deploymentRetentionDays]
         );
+        await recordAuditEvent(client, { tenantId, actorUserId, kind: 'retention_changed', subject: `${rows[0].deployment_retention_days} days` });
         return { name: rows[0].name, deploymentRetentionDays: rows[0].deployment_retention_days };
     });
 }

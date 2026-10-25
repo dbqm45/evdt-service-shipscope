@@ -98,7 +98,7 @@ changelog entry by hand outside a `chore(release)` PR.
 
 Deployed to Render per `context/foundation/infrastructure.md`: `render.yaml` builds both the Web Service and the
 Background Worker from the repo root (`npm ci --prefix server`, `node server/web.js`), not `rootDir: server`, which
-would hide `docs/` from the Web Service. Migrations (`server/migrations/001`–`030`, applied by the hand-rolled
+would hide `docs/` from the Web Service. Migrations (`server/migrations/001`–`031`, applied by the hand-rolled
 `lib/migrate.js`) run as each service's `preDeployCommand` under an advisory lock (`test/render-blueprint.test.js`).
 Dependencies, all in `server/package.json`: `pg`, `fastify`, `@fastify/cookie`. Fastify runs with
 `removeAdditional: false, coerceTypes: false`: unknown fields and wrong types are a 400, never silently fixed.
@@ -114,7 +114,7 @@ New rules go into the pure file; the I/O file orchestrates.
 
 **Tenant isolation (RLS).** Every query on an RLS table — the list is `RLS_TABLES` in `lib/scope.js` (memberships,
 invitations, github_installations, tracked_repos, deployments, issue_deployments, flag_sources, flag_source_repos, flag_source_envs, ingest_tokens, flags,
-flag_values, flag_value_history, jira_connections, jira_boards, jira_pis, jira_issues, secret_events, endpoint_tests, jira_access_grants) — must run inside
+flag_values, flag_value_history, jira_connections, jira_boards, jira_pis, jira_issues, audit_events, endpoint_tests, jira_access_grants) — must run inside
 `withScope()`, which sets `app.current_tenant_id`/`app.current_user_id` with transaction-local
 `set_config(..., true)`. An unscoped read returns zero rows; an unscoped write is an RLS error.
 `lib/withscope-guard.js` (`server/test/withscope-guard.test.js`) fails on any `pool.query(...)` in `server/lib/`
@@ -219,9 +219,16 @@ success for 3 × `SYNC_INTERVAL_MINUTES` + 5 minutes, or an undrained webhook qu
   `tenantSigningSecret()`: stored sealed in `tenants.endpoint_signing_secret_enc`, migration `027`, first filled with
   `signingSecret()`, the HKDF value earlier versions derived from the key; `GET …/flag-endpoint-signing`; an admin
   replaces it with `POST …/flag-endpoint-signing/rotate`, `rotateSigningSecret()`, effective at once).
-  Secret access is audited (migration `028`, `lib/secret-audit.js`, `recordSecretEvent()` in the same transaction):
+  Secret access is audited (migration `028`, `lib/audit-log.js`, `recordAuditEvent()` in the same transaction):
   the signing secret shown or replaced, an endpoint token set or removed, Jira connected or disconnected, never the
   secret; `GET …/secret-events` (admin), Settings → Sources "Secret activity" (`server/test/secret-audit.test.js`).
+  So is every other settings change (migration `031` renamed the table `audit_events`, kinds in `AUDIT_EVENT_KINDS`,
+  each with a label in `settings.js`): the workspace created, retention, invitations, members joining, leaving or
+  removed, GitHub accounts linked or unlinked, repos tracked, untracked and their settings/environments/flag
+  stance/role, flag sources and ingest tokens, a flag's hand-set details and answered suggestions, Jira's site,
+  boards, board rhythm and flag convention; the subject names what changed, never a token. `GET …/audit-events`
+  (admin, latest 100), Settings → General "Settings activity", reloaded after each admin action
+  (`server/test/audit-log.test.js`).
   `refreshEndpointSource()` writes each environment's full state through `applyObservations()` (`changedAt` = now); a
   failure is `recordSourceEnvError()` and keeps the flags. `POST …/flag-endpoint-test` (admin, per-workspace limit)
   returns only parsed flags (`server/test/endpoint-flags.test.js`). Settings → Sources, Read flags from an endpoint

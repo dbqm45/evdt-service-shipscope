@@ -1,4 +1,4 @@
-const { recordSecretEvent } = require('./secret-audit');
+const { recordAuditEvent } = require('./audit-log');
 const { withScope } = require('./scope');
 const { assertAdmin, roleOf, TenantNotFoundError } = require('./tenants');
 const { seal, open, SecretBoxError } = require('./secret-box');
@@ -63,7 +63,7 @@ async function saveConnection(pool, { tenantId, actorUserId, refreshToken, scope
         if (previous && previous.cloud_id !== (site?.cloudId ?? null)) await forgetSiteData(client, tenantId);
         // A token handed over for the previous grant must not outlive it.
         await client.query('DELETE FROM jira_access_grants WHERE tenant_id = $1', [tenantId]);
-        await recordSecretEvent(client, { tenantId, actorUserId, kind: 'jira_connected', subject: site?.name ?? null });
+        await recordAuditEvent(client, { tenantId, actorUserId, kind: 'jira_connected', subject: site?.name ?? null });
         return { siteChosen: Boolean(site) };
     });
 }
@@ -120,7 +120,10 @@ async function selectSite(pool, { tenantId, actorUserId, cloudId }) {
         if (!site) throw new JiraSiteError('That Jira site is not one this connection covers');
         const { rows: [before] } = await client.query('SELECT cloud_id FROM jira_connections WHERE tenant_id = $1', [tenantId]);
         await client.query('UPDATE jira_connections SET cloud_id = $2, site_url = $3, site_name = $4 WHERE tenant_id = $1', [tenantId, site.cloudId, site.url, site.name]);
-        if (before.cloud_id !== site.cloudId) await forgetSiteData(client, tenantId);
+        if (before.cloud_id !== site.cloudId) {
+            await forgetSiteData(client, tenantId);
+            await recordAuditEvent(client, { tenantId, actorUserId, kind: 'jira_site_selected', subject: site.name });
+        }
         return site;
     });
 }
@@ -149,7 +152,7 @@ async function disconnect(pool, { tenantId, actorUserId }) {
         await assertAdmin(client, { tenantId, userId: actorUserId });
         const { rowCount } = await client.query('DELETE FROM jira_connections WHERE tenant_id = $1', [tenantId]);
         await client.query('DELETE FROM jira_access_grants WHERE tenant_id = $1', [tenantId]);
-        if (rowCount) await recordSecretEvent(client, { tenantId, actorUserId, kind: 'jira_disconnected' });
+        if (rowCount) await recordAuditEvent(client, { tenantId, actorUserId, kind: 'jira_disconnected' });
         return rowCount === 1;
     });
 }

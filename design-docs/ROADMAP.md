@@ -5,8 +5,9 @@ dług techniczny w [TODO.md](TODO.md). Plan flag wynika z [ADR-003](ADR-003-flag
 Każdy punkt to osobny PR, wdrażalny sam; `[ ]` = do zrobienia, `[x]` = zrobione (z numerem PR).
 
 **Stan na 2026-10-25:** przyrosty 0–5 planu flag są zrobione (#73–#91), a z sekcji Bezpieczeństwo rotacja klucza
-szyfrowania i log audytowy sekretów (#92, #93). Otwarte zostają: metryki, prace „na żądanie klientów",
-niezawodność usługi, reszta bezpieczeństwa i potrzeby klientów korporacyjnych.
+szyfrowania, tokeny klientów czytelne tylko dla workera i log audytowy sekretów oraz ustawień (#92–#98). Otwarte
+zostają: metryki, prace „na żądanie klientów", niezawodność usługi, reszta bezpieczeństwa i potrzeby klientów
+korporacyjnych.
 
 ## Flagi (ADR-003)
 
@@ -94,8 +95,9 @@ niezawodność usługi, reszta bezpieczeństwa i potrzeby klientów korporacyjny
 - [x] Tokeny endpointów czytelne tylko dla workera: web szyfruje kluczem publicznym (`SECRETS_PUBLIC_KEY`), klucz
   prywatny tylko w workerze, „Testuj" z zapisanym tokenem przez kolejkę do workera. (#95)
 - [x] Tokeny odświeżania Jiry tylko w workerze: web dostaje od workera krótkotrwały token dostępu (do godziny) przez
-  kolejkę i trzyma go do wygaśnięcia; `TOKEN_ENCRYPTION_KEY` w web służy już tylko sekretowi podpisu i tym tokenom. (etap 2)
-- [ ] Log audytowy zmian pozostałych ustawień (członkowie, źródła flag, repozytoria), nie tylko sekretów.
+  kolejkę i trzyma go do wygaśnięcia; `TOKEN_ENCRYPTION_KEY` w web służy już tylko sekretowi podpisu i tym tokenom. (#96)
+- [x] Log audytowy zmian pozostałych ustawień (członkowie, zaproszenia, repozytoria, źródła flag i tokeny, Jira,
+  retencja), nie tylko sekretów: `audit_events`, Settings → General „Settings activity”. (#98)
 - [ ] Webhook Jiry: sprawdzić, czy Atlassian zawsze wysyła `exp`, i jeśli tak — wymagać go (dziś token bez `exp`
   jest przyjmowany, `server/lib/webhooks.js`).
 - [ ] Tożsamość nadawcy push z GitHub OIDC zamiast trwałego tokenu (dla klientów, którzy zostają przy adapterze).

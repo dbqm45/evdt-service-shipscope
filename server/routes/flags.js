@@ -5,7 +5,7 @@ const {
 } = require('../lib/flags');
 const { createLimiter } = require('../lib/request-limiter');
 const { testEndpoint, endpointTestResult, endpointSigning, rotateSigningSecret } = require('../lib/endpoint-flags');
-const { listSecretEvents } = require('../lib/secret-audit');
+const { listSecretEvents } = require('../lib/audit-log');
 const { answerLinkSuggestion } = require('../lib/flag-link-suggestions');
 const { CODE_CONFIG, ENDPOINT_CONFIG, ENDPOINT_TOKEN } = require('../schemas/flag-code-config');
 

@@ -1,5 +1,6 @@
 const { withScope } = require('./scope');
 const { assertAdmin, roleOf, TenantNotFoundError } = require('./tenants');
+const { recordAuditEvent } = require('./audit-log');
 const { accessTokenFor, JiraNotConnectedError } = require('./jira-connections');
 const {
     AtlassianError, WEBHOOK_SCOPE, fetchBoards, fetchSprints, fetchVersions, fetchFieldIds, fetchFlagFieldCandidates, searchIssues, registerWebhooks, refreshWebhooks,
@@ -72,7 +73,7 @@ async function configureBoard(pool, { tenantId, actorUserId, boardId, rhythm, pi
     return withScope(pool, { tenantId }, async (client) => {
         await assertAdmin(client, { tenantId, userId: actorUserId });
         const { rows: [before] } = await client.query(
-            'SELECT rhythm, pi_template FROM jira_boards WHERE tenant_id = $1 AND board_id = $2 FOR UPDATE',
+            'SELECT rhythm, pi_template, name FROM jira_boards WHERE tenant_id = $1 AND board_id = $2 FOR UPDATE',
             [tenantId, boardId]
         );
         if (!before) throw new JiraBoardError(`Board ${boardId} is not selected for sync`);
@@ -82,6 +83,7 @@ async function configureBoard(pool, { tenantId, actorUserId, boardId, rhythm, pi
                 [tenantId, boardId, rhythm, piTemplate]
             );
             await client.query('DELETE FROM jira_issues WHERE tenant_id = $1 AND board_id = $2', [tenantId, boardId]);
+            await recordAuditEvent(client, { tenantId, actorUserId, kind: 'jira_board_changed', subject: `${before.name}: ${rhythm}${piTemplate ? ` (${piTemplate})` : ''}` });
         }
         return { boardId, rhythm, piTemplate };
     });
@@ -117,6 +119,7 @@ async function setBoards(pool, { tenantId, actorUserId, boardIds, atlassian, fet
                 [tenantId, b.boardId, b.name, b.projectKey, b.projectName]
             );
         }
+        await recordAuditEvent(client, { tenantId, actorUserId, kind: 'jira_boards_changed', subject: chosen.map((b) => b.name).join(', ') || 'none' });
         return chosen;
     });
 }
@@ -358,6 +361,8 @@ async function setFlagLink(pool, { tenantId, actorUserId, atlassian, flagLink, f
         await assertAdmin(client, { tenantId, userId: actorUserId });
         const { rowCount } = await client.query('UPDATE jira_connections SET flag_link = $2 WHERE tenant_id = $1', [tenantId, stored]);
         if (!rowCount) throw new JiraNotConnectedError('Jira is not connected');
+        const described = stored === null ? 'none' : stored.type === 'label' ? `labels ${stored.prefix}…` : `field ${stored.name}`;
+        await recordAuditEvent(client, { tenantId, actorUserId, kind: 'jira_flag_link_changed', subject: described });
     });
     return stored;
 }

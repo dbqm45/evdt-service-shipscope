@@ -1,4 +1,4 @@
-// The audit log of a workspace's secrets (lib/secret-audit.js) and replacing its signing secret: who showed or replaced
+// The audit log of a workspace's secrets (lib/audit-log.js) and replacing its signing secret: who showed or replaced
 // a secret, set or removed an endpoint token, and when; never the secret itself. Against a real Postgres.
 const { test } = require('node:test');
 const assert = require('node:assert');
@@ -47,7 +47,7 @@ test('the signing secret replaced, endpoint tokens set and removed, the secret s
         ['alice', 'signing_secret_viewed', null],
         ['alice', 'endpoint_token_set', 'Flags API'],
     ], 'newest first');
-    const stored = await withScope(pool, { tenantId }, async (c) => JSON.stringify((await c.query('SELECT * FROM secret_events')).rows));
+    const stored = await withScope(pool, { tenantId }, async (c) => JSON.stringify((await c.query('SELECT * FROM audit_events')).rows));
     assert.ok(![first, second, 'cust-1'].some((secret) => stored.includes(secret)), 'never a secret in the log');
 
     const link = (await api('POST', '/invitations', { role: 'member' })).json().url;

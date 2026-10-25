@@ -927,6 +927,28 @@ test('Flags: suggested links (issues whose commits changed the flag) with link a
     assert.deepStrictEqual(calls[0].body, { jiraKey: 'EBO-7', accept: false });
 });
 
+test('General: admins see the settings activity, escaped; a change an admin makes reloads it', async () => {
+    const workspace = { settings: { deploymentRetentionDays: 90 }, members: [], invitations: [] };
+    const events = [{ at: '2026-10-25T10:00:00Z', kind: 'repo_tracked', subject: '<acme/web>', actor: 'alice' },
+        { at: '2026-10-25T09:00:00Z', kind: 'member_left', subject: null, actor: null }];
+    const page = str(ui.renderGeneral({ workspace, admin: true, auditEvents: events }));
+    assert.match(page, /Settings activity.*alice started tracking <strong>&lt;acme\/web&gt;<\/strong>.*someone no longer here left the workspace/s);
+    assert.match(str(ui.renderGeneral({ workspace, admin: true, auditEvents: [] })), /Settings activity.*Nothing yet/s);
+    assert.match(str(ui.renderGeneral({ workspace, admin: true, auditEvents: { error: 'Boom' } })), /settings-error">Boom/);
+    assert.ok(!/Settings activity/.test(str(ui.renderGeneral({ workspace, admin: false, auditEvents: events }))), 'members never see it');
+    assert.deepStrictEqual(Object.keys(ui.AUDIT_EVENT_LABELS).sort(), [...require('../lib/audit-log').AUDIT_EVENT_KINDS].sort(), 'a label for every kind');
+
+    ui.settingsState.tenantId = TENANT;
+    ui.settingsState.tenant = { id: TENANT, role: 'admin' };
+    const base = `/tenants/${TENANT}`;
+    const { fn, calls } = fakeFetch({ [`GET ${base}/members`]: { members: [] }, [`GET ${base}/invitations`]: { invitations: [] }, [`GET ${base}/audit-events`]: { events } });
+    global.fetch = fn;
+    await ui.runAction('save-retention', form([['deploymentRetentionDays', '30']], { action: 'save-retention' }, 'general'));
+    assert.deepStrictEqual(calls[0], { method: 'PUT', url: `${base}/settings`, body: { deploymentRetentionDays: 30 } });
+    assert.ok(calls.some((c) => c.url === `${base}/audit-events`), 'the activity is reloaded');
+    assert.deepStrictEqual(ui.settingsState.auditEvents, events);
+});
+
 test('Sources: replacing the signing secret asks first; the secret activity lists who did what, escaped', async () => {
     ui.settingsState.tenantId = TENANT;
     const base = `/tenants/${TENANT}`;

@@ -1,6 +1,7 @@
 const crypto = require('crypto');
 const { setScope, withScope } = require('./scope');
 const { assertAdmin, roleOf, AlreadyMemberError } = require('./tenants');
+const { recordAuditEvent } = require('./audit-log');
 
 const INVITATION_TTL_DAYS = 7;
 const VALID_ROLES = new Set(['admin', 'member']);
@@ -48,6 +49,7 @@ async function createInvitation(pool, { tenantId, actorUserId, role }) {
              RETURNING id, role, expires_at`,
             [hashToken(token), tenantId, role, actorUserId, INVITATION_TTL_DAYS]
         );
+        await recordAuditEvent(client, { tenantId, actorUserId, kind: 'invitation_created', subject: role });
         return { id: rows[0].id, token, role: rows[0].role, expiresAt: rows[0].expires_at };
     });
 }
@@ -85,12 +87,13 @@ async function listPendingInvitations(pool, { tenantId, actorUserId }) {
 async function revokeInvitation(pool, { tenantId, actorUserId, invitationId }) {
     return withScope(pool, { tenantId }, async (client) => {
         await assertAdmin(client, { tenantId, userId: actorUserId });
-        const { rowCount } = await client.query(
+        const { rows } = await client.query(
             `UPDATE invitations SET revoked_at = now()
-             WHERE id = $1 AND tenant_id = $2 AND accepted_at IS NULL AND revoked_at IS NULL`,
+             WHERE id = $1 AND tenant_id = $2 AND accepted_at IS NULL AND revoked_at IS NULL RETURNING role`,
             [invitationId, tenantId]
         );
-        return rowCount === 1;
+        if (rows.length) await recordAuditEvent(client, { tenantId, actorUserId, kind: 'invitation_revoked', subject: rows[0].role });
+        return rows.length === 1;
     });
 }
 
@@ -162,6 +165,7 @@ async function acceptInvitation(pool, { token, userId }) {
             'INSERT INTO memberships (tenant_id, user_id, role) VALUES ($1, $2, $3)',
             [row.tenant_id, userId, row.role]
         );
+        await recordAuditEvent(client, { tenantId: row.tenant_id, actorUserId: userId, kind: 'member_joined', subject: row.role });
         return { tenant: { id: row.tenant_id, name: row.tenant_name }, role: row.role };
     });
 }

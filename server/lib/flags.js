@@ -3,7 +3,7 @@ const { withScope, setScope } = require('./scope');
 const { assertAdmin, roleOf, TenantNotFoundError } = require('./tenants');
 const { seal } = require('./secret-box');
 const { sealFor } = require('./sealed-box');
-const { recordSecretEvent } = require('./secret-audit');
+const { recordAuditEvent } = require('./audit-log');
 const {
     IngestPayloadError, checkPayload, planIngestWrites, sourceDescriptors, pickWinningValues, visibleFlagsMeta, historyRecords,
     STALE_AFTER_MINUTES, freshnessOf, freshnessByComponent, FlagSourceConfigError, checkCodeConfig, checkEndpointConfig, POLL,
@@ -175,8 +175,9 @@ async function createFlagSource(pool, { tenantId, actorUserId, name, kind, prior
             await client.query('UPDATE flag_sources SET endpoint_token_enc = $3 WHERE tenant_id = $1 AND id = $2',
                 [tenantId, row.id, sealEndpointToken({ encryptionKey, sealingKeys }, endpointToken, endpointTokenAad(tenantId, row.id))]);
             row.has_endpoint_token = true;
-            await recordSecretEvent(client, { tenantId, actorUserId, kind: 'endpoint_token_set', subject: name });
+            await recordAuditEvent(client, { tenantId, actorUserId, kind: 'endpoint_token_set', subject: name });
         }
+        await recordAuditEvent(client, { tenantId, actorUserId, kind: 'flag_source_created', subject: name });
         if (codeConfig || endpointConfig) return { source: toSource(row, scope), token: null };
         const token = await insertToken(client, { tenantId, sourceId: row.id, actorUserId, expiresInDays: tokenExpiresInDays, environments: tokenEnvironments });
         return { source: toSource(row, scope), token };
@@ -288,8 +289,9 @@ async function updateFlagSource(pool, { tenantId, actorUserId, sourceId, name, k
                 endpointConfig, endpointToken !== undefined, sealed, pollIntervalMinutes !== undefined, pollIntervalMinutes ?? null]
         ));
         if (!row) throw new FlagSourceNotFoundError('No such flag source');
+        await recordAuditEvent(client, { tenantId, actorUserId, kind: 'flag_source_updated', subject: name });
         if (endpointToken !== undefined) {
-            await recordSecretEvent(client, { tenantId, actorUserId, kind: endpointToken === null ? 'endpoint_token_removed' : 'endpoint_token_set', subject: name });
+            await recordAuditEvent(client, { tenantId, actorUserId, kind: endpointToken === null ? 'endpoint_token_removed' : 'endpoint_token_set', subject: name });
         }
         if (codeConfig && JSON.stringify(codeConfig) !== JSON.stringify(current.code_config)) {
             // A new file or reading: every environment is read again on the next pass.
@@ -310,8 +312,9 @@ async function updateFlagSource(pool, { tenantId, actorUserId, sourceId, name, k
 async function deleteFlagSource(pool, { tenantId, actorUserId, sourceId }) {
     return withScope(pool, { tenantId }, async (client) => {
         await assertAdmin(client, { tenantId, userId: actorUserId });
-        const { rowCount } = await client.query('DELETE FROM flag_sources WHERE tenant_id = $1 AND id = $2', [tenantId, sourceId]);
-        return rowCount === 1;
+        const { rows } = await client.query('DELETE FROM flag_sources WHERE tenant_id = $1 AND id = $2 RETURNING name', [tenantId, sourceId]);
+        if (rows.length) await recordAuditEvent(client, { tenantId, actorUserId, kind: 'flag_source_deleted', subject: rows[0].name });
+        return rows.length === 1;
     });
 }
 
@@ -355,10 +358,11 @@ async function listFlagSources(pool, { tenantId, actorUserId, now = new Date() }
 async function createIngestToken(pool, { tenantId, actorUserId, sourceId, expiresInDays, environments = null }) {
     return withScope(pool, { tenantId }, async (client) => {
         await assertAdmin(client, { tenantId, userId: actorUserId });
-        const { rows: source } = await client.query('SELECT origin FROM flag_sources WHERE tenant_id = $1 AND id = $2', [tenantId, sourceId]);
+        const { rows: source } = await client.query('SELECT origin, name FROM flag_sources WHERE tenant_id = $1 AND id = $2', [tenantId, sourceId]);
         if (!source.length) throw new FlagSourceNotFoundError('No such flag source');
         if (source[0].origin === 'code') throw new FlagSourceConfigError('A source read from code takes no token: ShipScope reads it from the repository');
         if (source[0].origin === 'endpoint') throw new FlagSourceConfigError('A source read from an endpoint takes no ingest token: ShipScope polls it');
+        await recordAuditEvent(client, { tenantId, actorUserId, kind: 'ingest_token_created', subject: source[0].name });
         return insertToken(client, { tenantId, sourceId, actorUserId, expiresInDays, environments });
     });
 }
@@ -373,8 +377,13 @@ async function createIngestToken(pool, { tenantId, actorUserId, sourceId, expire
 async function revokeIngestToken(pool, { tenantId, actorUserId, tokenId }) {
     return withScope(pool, { tenantId }, async (client) => {
         await assertAdmin(client, { tenantId, userId: actorUserId });
-        const { rowCount } = await client.query('DELETE FROM ingest_tokens WHERE tenant_id = $1 AND id = $2', [tenantId, tokenId]);
-        return rowCount === 1;
+        const { rows } = await client.query(
+            `DELETE FROM ingest_tokens t USING flag_sources s WHERE t.tenant_id = $1 AND t.id = $2 AND s.tenant_id = t.tenant_id AND s.id = t.source_id
+             RETURNING s.name`,
+            [tenantId, tokenId]
+        );
+        if (rows.length) await recordAuditEvent(client, { tenantId, actorUserId, kind: 'ingest_token_revoked', subject: rows[0].name });
+        return rows.length === 1;
     });
 }
 
@@ -639,6 +648,7 @@ async function setFlagDetails(pool, { tenantId, actorUserId, key, description, j
             [tenantId, key, text, keys]
         );
         if (!rowCount) throw new FlagNotFoundError(`No flag ${key}`);
+        await recordAuditEvent(client, { tenantId, actorUserId, kind: 'flag_details_changed', subject: key });
         return { key, manualDescription: text, manualJiraKeys: keys };
     });
 }

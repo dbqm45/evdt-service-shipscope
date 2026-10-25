@@ -1,5 +1,6 @@
 const { withScope } = require('./scope');
 const { assertAdmin, roleOf, TenantNotFoundError } = require('./tenants');
+const { recordAuditEvent } = require('./audit-log');
 
 /** No installation with that id is linked to this tenant (or the repo isn't tracked). */
 class InstallationNotFoundError extends Error {}
@@ -37,6 +38,7 @@ async function linkInstallation(pool, { tenantId, actorUserId, installation }) {
                  RETURNING installation_id, account_login, account_type`,
                 [tenantId, installation.installationId, installation.accountLogin, installation.accountType, actorUserId]
             );
+            await recordAuditEvent(client, { tenantId, actorUserId, kind: 'github_linked', subject: installation.accountLogin });
             return toInstallation(rows[0]);
         } catch (err) {
             // The unique constraint holds across tenants even though RLS hides the other tenant's row.
@@ -130,6 +132,7 @@ async function trackRepo(pool, { tenantId, actorUserId, installationId, repo }) 
              ON CONFLICT (tenant_id, repo_id) DO UPDATE SET full_name = EXCLUDED.full_name, installation_id = EXCLUDED.installation_id`,
             [tenantId, repo.id, installationId, repo.fullName]
         );
+        await recordAuditEvent(client, { tenantId, actorUserId, kind: 'repo_tracked', subject: repo.fullName });
         return { repoId: repo.id, fullName: repo.fullName, installationId };
     });
 }
@@ -144,9 +147,10 @@ async function trackRepo(pool, { tenantId, actorUserId, installationId, repo }) 
 async function untrackRepo(pool, { tenantId, actorUserId, repoId }) {
     return withScope(pool, { tenantId }, async (client) => {
         await assertAdmin(client, { tenantId, userId: actorUserId });
-        const { rowCount } = await client.query('DELETE FROM tracked_repos WHERE tenant_id = $1 AND repo_id = $2', [tenantId, repoId]);
+        const { rows } = await client.query('DELETE FROM tracked_repos WHERE tenant_id = $1 AND repo_id = $2 RETURNING full_name', [tenantId, repoId]);
         await client.query('DELETE FROM flag_source_repos WHERE tenant_id = $1 AND repo_id = $2', [tenantId, repoId]);
-        return rowCount === 1;
+        if (rows.length) await recordAuditEvent(client, { tenantId, actorUserId, kind: 'repo_untracked', subject: rows[0].full_name });
+        return rows.length === 1;
     });
 }
 
@@ -162,10 +166,11 @@ async function updateRepoSettings(pool, { tenantId, actorUserId, repoId, version
         await assertAdmin(client, { tenantId, userId: actorUserId });
         const { rows } = await client.query(
             `UPDATE tracked_repos SET version_file = $3, drift_ignore_paths = $4, drift = '{}'
-             WHERE tenant_id = $1 AND repo_id = $2 RETURNING version_file, drift_ignore_paths`,
+             WHERE tenant_id = $1 AND repo_id = $2 RETURNING version_file, drift_ignore_paths, full_name`,
             [tenantId, repoId, versionFile, driftIgnorePaths]
         );
         if (!rows.length) return null;
+        await recordAuditEvent(client, { tenantId, actorUserId, kind: 'repo_settings_changed', subject: rows[0].full_name });
         return { repoId, versionFile: rows[0].version_file, driftIgnorePaths: rows[0].drift_ignore_paths };
     });
 }
@@ -182,7 +187,7 @@ async function updateRepoSettings(pool, { tenantId, actorUserId, repoId, version
 async function setRepoEnvironments(pool, { tenantId, actorUserId, repoId, envMap }) {
     return withScope(pool, { tenantId }, async (client) => {
         await assertAdmin(client, { tenantId, userId: actorUserId });
-        const { rows: [current] } = await client.query('SELECT env_map FROM tracked_repos WHERE tenant_id = $1 AND repo_id = $2 FOR UPDATE', [tenantId, repoId]);
+        const { rows: [current] } = await client.query('SELECT env_map, full_name FROM tracked_repos WHERE tenant_id = $1 AND repo_id = $2 FOR UPDATE', [tenantId, repoId]);
         if (!current) return null;
         const sorted = (m) => JSON.stringify(Object.keys(m).sort().map((k) => [k.toLowerCase(), m[k]]));
         const changed = sorted(current.env_map || {}) !== sorted(envMap);
@@ -191,6 +196,7 @@ async function setRepoEnvironments(pool, { tenantId, actorUserId, repoId, envMap
              WHERE tenant_id = $1 AND repo_id = $2`,
             [tenantId, repoId, envMap, changed]
         );
+        if (changed) await recordAuditEvent(client, { tenantId, actorUserId, kind: 'repo_environments_changed', subject: current.full_name });
         return { repoId, envMap, resynced: changed };
     });
 }
@@ -205,8 +211,10 @@ async function setRepoEnvironments(pool, { tenantId, actorUserId, repoId, envMap
 async function setRepoFlagStance(pool, { tenantId, actorUserId, repoId, flagStance }) {
     return withScope(pool, { tenantId }, async (client) => {
         await assertAdmin(client, { tenantId, userId: actorUserId });
-        const { rowCount } = await client.query('UPDATE tracked_repos SET flag_stance = $3 WHERE tenant_id = $1 AND repo_id = $2', [tenantId, repoId, flagStance]);
-        return rowCount ? { repoId, flagStance } : null;
+        const { rows } = await client.query('UPDATE tracked_repos SET flag_stance = $3 WHERE tenant_id = $1 AND repo_id = $2 RETURNING full_name', [tenantId, repoId, flagStance]);
+        if (!rows.length) return null;
+        await recordAuditEvent(client, { tenantId, actorUserId, kind: 'repo_flag_stance_changed', subject: `${rows[0].full_name}: ${flagStance === 'none' ? 'no flags' : 'not said'}` });
+        return { repoId, flagStance };
     });
 }
 
@@ -221,8 +229,10 @@ async function setRepoFlagStance(pool, { tenantId, actorUserId, repoId, flagStan
 async function setRepoServiceRole(pool, { tenantId, actorUserId, repoId, serviceRole }) {
     return withScope(pool, { tenantId }, async (client) => {
         await assertAdmin(client, { tenantId, userId: actorUserId });
-        const { rowCount } = await client.query('UPDATE tracked_repos SET service_role = $3 WHERE tenant_id = $1 AND repo_id = $2', [tenantId, repoId, serviceRole]);
-        return rowCount ? { repoId, serviceRole } : null;
+        const { rows } = await client.query('UPDATE tracked_repos SET service_role = $3 WHERE tenant_id = $1 AND repo_id = $2 RETURNING full_name', [tenantId, repoId, serviceRole]);
+        if (!rows.length) return null;
+        await recordAuditEvent(client, { tenantId, actorUserId, kind: 'repo_role_changed', subject: `${rows[0].full_name}: ${serviceRole || 'not said'}` });
+        return { repoId, serviceRole };
     });
 }
 
@@ -237,11 +247,12 @@ async function setRepoServiceRole(pool, { tenantId, actorUserId, repoId, service
 async function unlinkInstallation(pool, { tenantId, actorUserId, installationId }) {
     return withScope(pool, { tenantId }, async (client) => {
         await assertAdmin(client, { tenantId, userId: actorUserId });
-        const { rowCount } = await client.query(
-            'DELETE FROM github_installations WHERE tenant_id = $1 AND installation_id = $2',
+        const { rows } = await client.query(
+            'DELETE FROM github_installations WHERE tenant_id = $1 AND installation_id = $2 RETURNING account_login',
             [tenantId, installationId]
         );
-        return rowCount === 1;
+        if (rows.length) await recordAuditEvent(client, { tenantId, actorUserId, kind: 'github_unlinked', subject: rows[0].account_login });
+        return rows.length === 1;
     });
 }
 

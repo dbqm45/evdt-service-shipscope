@@ -60,6 +60,8 @@ const settingsState = {
     endpointTest: null,
     // The workspace's secret events (who showed or replaced a secret), for admins.
     secretEvents: null,
+    // The workspace's audit log (who changed which setting), for admins.
+    auditEvents: null,
 };
 
 const tenantPath = (suffix) => `/tenants/${settingsState.tenantId}${suffix}`;
@@ -423,13 +425,13 @@ function renderSidebar({ page, tenant, admin, counts, steps, hidden = false }){
 const MEMBER_HINT = 'You are a member: only admins can change settings.';
 
 /** @param {{ workspace: { settings: object }|null, admin: boolean }} props */
-function renderGeneral({ workspace, admin }){
+function renderGeneral({ workspace, admin, auditEvents = null }){
     const page = (body) => Page({ id: 'general', section: 'workspace', title: 'General', hint: admin ? 'How long ShipScope keeps this workspace\'s history.' : MEMBER_HINT, body });
     if (!workspace) {
         return page(html`<p class="settings-loading">Loading…</p>`);
     }
     const days = workspace.settings.deploymentRetentionDays;
-    return page(Card({
+    return page(html`${Card({
         title: 'Deployment history',
         body: admin
             ? html`<p class="settings-hint">Older deployments are removed daily; each environment's latest and latest successful deployment always stay.</p>
@@ -437,7 +439,7 @@ function renderGeneral({ workspace, admin }){
                 <label>Keep deployment history (days, 7–730) <input name="deploymentRetentionDays" type="number" min="7" max="730" required value="${days}"></label>
                 <button type="submit" class="btn">Save</button></form>`
             : html`<p class="settings-hint">Deployment history is kept for ${days} days.</p>`,
-    }));
+    })}${admin ? AuditEvents(auditEvents) : ''}`);
 }
 
 /** @param {{ workspace: { members: object[], invitations: object[]|null }|null, admin: boolean, meId: string, once: object }} props */
@@ -1024,20 +1026,49 @@ function EndpointSchedule(s){
     return html`<p class="settings-row-meta">Read from its endpoint every ${every} min (and when someone opens the dashboard): last ${fmtDateTime(s.lastPolledAt)}, next ${s.nextPollAt ? fmtDateTime(s.nextPollAt) : 'within a minute'} · token ${s.hasEndpointToken ? 'stored encrypted' : 'none'}${backoff}</p>`;
 }
 
-const SECRET_EVENT_LABELS = {
+/** What each audit event says after the actor's login (lib/audit-log.js AUDIT_EVENT_KINDS); the subject follows. */
+const AUDIT_EVENT_LABELS = {
     signing_secret_viewed: 'showed the signing secret', signing_secret_rotated: 'replaced the signing secret',
     endpoint_token_set: 'set the endpoint token of', endpoint_token_removed: 'removed the endpoint token of',
     jira_connected: 'connected Jira', jira_disconnected: 'disconnected Jira',
+    workspace_created: 'created the workspace', retention_changed: 'set deployment history to',
+    invitation_created: 'created an invitation as', invitation_revoked: 'revoked an invitation as',
+    member_joined: 'joined as', member_removed: 'removed the member', member_left: 'left the workspace',
+    github_linked: 'connected the GitHub account', github_unlinked: 'disconnected the GitHub account',
+    repo_tracked: 'started tracking', repo_untracked: 'stopped tracking', repo_settings_changed: 'changed version and drift settings of',
+    repo_environments_changed: 'changed the environments of', repo_flag_stance_changed: 'changed whether flags are used in',
+    repo_role_changed: 'changed the role of',
+    flag_source_created: 'added the flag source', flag_source_updated: 'changed the flag source', flag_source_deleted: 'deleted the flag source',
+    ingest_token_created: 'created a token for', ingest_token_revoked: 'revoked a token of',
+    flag_details_changed: 'edited the flag', flag_link_accepted: 'linked the suggested issue', flag_link_dismissed: 'dismissed the suggested issue',
+    jira_site_selected: 'chose the Jira site', jira_flag_link_changed: 'set how Jira names flags:', jira_boards_changed: 'chose the Jira boards',
+    jira_board_changed: 'changed the increments of the board',
 };
+
+/** One audit event as a list row: when, who, what (never a secret). */
+function AuditEventRow(e){
+    return html`<li><span class="settings-row-meta">${fmtDateTime(e.at)}</span> ${e.actor || 'someone no longer here'} ${AUDIT_EVENT_LABELS[e.kind] || e.kind}${e.subject ? html` <strong>${e.subject}</strong>` : ''}</li>`;
+}
+
+/** The workspace's audit log (Settings → General, admins): who changed which setting, and when. */
+function AuditEvents(events){
+    if (!Array.isArray(events)) {
+        return events && events.error ? Card({ title: 'Settings activity', body: html`<p class="settings-error">${events.error}</p>` }) : '';
+    }
+    return Card({
+        title: 'Settings activity',
+        body: events.length
+            ? html`<p class="settings-hint">The latest ${events.length} changes to members, repositories, flag sources, Jira and secrets.</p><ul class="settings-list">${events.map(AuditEventRow)}</ul>`
+            : html`<p class="settings-hint">Nothing yet: every change to members, repositories, flag sources, Jira or secrets is listed here.</p>`,
+    });
+}
 
 /** The audit log of the workspace's secrets: when, who, what (never a secret). */
 function SecretEvents(events){
     if (!Array.isArray(events)) {
         return events && events.error ? html`<p class="settings-error">${events.error}</p>` : '';
     }
-    return html`<h3>Secret activity</h3>${events.length ? html`<ul class="settings-list">${events.slice(0, 20).map((e) => html`<li>
-            <span class="settings-row-meta">${fmtDateTime(e.at)}</span> ${e.actor || 'someone no longer here'} ${SECRET_EVENT_LABELS[e.kind] || e.kind}${e.subject ? html` <strong>${e.subject}</strong>` : ''}
-        </li>`)}</ul>` : html`<p class="settings-hint">Nothing yet: showing or replacing a secret, setting an endpoint token or connecting Jira is listed here.</p>`}`;
+    return html`<h3>Secret activity</h3>${events.length ? html`<ul class="settings-list">${events.slice(0, 20).map(AuditEventRow)}</ul>` : html`<p class="settings-hint">Nothing yet: showing or replacing a secret, setting an endpoint token or connecting Jira is listed here.</p>`}`;
 }
 
 function renderSources({ flags, repos, once, origin, now = new Date(), wizard = { draft: {}, found: null, preview: null, place: 'sources' }, endpointTest = null }){
@@ -1216,7 +1247,7 @@ function renderSettings(){
     const repos = (s.github && s.github.repos) || [];
     const pages = {
         'getting-started': () => renderGettingStarted({ steps }),
-        general: () => renderGeneral({ workspace: s.workspace, admin }),
+        general: () => renderGeneral({ workspace: s.workspace, admin, auditEvents: s.auditEvents }),
         members: () => renderMembers({ workspace: s.workspace, admin, meId: s.me && s.me.user.id, once: s.once }),
         github: () => renderGitHub({ enabled: s.features.githubApp, webhooks: s.features.githubWebhooks, github: s.github, installationRepos: s.installationRepos, admin, picker: s.trackPicker, editing: s.editingRepo, sources: s.flags, wizard: s.codeWizard }),
         jira: () => renderJira({ enabled: s.features.jira, webhooks: s.features.jiraWebhooks, jira: s.jira, boards: s.boards, admin, flagFields: s.flagFields }),
@@ -1286,6 +1317,11 @@ const loaders = {
         settingsState.flagList = list;
         settingsState.flags = sources;
         settingsState.secretEvents = events;
+    },
+    async activity(){
+        settingsState.auditEvents = isAdmin()
+            ? await api('GET', tenantPath('/audit-events')).then((r) => r.events, (err) => ({ error: err.message }))
+            : null;
     },
 };
 
@@ -1683,7 +1719,8 @@ async function runAction(name, el){
             if (result.ok) {
                 settingsState.messages[result.section] = { error: false, text: result.ok };
             }
-            await load(result.section);
+            // Every change an admin makes lands in the audit log, which General shows.
+            await load(...(isAdmin() && result.section !== 'activity' ? [result.section, 'activity'] : [result.section]));
             return;
         }
         rerender();
@@ -1764,7 +1801,7 @@ async function initSettings(){
 }
 
 if (typeof module !== 'undefined') {
-    module.exports = { onboardingSteps, SourceStatus, tokenState, TokenLine, renderGettingStarted, SetupCard, renderSidebar, pageFromHash, repoBadge, initials, renderGeneral, renderMembers, renderDangerZone, renderGitHub, renderJira, renderFlags, renderSourcesPage, FlagRow, formValues, actions, settingsState, runAction, load, api, ApiError };
+    module.exports = { onboardingSteps, SourceStatus, tokenState, TokenLine, renderGettingStarted, SetupCard, renderSidebar, pageFromHash, repoBadge, initials, renderGeneral, AuditEvents, AUDIT_EVENT_LABELS, renderMembers, renderDangerZone, renderGitHub, renderJira, renderFlags, renderSourcesPage, FlagRow, formValues, actions, settingsState, runAction, load, api, ApiError };
 } else if (SETTINGS_TENANT_ID) {
     initSettings();
 }
