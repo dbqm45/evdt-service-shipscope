@@ -771,7 +771,7 @@ function SourceStatus(source){
     }
     const n = source.lastIngest || { flags: 0, changed: 0, removed: 0, stale: 0 };
     return html`<span class="state-tag ok">received ${fmtDateTime(source.lastIngestAt)}</span>
-        <span class="settings-row-meta">${n.flags} flag(s), ${n.changed} changed, ${n.removed} removed${n.stale ? `, ${n.stale} older than stored` : ''}</span>`;
+        <span class="settings-row-meta">${n.flags} flag(s), ${n.changed} changed, ${n.removed} removed${n.stale ? `, ${n.stale} older than stored` : ''}${n.sender ? ` · from GitHub Actions of ${n.sender}` : ''}</span>`;
 }
 
 const FRESHNESS_LABELS = { fresh: 'confirmed', stale: 'not confirmed since', error: 'refused', unknown: 'not confirmed yet' };
@@ -790,6 +790,33 @@ function SourceFreshness(source){
 }
 
 /** The threshold field: minutes, empty = the kind's default. */
+/**
+ * A push source's GitHub Actions OIDC settings (lib/github-oidc.js): on or off, the branches/tags runs must be on, the
+ * environments they may send; when on, what the workflow needs (`id-token: write`, the source reference).
+ */
+function OidcFields({ oidc, tenantId, sourceId, origin }){
+    const envs = (oidc && oidc.environments) || ['test', 'qa', 'prod'];
+    return html`<fieldset class="settings-envs"><legend>GitHub Actions without a token</legend>
+        <label class="inline"><input type="checkbox" name="oidcEnabled" value="on" ${oidc ? raw('checked') : ''}> Runs of the services above may send with GitHub's OIDC token</label>
+        <label>Only on (branches or tags, space separated; empty = any) <input name="oidcRefs" maxlength="2000" placeholder="refs/heads/main refs/tags/v*" value="${oidc && oidc.refs ? oidc.refs.join(' ') : ''}"></label>
+        <span class="settings-row-meta">May send:</span> ${['test', 'qa', 'prod'].map((e) => html`<label class="inline"><input type="checkbox" name="oidcEnvironments" value="${e}" ${envs.includes(e) ? raw('checked') : ''}> ${e}</label>`)}
+        ${oidc ? html`<p class="settings-hint">In the workflow: <code>permissions: id-token: write</code>, and the adapter with <code>oidc: true</code> and <code>source: ${tenantId}/${sourceId}</code> (no token secret). It asks GitHub for a token for ${origin}; ShipScope checks it comes from one of the services above.</p>` : ''}
+    </fieldset>`;
+}
+
+/** The `oidc` field of a push source's form: null when off. */
+function oidcOf(values){
+    if (!(values.oidcEnabled || []).length) {
+        return null;
+    }
+    const refs = String(values.oidcRefs || '').split(/[\s,]+/).filter(Boolean);
+    const environments = values.oidcEnvironments || [];
+    if (!environments.length) {
+        throw new Error('Pick at least one environment GitHub Actions may send.');
+    }
+    return { refs: refs.length ? refs : null, environments: environments.length === 3 ? null : environments };
+}
+
 function StaleAfterInput(value){
     return html`<label>Stale after (minutes) <input name="staleAfterMinutes" type="number" min="5" max="43200" placeholder="default" value="${value ?? ''}"></label>`;
 }
@@ -1125,12 +1152,13 @@ function renderSources({ flags, repos, once, origin, now = new Date(), wizard = 
             <label>Priority <input name="priority" type="number" min="0" max="1000" required value="${s.priority}"></label>
             ${services(s.repoIds || [])}
             ${StaleAfterInput(s.staleAfterMinutes)}
+            ${OidcFields({ oidc: s.oidc, tenantId: settingsState.tenantId, sourceId: s.id, origin })}
             <button type="submit" class="btn">Save</button>
         </form>
         ${(s.repoIds || []).length ? '' : html`<p class="settings-hint">Applies to no repository: its flags are listed, but no issue status on the dashboard uses them. Tick the services it covers.</p>`}
         <div class="settings-source-status">${SourceStatus(s)}</div>
         ${SourceFreshness(s)}
-        <div class="settings-row-meta">Tokens: ${s.tokens.length ? s.tokens.map((t) => TokenLine(t, now)) : 'none — the source can\'t send anything'}</div>
+        <div class="settings-row-meta">Tokens: ${s.tokens.length ? s.tokens.map((t) => TokenLine(t, now)) : s.oidc ? 'none — only GitHub Actions send' : 'none — the source can\'t send anything'}</div>
         ${NewTokenForm(s)}
         </td><td class="actions"><button type="button" class="btn btn-danger" data-action="delete-source" data-source-id="${s.id}">Delete</button></td></tr>`));
     return html`${once.token ? SecretBox({
@@ -1658,7 +1686,7 @@ const actions = {
         }
         await api('PUT', tenantPath(`/flag-sources/${data.sourceId}`), {
             name: values.name.trim(), kind: values.kind, priority: Number(values.priority), repoIds: (values.repoIds || []).map(Number),
-            staleAfterMinutes: staleAfterOf(values.staleAfterMinutes),
+            staleAfterMinutes: staleAfterOf(values.staleAfterMinutes), oidc: oidcOf(values),
         });
         return { section: 'flags', ok: 'Saved.' };
     },
@@ -1801,7 +1829,7 @@ async function initSettings(){
 }
 
 if (typeof module !== 'undefined') {
-    module.exports = { onboardingSteps, SourceStatus, tokenState, TokenLine, renderGettingStarted, SetupCard, renderSidebar, pageFromHash, repoBadge, initials, renderGeneral, AuditEvents, AUDIT_EVENT_LABELS, renderMembers, renderDangerZone, renderGitHub, renderJira, renderFlags, renderSourcesPage, FlagRow, formValues, actions, settingsState, runAction, load, api, ApiError };
+    module.exports = { onboardingSteps, SourceStatus, tokenState, TokenLine, renderGettingStarted, SetupCard, renderSidebar, pageFromHash, repoBadge, initials, renderGeneral, AuditEvents, AUDIT_EVENT_LABELS, OidcFields, oidcOf, renderMembers, renderDangerZone, renderGitHub, renderJira, renderFlags, renderSourcesPage, FlagRow, formValues, actions, settingsState, runAction, load, api, ApiError };
 } else if (SETTINGS_TENANT_ID) {
     initSettings();
 }

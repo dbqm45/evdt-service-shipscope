@@ -1,8 +1,9 @@
 const crypto = require('crypto');
 const {
     createFlagSource, updateFlagSource, deleteFlagSource, listFlagSources, createIngestToken, revokeIngestToken, ingestFlags,
-    recordIngestError, listFlags, setFlagDetails,
+    recordIngestError, listFlags, setFlagDetails, ingestWithOidc, IngestTokenError,
 } = require('../lib/flags');
+const { OidcTokenError } = require('../lib/github-oidc');
 const { createLimiter } = require('../lib/request-limiter');
 const { testEndpoint, endpointTestResult, endpointSigning, rotateSigningSecret } = require('../lib/endpoint-flags');
 const { listSecretEvents } = require('../lib/audit-log');
@@ -22,6 +23,7 @@ class IngestRateLimitError extends Error {
         this.retryAfterSeconds = retryAfterSeconds;
     }
 }
+const UUID_HEX = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
 // The ingest contract, published as is at GET /api/flags/ingest/schema so senders can check a message before sending it.
 const INGEST_SCHEMA = require('../schemas/flags-ingest.v2.schema.json');
 
@@ -34,7 +36,7 @@ const INGEST_SCHEMA = require('../schemas/flags-ingest.v2.schema.json');
  * @param {object} ctx see web.js's buildApp() for the full shape
  */
 function registerFlagRoutes(app, ctx) {
-    const { pool, requireUser, UUID_PARAM, encryptionKey } = ctx;
+    const { pool, requireUser, UUID_PARAM, encryptionKey, oidcVerifier } = ctx;
     const sealingKeys = ctx.sealingKeys || null;
     const limiter = createLimiter(ctx.ingestRateLimit || INGEST_RATE_LIMIT);
     const testLimiter = createLimiter(ENDPOINT_TEST_LIMIT);
@@ -53,6 +55,24 @@ function registerFlagRoutes(app, ctx) {
         // Checked before anything touches the database. Keyed by a hash, so the buckets never hold a token.
         const { ok, retryAfterSeconds } = limiter.take(crypto.createHash('sha256').update(token).digest('hex'));
         if (!ok) throw new IngestRateLimitError(retryAfterSeconds);
+        // A GitHub Actions run sends an OIDC token instead, naming its source as `<tenantId>/<sourceId>`.
+        const sourceRef = request.headers['x-shipscope-source'];
+        if (sourceRef !== undefined) {
+            const ref = new RegExp(`^(${UUID_HEX})/(${UUID_HEX})$`, 'i').exec(String(sourceRef));
+            if (!ref) throw new IngestTokenError('X-ShipScope-Source must be <workspace id>/<source id>, as Settings shows it');
+            if (!oidcVerifier) throw new IngestTokenError('This server takes no GitHub Actions tokens (PUBLIC_BASE_URL is not set)');
+            let identity;
+            try {
+                identity = await oidcVerifier.verify(token);
+            } catch (err) {
+                if (err instanceof OidcTokenError) throw new IngestTokenError(`Invalid GitHub Actions token: ${err.message}`);
+                throw err;
+            }
+            if (request.validationError) throw request.validationError;
+            const result = await ingestWithOidc(pool, { identity, tenantId: ref[1].toLowerCase(), sourceId: ref[2].toLowerCase(), payload: request.body });
+            request.log.info({ source: result.source, sender: identity.repository, ref: identity.ref, flags: result.flags, changed: result.changed, removed: result.removed, stale: result.stale }, 'flag message accepted');
+            return result;
+        }
         if (request.validationError) {
             await recordIngestError(pool, { token, message: request.validationError.message })
                 .catch((err) => request.log.warn({ err: err.message }, 'could not record a refused flag message'));
@@ -89,6 +109,18 @@ function registerFlagRoutes(app, ctx) {
             endpointToken: ENDPOINT_TOKEN,
             // How often ShipScope polls it; null = every 5 minutes (lib/flags-logic.js POLL).
             pollIntervalMinutes: { anyOf: [{ type: 'null' }, { type: 'integer', minimum: 2, maximum: 1440 }] },
+            // Whether GitHub Actions runs of its services may send with an OIDC token (push sources; null = off);
+            // checked further by checkOidcConfig().
+            oidc: {
+                anyOf: [{ type: 'null' }, {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                        refs: { anyOf: [{ type: 'null' }, { type: 'array', minItems: 1, maxItems: 20, uniqueItems: true, items: { type: 'string', minLength: 1, maxLength: 220 } }] },
+                        environments: TOKEN_ENVIRONMENTS,
+                    },
+                }],
+            },
             ...extra,
         },
     });

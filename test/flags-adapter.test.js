@@ -185,6 +185,30 @@ test('run: errors are AdapterErrors with the reason', async () => {
     await assert.rejects(run({ env: 'qa', url: 'https://app/flags', dryRun: true }, { ...io, fetch }), /https:\/\/app\/flags answered 404/);
 });
 
+test('run with oidc: asks GitHub Actions for a token for the ShipScope origin and names the source; no token secret', async () => {
+    write('flags.json', '{"a":true}');
+    const SOURCE = '11111111-2222-3333-4444-555555555555/66666666-7777-8888-9999-000000000000';
+    const fetch = fakeFetch({
+        'https://gh.actions/token?api-version=2.0&audience=https%3A%2F%2Fship.example.com': { status: 200, body: { value: 'eyJ.oidc.jwt' } },
+        'https://ship.example.com/app/api/flags/ingest': { status: 200, body: INGESTED },
+    });
+    const idTokenRequest = { url: 'https://gh.actions/token?api-version=2.0', token: 'job-request-token' };
+    const { result } = await run({ env: 'prod', files: ['flags.json'], shipscopeUrl: 'https://ship.example.com/app', oidc: true, source: SOURCE, idTokenRequest }, { fetch, cwd: DIR, log: quiet });
+    assert.deepEqual(result, INGESTED);
+    assert.equal(fetch.calls[0].init.headers.authorization, 'bearer job-request-token');
+    assert.equal(fetch.calls[1].init.headers.authorization, 'Bearer eyJ.oidc.jwt');
+    assert.equal(fetch.calls[1].init.headers['x-shipscope-source'], SOURCE);
+
+    const io = { fetch, cwd: DIR, log: quiet };
+    await assert.rejects(run({ env: 'prod', files: ['flags.json'], shipscopeUrl: 'https://ship.example.com', oidc: true, source: SOURCE, idTokenRequest: {} }, io), /permissions: id-token: write/);
+    await assert.rejects(run({ env: 'prod', files: ['flags.json'], shipscopeUrl: 'https://ship.example.com', oidc: true, source: 'web-ci', idTokenRequest }, io), /<workspace id>\/<source id>/);
+    await assert.rejects(run({ env: 'prod', files: ['flags.json'], shipscopeUrl: 'https://other.example.com', oidc: true, source: SOURCE, idTokenRequest }, io), /GitHub did not give an OIDC token \(HTTP 404\)/);
+    const inputs = optionsFromInputs({ INPUT_OIDC: 'true', INPUT_SOURCE: SOURCE, ACTIONS_ID_TOKEN_REQUEST_URL: 'https://gh', ACTIONS_ID_TOKEN_REQUEST_TOKEN: 't' });
+    assert.deepEqual([inputs.oidc, inputs.source, inputs.idTokenRequest], [true, SOURCE, { url: 'https://gh', token: 't' }]);
+    const args = optionsFromArgs(['--env', 'qa', '--file', 'a.json', '--oidc'], { SHIPSCOPE_FLAGS_SOURCE: SOURCE });
+    assert.deepEqual([args.oidc, args.source], [true, SOURCE]);
+});
+
 test('run: a 429 or 503 is retried after the Retry-After ShipScope sends (bounded), a few times', async () => {
     write('flags.json', '{"a":true}');
     const answers = [
@@ -217,6 +241,7 @@ test('command line: options from arguments and environment; --help; exit code 1 
         { SHIPSCOPE_URL: 'https://s', SHIPSCOPE_FLAGS_TOKEN: 'shpi_t' }), {
         env: 'prod', files: ['a.json', 'b/*.json'], envMap: undefined, url: undefined, headers: { 'X-A': '1' }, format: undefined, path: undefined,
         valuePath: 'enabled', keyField: undefined, rolloutPath: undefined, prefix: undefined, changedBy: undefined, complete: false, dryRun: false, shipscopeUrl: 'https://s', token: 'shpi_t',
+        oidc: false, source: undefined, idTokenRequest: { url: undefined, token: undefined },
     });
     assert.deepEqual(optionsFromArgs(['--file', 'f/{env}.ts', '--env-map', 'dev=test,prod=prod', '--env-map', 'uat=qa'], {}).envMap, { dev: 'test', prod: 'prod', uat: 'qa' });
     assert.equal(optionsFromArgs(['--help'], {}), null);
@@ -238,6 +263,7 @@ test('GitHub Action: inputs as INPUT_* variables, outputs appended to GITHUB_OUT
     assert.deepEqual(options, {
         env: 'prod', files: ['config/a.json', 'config/b.json'], envMap: undefined, url: undefined, headers: {}, format: undefined, path: undefined,
         valuePath: 'enabled', keyField: undefined, rolloutPath: undefined, prefix: undefined, changedBy: undefined, complete: true, dryRun: true, shipscopeUrl: 'https://s', token: 'shpi_t',
+        oidc: false, source: undefined, idTokenRequest: { url: undefined, token: undefined },
     });
     assert.throws(() => optionsFromInputs({ 'INPUT_DRY-RUN': 'yes' }), /input dry-run must be true or false/);
     assert.deepEqual(optionsFromInputs({ 'INPUT_FILES': 'f/{env}.ts', 'INPUT_ENV-MAP': 'dev=test\nprod=prod' }).envMap, { dev: 'test', prod: 'prod' });

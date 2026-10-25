@@ -29,7 +29,9 @@ Two entry points over one implementation (`lib.js`), no dependencies:
 | `complete: false` | `--changes-only` | Send only these flags and remove none. Default: the message is the full state for the environment, so flags it no longer lists are removed. |
 | `dry-run: true` | `--dry-run` | Print the message, send nothing (no URL or token needed). |
 | `shipscope-url` | `--shipscope-url` or `$SHIPSCOPE_URL` | The ShipScope server. |
-| `token` | `--token` or `$SHIPSCOPE_FLAGS_TOKEN` | The flag source's ingest token; pass it from a secret. |
+| `token` | `--token` or `$SHIPSCOPE_FLAGS_TOKEN` | The flag source's ingest token; pass it from a secret. Not with `oidc`. |
+| `oidc: true` | `--oidc` | In a GitHub Actions job with `permissions: id-token: write`: ask GitHub for a short-lived OIDC token for the ShipScope origin and send it instead of `token`. The source must take GitHub Actions tokens (Settings → Sources) and cover this repository. |
+| `source` | `--source` or `$SHIPSCOPE_FLAGS_SOURCE` | With `oidc`: the source as Settings shows it, `<workspace id>/<source id>` (not a secret). |
 
 Action outputs: `flags` (flags in the message), `changed`, `removed` (0 on a dry run).
 

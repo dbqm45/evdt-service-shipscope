@@ -25,6 +25,8 @@ function optionsFromInputs(env) {
         keyField: input('key-field') || undefined, rolloutPath: input('rollout-path') || undefined,
         prefix: input('prefix') || undefined, changedBy: input('changed-by') || undefined, complete: flag('complete', true),
         dryRun: flag('dry-run', false), shipscopeUrl: input('shipscope-url'), token: input('token'),
+        oidc: flag('oidc', false), source: input('source') || undefined,
+        idTokenRequest: { url: env.ACTIONS_ID_TOKEN_REQUEST_URL, token: env.ACTIONS_ID_TOKEN_REQUEST_TOKEN },
     };
 }
 

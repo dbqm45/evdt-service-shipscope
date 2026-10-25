@@ -406,7 +406,35 @@ function parseHeaders(lines) {
  * @property {boolean} [dryRun] build and print the message, send nothing
  * @property {string} [shipscopeUrl] the ShipScope server, e.g. https://shipscope.example.com
  * @property {string} [token] the flag source's ingest token (shpi_...)
+ * @property {boolean} [oidc] in a GitHub Actions job with `id-token: write`: send GitHub's OIDC token instead of a token
+ * @property {string} [source] with `oidc`, the source as Settings shows it: <workspace id>/<source id>
+ * @property {{ url?: string, token?: string }} [idTokenRequest] with `oidc`: ACTIONS_ID_TOKEN_REQUEST_URL and _TOKEN
  */
+
+const SOURCE_REF = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Asks GitHub Actions for an OIDC token addressed to the ShipScope server (`audience` = its origin), as
+ * actions/core getIDToken() does: GET the job's request URL with `audience`, bearer the job's request token.
+ *
+ * @param {{ url?: string, token?: string }} request ACTIONS_ID_TOKEN_REQUEST_URL and ACTIONS_ID_TOKEN_REQUEST_TOKEN
+ * @param {string} audience
+ * @param {typeof fetch} doFetch
+ * @returns {Promise<string>}
+ * @throws {AdapterError}
+ */
+async function requestIdToken(request, audience, doFetch) {
+    if (!request || !request.url || !request.token) {
+        throw new AdapterError('no GitHub Actions OIDC token: run in a GitHub Actions job with "permissions: id-token: write"');
+    }
+    const url = new URL(request.url);
+    url.searchParams.set('audience', audience);
+    const res = await doFetch(url, { headers: { authorization: `bearer ${request.token}`, accept: 'application/json' } });
+    if (!res.ok) throw new AdapterError(`GitHub did not give an OIDC token (HTTP ${res.status})`);
+    const body = await res.text().then(JSON.parse).catch(() => null);
+    if (!body || typeof body.value !== 'string' || !body.value) throw new AdapterError('GitHub gave no OIDC token');
+    return body.value;
+}
 
 /**
  * Reads the flags, builds the message and (unless `dryRun`) posts it.
@@ -454,12 +482,26 @@ async function run(options, { fetch: doFetch = globalThis.fetch, cwd = process.c
         log(`Dry run: ${flagCount} flags for ${envList}, nothing sent.`);
         return { payload, result: null };
     }
-    const { shipscopeUrl, token } = options;
+    const { shipscopeUrl, oidc = false, source } = options;
     if (!shipscopeUrl) throw new AdapterError('the ShipScope URL is missing (SHIPSCOPE_URL)');
-    if (!token) throw new AdapterError('the ingest token is missing (SHIPSCOPE_FLAGS_TOKEN)');
+    let token = options.token;
+    const extraHeaders = {};
+    if (oidc) {
+        if (!source || !SOURCE_REF.test(source)) throw new AdapterError('with oidc, give the source as Settings shows it: <workspace id>/<source id>');
+        let audience;
+        try {
+            audience = new URL(shipscopeUrl).origin;
+        } catch {
+            throw new AdapterError(`the ShipScope URL is not a URL: ${shipscopeUrl}`);
+        }
+        token = await requestIdToken(options.idTokenRequest, audience, doFetch);
+        extraHeaders['x-shipscope-source'] = source;
+    } else if (!token) {
+        throw new AdapterError('the ingest token is missing (SHIPSCOPE_FLAGS_TOKEN), or use oidc in GitHub Actions');
+    }
     const send = () => doFetch(`${shipscopeUrl.replace(/\/+$/, '')}/api/flags/ingest`, {
         method: 'POST',
-        headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', ...extraHeaders },
         body: JSON.stringify(payload),
     });
     let res = await send();
@@ -485,5 +527,5 @@ const defaultSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 module.exports = {
     AdapterError, ENVIRONMENTS, toState, pick, formatOf, parseDocument, flagMap, mergeStates, buildPayload, expandFiles, envPatternRegExp,
-    parseEnvMap, parseHeaders, run,
+    parseEnvMap, parseHeaders, requestIdToken, run,
 };
