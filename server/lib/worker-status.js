@@ -12,7 +12,7 @@ const QUEUE_MAX_AGE_MS = 10 * 60_000;
  * Records one run of a worker job: always when it ran; when it succeeded, or the error.
  *
  * @param {import('pg').Pool} pool
- * @param {{ job: 'heartbeat'|'deployments'|'jira'|'webhooks'|'cleanup', ok: boolean, error?: string|null, details?: object, now?: Date }} input
+ * @param {{ job: 'heartbeat'|'deployments'|'jira'|'flags'|'webhooks'|'cleanup', ok: boolean, error?: string|null, details?: object, now?: Date }} input
  * @returns {Promise<void>}
  */
 async function recordRun(pool, { job, ok, error = null, details = {}, now = new Date() }) {
@@ -33,7 +33,7 @@ async function recordRun(pool, { job, ok, error = null, details = {}, now = new 
  * (a sync: three intervals plus five minutes); it warns when the job succeeds but some tenants' syncs fail.
  * `status` is `down` when any check fails, `degraded` when one warns, else `ok`.
  *
- * @param {{ rows: Array<{ job: string, last_run_at: Date, last_ok_at: Date|null, last_error: string|null, last_error_at: Date|null, details: object }>, queue: { pending: number, oldestAt: Date|null }, expect: { deployments: boolean, jira: boolean }, syncIntervalMinutes: number, now: Date }} input
+ * @param {{ rows: Array<{ job: string, last_run_at: Date, last_ok_at: Date|null, last_error: string|null, last_error_at: Date|null, details: object }>, queue: { pending: number, oldestAt: Date|null }, expect: { deployments: boolean, jira: boolean, flags?: boolean }, syncIntervalMinutes: number, now: Date }} input
  * @returns {{ status: 'ok'|'degraded'|'down', checks: Object<string, { status: 'ok'|'warn'|'fail', [key: string]: any }> }}
  */
 function judgeWorker({ rows, queue, expect, syncIntervalMinutes, now }) {
@@ -47,7 +47,7 @@ function judgeWorker({ rows, queue, expect, syncIntervalMinutes, now }) {
         status: heartbeat?.last_ok_at && now - heartbeat.last_ok_at <= HEARTBEAT_MAX_AGE_MS ? 'ok' : 'fail',
         lastOkSecondsAgo: age(heartbeat?.last_ok_at),
     };
-    for (const job of ['deployments', 'jira']) {
+    for (const job of ['deployments', 'jira', 'flags']) {
         if (!expect[job]) continue;
         const row = byJob.get(job);
         const failedTenants = Number(row?.details?.failed || 0);
@@ -61,7 +61,7 @@ function judgeWorker({ rows, queue, expect, syncIntervalMinutes, now }) {
             ...(row?.last_error_at && (!row.last_ok_at || row.last_error_at > row.last_ok_at) ? { lastErrorSecondsAgo: age(row.last_error_at) } : {}),
         };
     }
-    if (expect.deployments || expect.jira) {
+    if (expect.deployments || expect.jira || expect.flags) {
         const oldest = queue.oldestAt ? now - queue.oldestAt : 0;
         checks.webhookQueue = { status: oldest > QUEUE_MAX_AGE_MS ? 'fail' : 'ok', pending: queue.pending, oldestSecondsAgo: age(queue.oldestAt) };
     }
@@ -75,7 +75,7 @@ function judgeWorker({ rows, queue, expect, syncIntervalMinutes, now }) {
  * Reads what judgeWorker() needs.
  *
  * @param {import('pg').Pool} pool
- * @param {{ expect: { deployments: boolean, jira: boolean }, syncIntervalMinutes: number, now?: Date }} input
+ * @param {{ expect: { deployments: boolean, jira: boolean, flags?: boolean }, syncIntervalMinutes: number, now?: Date }} input
  * @returns {Promise<ReturnType<typeof judgeWorker>>}
  */
 async function workerHealth(pool, { expect, syncIntervalMinutes, now = new Date() }) {

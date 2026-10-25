@@ -350,6 +350,26 @@ function checkEndpointConfig(endpoint, { kind }) {
     return out;
 }
 
+// How endpoint sources are polled (lib/flag-poll.js): every `defaultMinutes` unless the source sets its own interval
+// (never under `minMinutes`), ±`jitter` so sources set up together spread out; after consecutive failures the wait
+// doubles up to `maxBackoffMinutes`. A tick reads at most `perTenantPerTick` sources of one tenant, a tenant has at most
+// `maxSources` endpoint sources, and a dashboard opened asks again only for sources not read in `onDemandMinutes`.
+const POLL = { defaultMinutes: 5, minMinutes: 2, maxBackoffMinutes: 60, jitter: 0.1, perTenantPerTick: 10, maxSources: 20, onDemandMinutes: 1 };
+
+/**
+ * When an endpoint source is read next: its interval after a success, a doubling backoff after `failures` consecutive
+ * failures (capped), each with jitter.
+ *
+ * @param {{ now: Date, intervalMinutes: number|null, failures: number, random?: () => number }} input
+ * @returns {Date}
+ */
+function nextPollAt({ now, intervalMinutes, failures, random = Math.random }) {
+    const interval = Math.max(POLL.minMinutes, intervalMinutes || POLL.defaultMinutes);
+    const minutes = failures > 0 ? Math.min(interval * 2 ** failures, Math.max(interval, POLL.maxBackoffMinutes)) : interval;
+    const jitter = 1 + POLL.jitter * (2 * random() - 1);
+    return new Date(now.getTime() + minutes * jitter * 60_000);
+}
+
 /** Minutes a confirmation stays fresh when the source sets no threshold: a runtime value can change any time, a
  *  build value only with a deployment (null = never stale). */
 const STALE_AFTER_MINUTES = { runtime: 24 * 60, build: null };
@@ -399,6 +419,8 @@ module.exports = {
     codeFileFor,
     codeFileFormat,
     checkEndpointConfig,
+    POLL,
+    nextPollAt,
     STALE_AFTER_MINUTES,
     freshnessOf,
     freshnessByComponent,

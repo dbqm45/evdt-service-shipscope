@@ -1,8 +1,9 @@
 const { createPool, checkConnection } = require('./lib/db');
-const { loadGitHubAppConfig, loadAtlassianConfig } = require('./lib/config');
+const { loadGitHubAppConfig, loadAtlassianConfig, loadEncryptionKey } = require('./lib/config');
 const { syncAllJira } = require('./lib/jira-sync');
 const { syncAll } = require('./lib/deployment-sync');
 const { cleanupAll } = require('./lib/retention');
+const { pollEndpoints } = require('./lib/flag-poll');
 const { pendingSyncRequests, finishSyncRequests } = require('./lib/webhooks');
 const { recordRun } = require('./lib/worker-status');
 const { createLogger, logLevel, logProcessFailures } = require('./lib/log');
@@ -11,12 +12,14 @@ const { APP_VERSION } = require('./lib/version');
 const HEARTBEAT_INTERVAL_MS = 30_000;
 const WEBHOOK_INTERVAL_MS = 30_000; // how often webhook-requested syncs are picked up
 const CLEANUP_INTERVAL_MS = 24 * 3600_000;
+const FLAGS_INTERVAL_MS = 60_000; // how often due endpoint sources are looked for (each has its own interval)
 const DEFAULT_SYNC_INTERVAL_MINUTES = 15;
 const DEFAULT_TENANT_BUDGET_SECONDS = 120;
 // Postgres advisory lock keys: one sync and one cleanup at a time, even with more than one worker instance.
 const SYNC_LOCK = 727_001;
 const CLEANUP_LOCK = 727_002;
 const JIRA_LOCK = 727_003;
+const FLAGS_LOCK = 727_004;
 
 const defaultLogger = createLogger({ service: 'worker', level: logLevel(process.env), base: { version: APP_VERSION } });
 
@@ -135,19 +138,30 @@ async function jiraTick(pool, atlassian, logger = defaultLogger, deps = { syncAl
     });
 }
 
+/** One pass over the endpoint sources that are due (lib/flag-poll.js), never overlapping another or a dashboard's request. */
+async function flagsTick(pool, encryptionKey, logger = defaultLogger, deps = { pollEndpoints }) {
+    await runJob(pool, {
+        job: 'flags', lock: FLAGS_LOCK, logger, deps,
+        run: () => deps.pollEndpoints({ pool, encryptionKey, log: syncLogger(logger.child({ job: 'flags' })) }),
+        summary: (r) => `flags poll done: ${r.sources} endpoint source(s) in ${r.tenants} tenant(s), ${r.failed} failed`,
+    });
+}
+
 /**
  * Picks up what webhooks asked for (migration 013) and syncs just that: the named repos, the named Jira
  * connections. Under the same locks as the periodic syncs, so never alongside one; a request that couldn't run
  * (lock held, or the sync failed as a whole) stays queued for the next tick. Errors are logged, never thrown; the
  * tick is recorded as one job (`webhooks`), failed when any source failed.
  */
-async function webhookTick(pool, { app, atlassian, tenantBudgetMs = DEFAULT_TENANT_BUDGET_SECONDS * 1000 }, logger = defaultLogger, deps = { syncAll, syncAllJira }) {
+async function webhookTick(pool, { app, atlassian, encryptionKey = null, tenantBudgetMs = DEFAULT_TENANT_BUDGET_SECONDS * 1000 }, logger = defaultLogger, deps = { syncAll, syncAllJira, pollEndpoints }) {
     const log = logger.child({ job: 'webhooks' });
     const sources = [
         app && ['github', SYNC_LOCK, (requests) => deps.syncAll({
             pool, app, log: syncLogger(log), options: { tenantBudgetMs }, repoIds: requests.map((r) => Number(r.key)).filter(Number.isSafeInteger),
         })],
         atlassian && ['jira', JIRA_LOCK, (requests) => deps.syncAllJira({ pool, atlassian, log: syncLogger(log), tenantBudgetMs, keys: requests.map((r) => r.key) })],
+        // A dashboard was opened: its tenant's endpoint sources, unless just read (lib/flag-poll.js onDemand).
+        encryptionKey && ['flags', FLAGS_LOCK, (requests) => deps.pollEndpoints({ pool, encryptionKey, log: syncLogger(log), tenantIds: requests.map((r) => r.key), onDemand: true })],
     ].filter(Boolean);
     const errors = [];
     const handled = {};
@@ -202,7 +216,14 @@ if (require.main === module) {
     } else {
         defaultLogger.warn('ATLASSIAN_* not set: Jira sync is off');
     }
-    if (app || atlassian) timers.push(setInterval(() => webhookTick(pool, { app, atlassian, tenantBudgetMs: budgetMs }), WEBHOOK_INTERVAL_MS));
+    const encryptionKey = loadEncryptionKey(process.env);
+    if (encryptionKey) {
+        timers.push(setInterval(() => flagsTick(pool, encryptionKey), FLAGS_INTERVAL_MS));
+        flagsTick(pool, encryptionKey);
+    } else {
+        defaultLogger.warn('TOKEN_ENCRYPTION_KEY not set: flags from endpoints are off');
+    }
+    if (app || atlassian || encryptionKey) timers.push(setInterval(() => webhookTick(pool, { app, atlassian, encryptionKey, tenantBudgetMs: budgetMs }), WEBHOOK_INTERVAL_MS));
     timers.push(setInterval(() => cleanupTick(pool), CLEANUP_INTERVAL_MS));
     cleanupTick(pool);
 
@@ -213,4 +234,4 @@ if (require.main === module) {
     });
 }
 
-module.exports = { heartbeatTick, runExclusive, syncIntervalMinutes, tenantBudgetSeconds, syncTick, jiraTick, webhookTick, cleanupTick };
+module.exports = { heartbeatTick, runExclusive, syncIntervalMinutes, tenantBudgetSeconds, syncTick, jiraTick, flagsTick, webhookTick, cleanupTick };

@@ -97,7 +97,7 @@ function jiraSyncKeys(payload) {
  * Records sync requests; a key already waiting just gets the newer time.
  *
  * @param {import('pg').Pool} pool
- * @param {{ source: 'github'|'jira', keys: string[] }} input
+ * @param {{ source: 'github'|'jira'|'flags', keys: string[] }} input
  * @returns {Promise<void>}
  */
 async function requestSync(pool, { source, keys }) {
@@ -113,7 +113,7 @@ async function requestSync(pool, { source, keys }) {
  * The waiting requests of one source, as a snapshot to finish with finishSyncRequests().
  *
  * @param {import('pg').Pool} pool
- * @param {'github'|'jira'} source
+ * @param {'github'|'jira'|'flags'} source
  * @returns {Promise<Array<{ key: string, requestedAt: Date }>>}
  */
 async function pendingSyncRequests(pool, source) {
@@ -125,7 +125,7 @@ async function pendingSyncRequests(pool, source) {
  * Removes the requests a sync handled; one asked for again since the snapshot (a newer time) stays for the next round.
  *
  * @param {import('pg').Pool} pool
- * @param {'github'|'jira'} source
+ * @param {'github'|'jira'|'flags'} source
  * @param {Array<{ key: string, requestedAt: Date }>} handled
  * @returns {Promise<void>}
  */
