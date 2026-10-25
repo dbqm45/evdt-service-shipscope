@@ -4,7 +4,8 @@ const {
     recordIngestError, listFlags, setFlagDetails,
 } = require('../lib/flags');
 const { createLimiter } = require('../lib/request-limiter');
-const { testEndpoint, endpointSigning } = require('../lib/endpoint-flags');
+const { testEndpoint, endpointSigning, rotateSigningSecret } = require('../lib/endpoint-flags');
+const { listSecretEvents } = require('../lib/secret-audit');
 const { answerLinkSuggestion } = require('../lib/flag-link-suggestions');
 const { CODE_CONFIG, ENDPOINT_CONFIG, ENDPOINT_TOKEN } = require('../schemas/flag-code-config');
 
@@ -167,6 +168,18 @@ function registerFlagRoutes(app, ctx) {
         preHandler: requireUser,
         schema: { params: tenantOnlyParams },
     }, async (request) => endpointSigning(pool, { tenantId: request.params.tenantId, actorUserId: request.user.id, encryptionKey }));
+
+    // A new signing secret for the workspace (a leaked one): shown once; the old one stops working at once.
+    app.post('/tenants/:tenantId/flag-endpoint-signing/rotate', {
+        preHandler: requireUser,
+        schema: { params: tenantOnlyParams },
+    }, async (request) => rotateSigningSecret(pool, { tenantId: request.params.tenantId, actorUserId: request.user.id, encryptionKey }));
+
+    // Who showed or replaced the signing secret, set or removed an endpoint token, connected Jira (admins only).
+    app.get('/tenants/:tenantId/secret-events', {
+        preHandler: requireUser,
+        schema: { params: tenantOnlyParams },
+    }, async (request) => ({ events: await listSecretEvents(pool, { tenantId: request.params.tenantId, actorUserId: request.user.id }) }));
 
     app.delete('/tenants/:tenantId/flag-sources/:sourceId', {
         preHandler: requireUser,

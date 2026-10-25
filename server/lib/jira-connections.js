@@ -1,3 +1,4 @@
+const { recordSecretEvent } = require('./secret-audit');
 const { withScope } = require('./scope');
 const { assertAdmin, roleOf, TenantNotFoundError } = require('./tenants');
 const { seal, open, SecretBoxError } = require('./secret-box');
@@ -38,6 +39,7 @@ async function saveConnection(pool, { tenantId, actorUserId, refreshToken, scope
             [tenantId, seal(encryptionKey, refreshToken, tenantId), scopes, JSON.stringify(sites), site?.cloudId ?? null, site?.url ?? null, site?.name ?? null, actorUserId]
         );
         if (previous && previous.cloud_id !== (site?.cloudId ?? null)) await forgetSiteData(client, tenantId);
+        await recordSecretEvent(client, { tenantId, actorUserId, kind: 'jira_connected', subject: site?.name ?? null });
         return { siteChosen: Boolean(site) };
     });
 }
@@ -122,6 +124,7 @@ async function disconnect(pool, { tenantId, actorUserId }) {
     return withScope(pool, { tenantId }, async (client) => {
         await assertAdmin(client, { tenantId, userId: actorUserId });
         const { rowCount } = await client.query('DELETE FROM jira_connections WHERE tenant_id = $1', [tenantId]);
+        if (rowCount) await recordSecretEvent(client, { tenantId, actorUserId, kind: 'jira_disconnected' });
         return rowCount === 1;
     });
 }
