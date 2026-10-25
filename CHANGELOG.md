@@ -7,6 +7,12 @@ dashboard, not a published package), so entries are grouped by date instead. See
 ShipScope is, `CLAUDE.md` for the technical reference, and `FAQ.md` for how specific numbers/badges are
 calculated.
 
+## [0.2.35] - 2026-10-25
+
+### Added
+
+- **SHP:** rotate TOKEN_ENCRYPTION_KEY without reconnecting anything (#92)
+
 ## [0.2.34] - 2026-10-25
 
 ### Added
