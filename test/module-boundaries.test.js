@@ -77,6 +77,17 @@ test('findBoundaryViolations: adapters/ reaching into scripts/ or server/ is a v
     assert.deepEqual(violations.map((v) => [v.file, v.line]), [[path.join('adapters', 'flags', 'bad.js'), 2], [path.join('adapters', 'flags', 'bad.js'), 1]]);
 });
 
+test('findBoundaryViolations: server/ may use the adapter\'s readers (adapters/flags/lib.js) and nothing else of it', () => {
+    write('server/lib/flag-file-worker.js', "const { parseDocument } = require('../../adapters/flags/lib');\nconst lib = require('../../adapters/flags/lib.js');\n");
+    write('server/lib/bad.js', "const { run } = require('../../adapters/flags/action');\nconst y = require('../../adapters/flags/yaml');\n");
+    write('adapters/flags/lib.js', 'module.exports = {};\n');
+    write('docs/app-core.js', '// nothing here\n');
+
+    const violations = findBoundaryViolations(path.resolve(DIR));
+
+    assert.deepEqual(violations.map((v) => [v.file, v.line]), [[path.join('server', 'lib', 'bad.js'), 1], [path.join('server', 'lib', 'bad.js'), 2]]);
+});
+
 test('findBoundaryViolations: npm packages and Node builtins are never flagged', () => {
     write('scripts/ok.js', "const fs = require('fs');\nconst { createPool } = require('pg');\n");
     write('server/lib/ok.js', "const Fastify = require('fastify');\n");

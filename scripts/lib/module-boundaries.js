@@ -45,7 +45,9 @@ function isInside(resolved, root) {
  * root `scripts/` (file-based sync, zero npm dependencies) must never require from `server/` (the SaaS
  * backend, which has its own `package.json`/`node_modules`) and vice versa, and `docs/app-*.js` (classic
  * `<script>` tags, no CommonJS at all, loaded straight into a browser) must never call `require()`. `adapters/`
- * (the flags adapter, run from other teams' pipelines on its own) never requires from `scripts/` or `server/`.
+ * (the flags adapter, run from other teams' pipelines on its own) never requires from `scripts/` or `server/`;
+ * `server/` may use only the adapter's readers (`adapters/flags/lib.js`, which ShipScope runs on customers' files in
+ * an isolated thread, `server/lib/flag-file-parser.js`), never its CLI or Action.
  *
  * @param {string} repoRoot absolute path to the repository root
  * @returns {Array<{ file: string, line: number, text: string }>} relative-to-`repoRoot` violations, if any
@@ -69,6 +71,14 @@ function findBoundaryViolations(repoRoot) {
 
     forbid(listJsFiles(scriptsRoot), serverRoot);
     forbid(listJsFiles(serverRoot, ['node_modules']), scriptsRoot);
+    const adapterReaders = path.join(adaptersRoot, 'flags', 'lib');
+    for (const file of listJsFiles(serverRoot, ['node_modules'])) {
+        for (const req of relativeRequiresIn(file)) {
+            if (isInside(req.resolved, adaptersRoot) && req.resolved.replace(/\.js$/, '') !== adapterReaders) {
+                violations.push({ file: path.relative(repoRoot, file), line: req.line, text: req.text });
+            }
+        }
+    }
     forbid(listJsFiles(adaptersRoot), scriptsRoot);
     forbid(listJsFiles(adaptersRoot), serverRoot);
 
