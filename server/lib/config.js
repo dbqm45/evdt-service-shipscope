@@ -81,18 +81,26 @@ function parseEncryptionKey(value) {
 }
 
 /**
- * The key that seals stored customer secrets (Jira refresh tokens, endpoint tokens) and derives each tenant's
- * endpoint signing secret: TOKEN_ENCRYPTION_KEY, optional (without it Jira and endpoint sources are off).
+ * The key that seals stored customer secrets (Jira refresh tokens, endpoint tokens, signing secrets):
+ * TOKEN_ENCRYPTION_KEY, optional (without it Jira and endpoint sources are off). While a key is being rotated
+ * (server/README.md, "Rotating TOKEN_ENCRYPTION_KEY"), TOKEN_ENCRYPTION_KEY_PREVIOUS lists the old ones, comma
+ * separated, newest first: values sealed with them stay readable until the worker re-seals them (lib/secret-rotation.js).
  *
  * @param {NodeJS.ProcessEnv} env
- * @returns {Buffer|null}
- * @throws {Error} set but not 32 base64-encoded bytes
+ * @returns {Buffer|{ current: Buffer, previous: Buffer[] }|null} the key alone when there are no previous ones
+ * @throws {Error} a key set but not 32 base64-encoded bytes, or previous keys without a current one
  */
 function loadEncryptionKey(env) {
-    if (!env.TOKEN_ENCRYPTION_KEY) return null;
+    const previous = (env.TOKEN_ENCRYPTION_KEY_PREVIOUS || '').split(',').map((k) => k.trim()).filter(Boolean);
+    if (!env.TOKEN_ENCRYPTION_KEY) {
+        if (previous.length) throw new Error('Invalid configuration: TOKEN_ENCRYPTION_KEY_PREVIOUS is set but TOKEN_ENCRYPTION_KEY is not');
+        return null;
+    }
     const key = parseEncryptionKey(env.TOKEN_ENCRYPTION_KEY);
     if (!key) throw new Error(`Invalid configuration: ${BAD_KEY}`);
-    return key;
+    const old = previous.map(parseEncryptionKey);
+    if (old.some((k) => !k)) throw new Error('Invalid configuration: every TOKEN_ENCRYPTION_KEY_PREVIOUS key must be 32 bytes, base64-encoded');
+    return old.length ? { current: key, previous: old } : key;
 }
 
 /**
@@ -104,7 +112,7 @@ function loadEncryptionKey(env) {
  * PUBLIC_BASE_URL (optional here) is where Atlassian sends Jira webhooks (`<url>/webhooks/jira`): the worker
  * registers them, so it needs the web service's public https address too; without one Jira only syncs periodically.
  *
- * @returns {{ clientId: string, clientSecret: string, encryptionKey: Buffer, webhookUrl: string|null }|null}
+ * @returns {{ clientId: string, clientSecret: string, encryptionKey: Buffer|{ current: Buffer, previous: Buffer[] }, webhookUrl: string|null }|null}
  * @throws {Error} naming every missing/invalid variable
  */
 function loadAtlassianConfig(env) {
@@ -114,8 +122,11 @@ function loadAtlassianConfig(env) {
     const problems = keys.filter((key) => !env[key]).map((key) => `${key} is not set (the other Atlassian variables are)`);
     let encryptionKey = null;
     if (env.TOKEN_ENCRYPTION_KEY) {
-        encryptionKey = parseEncryptionKey(env.TOKEN_ENCRYPTION_KEY);
-        if (!encryptionKey) problems.push(BAD_KEY);
+        try {
+            encryptionKey = loadEncryptionKey(env);
+        } catch (err) {
+            problems.push(err.message.replace(/^Invalid configuration: /, ''));
+        }
     }
     if (problems.length > 0) throw new Error(`Invalid configuration: ${problems.join('; ')}`);
 

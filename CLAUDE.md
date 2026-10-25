@@ -96,7 +96,7 @@ changelog entry by hand outside a `chore(release)` PR.
 
 Deployed to Render per `context/foundation/infrastructure.md`: `render.yaml` builds both the Web Service and the
 Background Worker from the repo root (`npm ci --prefix server`, `node server/web.js`), not `rootDir: server`, which
-would hide `docs/` from the Web Service. Migrations (`server/migrations/001`–`026`, applied by the hand-rolled
+would hide `docs/` from the Web Service. Migrations (`server/migrations/001`–`027`, applied by the hand-rolled
 `lib/migrate.js`) run as each service's `preDeployCommand` under an advisory lock (`test/render-blueprint.test.js`).
 Dependencies, all in `server/package.json`: `pg`, `fastify`, `@fastify/cookie`. Fastify runs with
 `removeAdditional: false, coerceTypes: false`: unknown fields and wrong types are a 400, never silently fixed.
@@ -210,7 +210,8 @@ success for 3 × `SYNC_INTERVAL_MINUTES` + 5 minutes, or an undrained webhook qu
   json/yaml else the content type, the file reading fields, `tokenHeader`), the customer's token sealed in
   `endpoint_token_enc` with `endpointTokenAad()` (tenant, source, purpose), never returned (`hasEndpointToken`).
   Requests carry `X-ShipScope-Timestamp`/`X-ShipScope-Signature` (`signatureHeaders()`, HMAC-SHA256 with
-  `signingSecret()`: HKDF of `TOKEN_ENCRYPTION_KEY` per tenant, `loadEncryptionKey()`; `GET …/flag-endpoint-signing`).
+  `tenantSigningSecret()`: stored sealed in `tenants.endpoint_signing_secret_enc`, migration `027`, first filled with
+  `signingSecret()`, the HKDF value earlier versions derived from the key; `GET …/flag-endpoint-signing`).
   `refreshEndpointSource()` writes each environment's full state through `applyObservations()` (`changedAt` = now); a
   failure is `recordSourceEnvError()` and keeps the flags. `POST …/flag-endpoint-test` (admin, per-workspace limit)
   returns only parsed flags (`server/test/endpoint-flags.test.js`). Settings → Sources, Read flags from an endpoint
@@ -235,7 +236,9 @@ success for 3 × `SYNC_INTERVAL_MINUTES` + 5 minutes, or an undrained webhook qu
   prefix, `extractFlagKeys()`). The file-based `schemaVersion: 1` contract was not ported.
 - **Jira (FR-007–009)** — connected per tenant through Atlassian OAuth 2.0 (3LO) (`lib/atlassian.js`,
   `lib/jira-connections.js`). Only the refresh token is stored, AES-256-GCM-sealed with the tenant id as associated
-  data (`lib/secret-box.js`, key `TOKEN_ENCRYPTION_KEY`); access tokens are minted per use under a row lock because
+  data (`lib/secret-box.js`, key `TOKEN_ENCRYPTION_KEY`; format `v2.<key id>…`, any key of the ring opens it, old keys
+  in `TOKEN_ENCRYPTION_KEY_PREVIOUS`, the worker's `secretsTick()` re-seals with the current one, `lib/secret-rotation.js`,
+  server/README.md "Rotating TOKEN_ENCRYPTION_KEY"); access tokens are minted per use under a row lock because
   Atlassian rotates refresh tokens. Issues (`lib/jira-sync.js`) are scoped by the admin's chosen boards
   (company-managed `scrum`, team-managed `simple` or `kanban`): an issue's sprint is the one whose id is on the board
   being synced. Each pass fully re-syncs each board's current increment (plus its issues' Epics); a board's first

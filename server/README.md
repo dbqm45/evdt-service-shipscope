@@ -380,6 +380,23 @@ Postgres database. Step-by-step setup (in Polish): `SETUP.pl.md`, section 6.
 - **Health**: `GET /health` (Render's health check, also reports the version), `GET /health/db` and
   `GET /health/worker` (below).
 
+## Rotating TOKEN_ENCRYPTION_KEY
+
+`TOKEN_ENCRYPTION_KEY` seals every stored customer secret: Jira refresh tokens, endpoint tokens and each workspace's
+signing secret (`lib/secret-box.js`). Sealed values carry the id of the key that sealed them (a hash, never the key),
+so a key can be replaced without anyone reconnecting:
+
+1. Generate a new key (`openssl rand -base64 32`).
+2. On **both** services set `TOKEN_ENCRYPTION_KEY` to the new key and `TOKEN_ENCRYPTION_KEY_PREVIOUS` to the old one
+   (several old keys: comma separated, newest first). Deploy. Everything stays readable.
+3. The worker's `secrets` job runs at start and daily (`lib/secret-rotation.js`): it seals every value sealed with an
+   older key again with the new one. Its log line says `… 0 still on an older key` when it is done.
+4. Remove `TOKEN_ENCRYPTION_KEY_PREVIOUS` from both services and deploy.
+
+A value no key opens (the old key was dropped too early) is counted as `unreadable` and left alone: the Jira
+connection or the endpoint token then has to be entered again. A workspace's signing secret does not change with the
+key: it is stored the first time it is needed, from the value earlier versions derived from the oldest key.
+
 ## Monitoring and logs
 
 **Alerting on a stopped worker.** Render's health check only covers the Web Service. Point an uptime monitor (Better
@@ -396,7 +413,7 @@ own logger with the same shape), which Render keeps under each service's **Logs*
 |---|---|---|
 | `requestId` | every line of one HTTP request; also sent back as `X-Request-Id` (a caller's own is kept) | follow one request a user reports |
 | `tenantId`, `userId` | requests under `/tenants/:tenantId/...`, signed-in requests | see everything that happened for one workspace |
-| `job`, `durationMs` | worker jobs: `heartbeat`, `deployments`, `jira`, `flags`, `webhooks`, `cleanup` | see how long syncs take and which failed |
+| `job`, `durationMs` | worker jobs: `heartbeat`, `deployments`, `jira`, `flags`, `secrets`, `webhooks`, `cleanup` | see how long syncs take and which failed |
 | `repo`, `installationId`, `retryAt` | per-repo and per-tenant sync lines | find the repo or connection behind a failure |
 | `err` (`type`, `message`, `code`, `status`, `stack`) | every logged error | see where it failed |
 

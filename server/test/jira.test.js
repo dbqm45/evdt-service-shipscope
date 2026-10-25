@@ -10,7 +10,7 @@ const json = (body, status = 200) => new Response(JSON.stringify(body), { status
 
 test('secret box: round trip; tampering, another key or another tenant fails', () => {
     const sealed = seal(KEY, 'refresh-123', 'tenant-a');
-    assert.match(sealed, /^v1\.[\w-]+\.[\w-]+\.[\w-]+$/);
+    assert.match(sealed, /^v2\.[\w-]+\.[\w-]+\.[\w-]+\.[\w-]+$/);
     assert.ok(!sealed.includes('refresh-123'));
     assert.notStrictEqual(seal(KEY, 'refresh-123', 'tenant-a'), sealed, 'a fresh IV every time');
     assert.strictEqual(open(KEY, sealed, 'tenant-a'), 'refresh-123');
@@ -132,7 +132,7 @@ test('connect: an admin links one Jira site; only an encrypted refresh token is 
     assert.deepStrictEqual([s.connected, s.site, s.lastError, 'sites' in s], [true, { cloudId: 'cloud-a', url: 'https://acme.atlassian.net', name: 'acme' }, null, false]);
 
     const [stored] = await rows('SELECT refresh_token_enc FROM jira_connections');
-    assert.match(stored.refresh_token_enc, /^v1\./);
+    assert.match(stored.refresh_token_enc, /^v2\./);
     assert.ok(!stored.refresh_token_enc.includes('refresh-'), 'never in clear text');
     assert.ok(!JSON.stringify(s).includes('refresh-') && !JSON.stringify(s).includes('access-'), 'no token reaches the client');
 

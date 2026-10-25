@@ -12,7 +12,7 @@ const QUEUE_MAX_AGE_MS = 10 * 60_000;
  * Records one run of a worker job: always when it ran; when it succeeded, or the error.
  *
  * @param {import('pg').Pool} pool
- * @param {{ job: 'heartbeat'|'deployments'|'jira'|'flags'|'webhooks'|'cleanup', ok: boolean, error?: string|null, details?: object, now?: Date }} input
+ * @param {{ job: 'heartbeat'|'deployments'|'jira'|'flags'|'secrets'|'webhooks'|'cleanup', ok: boolean, error?: string|null, details?: object, now?: Date }} input
  * @returns {Promise<void>}
  */
 async function recordRun(pool, { job, ok, error = null, details = {}, now = new Date() }) {

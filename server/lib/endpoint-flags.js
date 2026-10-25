@@ -4,7 +4,8 @@
 // - Every request goes through lib/safe-fetch.js (https:443, public addresses only, pinned, no redirects, limits).
 // - Each request is signed for the tenant (signatureHeaders()), so the customer's endpoint can tell ShipScope's calls
 //   from anyone else's: `X-ShipScope-Timestamp` and `X-ShipScope-Signature: v1=<hex HMAC-SHA256>` over
-//   `<timestamp>.GET.<url>`, with the tenant's signing secret (signingSecret(), shown to admins in Settings).
+//   `<timestamp>.GET.<url>`, with the tenant's signing secret (tenantSigningSecret(): stored sealed in
+//   `tenants.endpoint_signing_secret_enc`, first filled with signingSecret(); shown to admins in Settings).
 // - The answer is read like a file of its format (lib/flag-file-parser.js, isolated, value-free errors); it states
 //   the full set of flags for that environment, so a flag no longer listed is marked removed.
 // - A failed read is an error on that environment, never a removal; the flags stay and the dashboard shows the doubt.
@@ -12,7 +13,7 @@
 const crypto = require('crypto');
 const { withScope } = require('./scope');
 const { assertAdmin } = require('./tenants');
-const { open, SecretBoxError } = require('./secret-box');
+const { open, seal, keyRing, SecretBoxError } = require('./secret-box');
 const { safeFetch, SafeFetchError } = require('./safe-fetch');
 const { parseFlagFile, FlagFileError } = require('./flag-file-parser');
 const { checkEndpointConfig, FlagSourceConfigError } = require('./flags-logic');
@@ -22,15 +23,48 @@ const ENVS = ['test', 'qa', 'prod'];
 const SIGNATURE_VERSION = 'v1';
 
 /**
- * The tenant's secret for signing endpoint requests, derived from TOKEN_ENCRYPTION_KEY (HKDF-SHA256, the tenant id in
- * the info), so nothing is stored and every tenant has its own.
+ * A tenant's first signing secret, derived from the key (HKDF-SHA256, the tenant id in the info): what versions before
+ * the stored secret used, so a secret a customer already configured stays the same once stored. During a rotation it
+ * derives from the oldest previous key (the list is newest first), the one such a secret came from.
  *
- * @param {Buffer} encryptionKey
+ * @param {Buffer|{ current: Buffer, previous: Buffer[] }} encryptionKey
  * @param {string} tenantId
  * @returns {string} 64 hex characters
  */
 function signingSecret(encryptionKey, tenantId) {
-    return Buffer.from(crypto.hkdfSync('sha256', encryptionKey, Buffer.alloc(0), `shipscope flag-endpoint signing ${tenantId}`, 32)).toString('hex');
+    const ring = keyRing(encryptionKey);
+    const key = ring.previous.length ? ring.previous[ring.previous.length - 1] : ring.current;
+    return Buffer.from(crypto.hkdfSync('sha256', key, Buffer.alloc(0), `shipscope flag-endpoint signing ${tenantId}`, 32)).toString('hex');
+}
+
+/** What binds a tenant's sealed signing secret to its place. */
+function signingSecretAad(tenantId) {
+    return `${tenantId}/endpoint-signing`;
+}
+
+/**
+ * Inside withScope: the tenant's signing secret, stored sealed; the first call stores signingSecret()'s value.
+ *
+ * @param {import('pg').PoolClient} client
+ * @param {{ tenantId: string, encryptionKey: Buffer|{ current: Buffer, previous: Buffer[] } }} input
+ * @returns {Promise<string>}
+ * @throws {FlagSourceConfigError} the stored one cannot be opened with any key
+ */
+async function tenantSigningSecret(client, { tenantId, encryptionKey }) {
+    let { rows: [row] } = await client.query('SELECT endpoint_signing_secret_enc FROM tenants WHERE id = $1', [tenantId]);
+    if (row && !row.endpoint_signing_secret_enc) {
+        // Two first calls at once: the second one's UPDATE finds a value and keeps it.
+        await client.query('UPDATE tenants SET endpoint_signing_secret_enc = $2 WHERE id = $1 AND endpoint_signing_secret_enc IS NULL',
+            [tenantId, seal(encryptionKey, signingSecret(encryptionKey, tenantId), signingSecretAad(tenantId))]);
+        ({ rows: [row] } = await client.query('SELECT endpoint_signing_secret_enc FROM tenants WHERE id = $1', [tenantId]));
+    }
+    if (!row) throw new FlagSourceConfigError('No such workspace');
+    try {
+        return open(encryptionKey, row.endpoint_signing_secret_enc, signingSecretAad(tenantId));
+    } catch (err) {
+        if (err instanceof SecretBoxError) throw new FlagSourceConfigError('The stored signing secret cannot be read (was TOKEN_ENCRYPTION_KEY changed without TOKEN_ENCRYPTION_KEY_PREVIOUS?)');
+        throw err;
+    }
 }
 
 /**
@@ -88,14 +122,14 @@ function openToken(row, { tenantId, encryptionKey }) {
 async function testEndpoint(pool, { tenantId, actorUserId, endpoint, endpointToken, sourceId, encryptionKey, fetchImpl = safeFetch, now = new Date() }) {
     const config = checkEndpointConfig(endpoint, { kind: 'runtime' });
     if (!encryptionKey) throw new FlagSourceConfigError('Reading flags from an endpoint needs TOKEN_ENCRYPTION_KEY on the server');
-    const token = await withScope(pool, { tenantId }, async (client) => {
+    const { token, secret } = await withScope(pool, { tenantId }, async (client) => {
         await assertAdmin(client, { tenantId, userId: actorUserId });
-        if (endpointToken !== undefined || !sourceId) return endpointToken ?? null;
+        const signing = await tenantSigningSecret(client, { tenantId, encryptionKey });
+        if (endpointToken !== undefined || !sourceId) return { token: endpointToken ?? null, secret: signing };
         const { rows: [row] } = await client.query("SELECT id, endpoint_token_enc FROM flag_sources WHERE tenant_id = $1 AND id = $2 AND origin = 'endpoint'", [tenantId, sourceId]);
         if (!row) throw new FlagSourceNotFoundError('No such flag source');
-        return openToken(row, { tenantId, encryptionKey });
+        return { token: openToken(row, { tenantId, encryptionKey }), secret: signing };
     });
-    const secret = signingSecret(encryptionKey, tenantId);
     const out = [];
     for (const env of ENVS.filter((e) => config.urls[e])) {
         const host = new URL(config.urls[env]).hostname;
@@ -130,15 +164,16 @@ async function refreshEndpointSource(pool, { tenantId, sourceId, encryptionKey, 
     const envs = ENVS.filter((e) => endpoint.urls[e]);
     const totals = { read: 0, failed: 0 };
     let token;
+    let secret;
     try {
         token = openToken(row, { tenantId, encryptionKey });
+        secret = await withScope(pool, { tenantId }, (client) => tenantSigningSecret(client, { tenantId, encryptionKey }));
     } catch (err) {
         if (!(err instanceof FlagSourceConfigError)) throw err;
         for (const env of envs) await recordSourceEnvError(pool, { tenantId, sourceId, env, message: err.message, now });
         log(`flags not read from endpoint source ${row.name}: ${err.message}`, { level: 'warn', tenantId, source: row.name, reason: err.message });
         return { read: 0, failed: envs.length };
     }
-    const secret = signingSecret(encryptionKey, tenantId);
     for (const env of envs) {
         const host = new URL(endpoint.urls[env]).hostname;
         const fields = { tenantId, source: row.name, env, host };
@@ -180,13 +215,16 @@ async function refreshEndpointSource(pool, { tenantId, sourceId, encryptionKey, 
  */
 async function endpointSigning(pool, { tenantId, actorUserId, encryptionKey }) {
     if (!encryptionKey) throw new FlagSourceConfigError('Reading flags from an endpoint needs TOKEN_ENCRYPTION_KEY on the server');
-    await withScope(pool, { tenantId }, (client) => assertAdmin(client, { tenantId, userId: actorUserId }));
+    const secret = await withScope(pool, { tenantId }, async (client) => {
+        await assertAdmin(client, { tenantId, userId: actorUserId });
+        return tenantSigningSecret(client, { tenantId, encryptionKey });
+    });
     return {
-        secret: signingSecret(encryptionKey, tenantId),
+        secret,
         algorithm: 'HMAC-SHA256',
         signedText: '<X-ShipScope-Timestamp>.GET.<the full URL>',
         headers: ['X-ShipScope-Timestamp', `X-ShipScope-Signature (${SIGNATURE_VERSION}=<hex>)`],
     };
 }
 
-module.exports = { signingSecret, signatureHeaders, testEndpoint, refreshEndpointSource, endpointSigning };
+module.exports = { signingSecret, signingSecretAad, tenantSigningSecret, signatureHeaders, testEndpoint, refreshEndpointSource, endpointSigning };
