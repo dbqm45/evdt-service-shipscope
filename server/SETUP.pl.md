@@ -88,6 +88,7 @@ serwisów (`render.yaml` ustawia `DATABASE_URL` sam; sekrety mają `sync: false`
 | `SYNC_TENANT_BUDGET_SECONDS` | — | opcjonalnie | Ile sekund jednego przebiegu synchronizacji dostaje jeden workspace (10–3600, domyślnie 120); resztę dokończy w następnym, żeby duży workspace nie blokował pozostałych |
 | `DASHBOARD_DIR` | opcjonalnie | — | Gdzie są pliki dashboardu (`docs/`); bez nich strona `/t/<id>/` odpowiada 503 |
 | `ATLASSIAN_CLIENT_ID`, `ATLASSIAN_CLIENT_SECRET` | tak | tak | Aplikacja OAuth w Atlassian (sekcja 5); bez nich połączenie z Jirą jest wyłączone |
+| `JIRA_WEBHOOK_REQUIRE_EXP` | opcjonalnie | — | `1` odrzuca webhook Jiry, którego token nie ma daty ważności (`exp`). Domyślnie wyłączone: taki webhook jest przyjmowany, a w logu serwisu web pojawia się `jira webhook token without exp`. Włącz, gdy przez kilka tygodni nie ma takich linii |
 | `TOKEN_ENCRYPTION_KEY` | tak | tak | Klucz szyfrujący sekrety klientów: `openssl rand -base64 32`. Wymiana bez ponownego łączenia: `TOKEN_ENCRYPTION_KEY_PREVIOUS`, zob. [SEKRETY.pl.md](SEKRETY.pl.md) |
 | `SECRETS_PUBLIC_KEY` | tak | tak | Zalecane w produkcji: tokeny Jiry i endpointów czytelne tylko dla workera (`npm run sealing-keys`), zob. [SEKRETY.pl.md](SEKRETY.pl.md) |
 | `SECRETS_PRIVATE_KEY` | **nigdy** | tak | Prywatna połowa tej pary |

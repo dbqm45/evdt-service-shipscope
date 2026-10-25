@@ -39,6 +39,9 @@ test('Atlassian JWT: HS256 with the client secret only; expired, future, unsigne
         assert.throws(() => verifyAtlassianJwt({ secret: ATL_SECRET, authorization, now: NOW }), WebhookAuthError, String(authorization));
     }
     assert.ok(verifyAtlassianJwt({ secret: ATL_SECRET, authorization: `Bearer ${jwt({ exp: secs(NOW) - 60 })}`, now: NOW }), 'a minute of clock skew is tolerated');
+    // JIRA_WEBHOOK_REQUIRE_EXP=1: a token without exp is refused, one with a valid exp still passes.
+    assert.throws(() => verifyAtlassianJwt({ secret: ATL_SECRET, authorization: `Bearer ${jwt({ iss: 'x', iat: secs(NOW) })}`, now: NOW, requireExp: true }), /token has no exp/);
+    assert.strictEqual(verifyAtlassianJwt({ secret: ATL_SECRET, authorization: `Bearer ${good}`, now: NOW, requireExp: true }).iss, 'atl');
 });
 
 test('what a delivery asks to sync: a deployment\'s repo; the Jira webhook ids it matched, else its site', () => {
@@ -64,6 +67,7 @@ const { AUTH, testGitHubApp } = require('./helpers/auth');
 const { requestSync } = require('../lib/webhooks');
 const { webhookTick } = require('../worker');
 const { memoryLogger } = require('./helpers/memory-logger');
+const { loggerOptions } = require('../lib/log');
 
 async function setup(t, { githubApp = { ...testGitHubApp().app, webhookSecret: GH_SECRET }, atlassian = { clientId: 'atl-client', clientSecret: ATL_SECRET, encryptionKey: crypto.randomBytes(32), webhookUrl: null } } = {}) {
     const { pool, teardown } = await createTestDb();
@@ -107,6 +111,27 @@ test('POST /webhooks/jira: a delivery with a valid Atlassian JWT queues what it 
         assert.strictEqual((await post(app, '/webhooks/jira', body.replace('1001', '2002'), authorization ? { authorization } : {})).statusCode, 401);
     }
     assert.deepStrictEqual(await queued(), ['jira:webhook:1001']);
+});
+
+test('POST /webhooks/jira: a token without exp is logged and accepted, or refused with JIRA_WEBHOOK_REQUIRE_EXP=1', async (t) => {
+    const { pool, teardown } = await createTestDb();
+    t.after(teardown);
+    const lines = [];
+    const atlassian = { clientId: 'atl-client', clientSecret: ATL_SECRET, encryptionKey: crypto.randomBytes(32), webhookUrl: null };
+    const app = buildApp({ pool, auth: AUTH, atlassian, logger: { ...loggerOptions({ level: 'info', version: '9.9.9' }), stream: { write: (l) => lines.push(JSON.parse(l)) } } });
+    t.after(() => app.close());
+    const body = JSON.stringify({ webhookEvent: 'jira:issue_updated', matchedWebhookIds: [1001] });
+    const noExp = { authorization: `Bearer ${jwt({ iat: secs(Date.now()) })}` };
+    assert.strictEqual((await post(app, '/webhooks/jira', body, noExp)).statusCode, 202);
+    assert.ok(lines.some((l) => l.msg === 'jira webhook token without exp' && l.level === 'warn'), 'logged for the operator');
+    assert.strictEqual((await post(app, '/webhooks/jira', body, { authorization: `Bearer ${jwt({ iat: secs(Date.now()), exp: secs(Date.now()) + 60 })}` })).statusCode, 202);
+    assert.strictEqual(lines.filter((l) => l.msg === 'jira webhook token without exp').length, 1, 'not for a token with exp');
+
+    const strict = buildApp({ pool, auth: AUTH, atlassian: { ...atlassian, requireWebhookExp: true }, logger: { ...loggerOptions({ level: 'info', version: '9.9.9' }), stream: { write: (l) => lines.push(JSON.parse(l)) } } });
+    t.after(() => strict.close());
+    assert.strictEqual((await post(strict, '/webhooks/jira', body, noExp)).statusCode, 401);
+    assert.ok(lines.some((l) => l.msg === 'webhook refused' && l.reason === 'token has no exp'), 'the refusal says why');
+    assert.strictEqual((await post(strict, '/webhooks/jira', body, { authorization: `Bearer ${jwt({ iat: secs(Date.now()), exp: secs(Date.now()) + 60 })}` })).statusCode, 202);
 });
 
 test('webhook routes exist only when configured: no GitHub secret, no /webhooks/github', async (t) => {

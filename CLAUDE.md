@@ -270,7 +270,9 @@ success for 3 × `SYNC_INTERVAL_MINUTES` + 5 minutes, or an undrained webhook qu
   (`kind: "now"`, `includes`), which `selectedIncrements()`/`incrementLabel()` in `docs/app-model.js` understand.
   The dashboard data carries `jiraBrowseUrl` (the tenant's site + `/browse`, `null` without Jira) for issue links.
 - **Webhooks** (`lib/webhooks.js`, migration `013`) — `POST /webhooks/github` (HMAC, `GITHUB_APP_WEBHOOK_SECRET`)
-  and `POST /webhooks/jira` (HS256 JWT signed with the Atlassian client secret) only queue a key in `sync_requests`;
+  and `POST /webhooks/jira` (HS256 JWT signed with the Atlassian client secret; a token without `exp` is logged as
+  `jira webhook token without exp` and accepted unless `JIRA_WEBHOOK_REQUIRE_EXP=1`, since Atlassian does not
+  document the claims) only queue a key in `sync_requests`;
   the worker's `webhookTick()` drains it every 30 s with `syncAll({ repoIds })`/`syncAllJira({ keys })` under the
   regular advisory locks. Jira webhooks are registered and refreshed per tenant by `ensureWebhook()` in the Jira sync
   (scope `manage:jira-webhook`, needs an https `PUBLIC_BASE_URL` on the worker); best effort, never failing the sync.

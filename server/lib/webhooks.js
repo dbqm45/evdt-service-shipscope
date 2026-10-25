@@ -33,13 +33,15 @@ const CLOCK_SKEW_SECONDS = 300;
 /**
  * Atlassian's `Authorization: Bearer <JWT>` on a webhook for an OAuth 2.0 app: HS256, signed with the app's client
  * secret. Only HS256 is accepted (never the token's own choice of algorithm, never `none`), and an `exp` in the past
- * or an `iat` in the future (beyond clock skew) is refused.
+ * or an `iat` in the future (beyond clock skew) is refused. Atlassian's documentation does not list the claims, so a
+ * token without `exp` is accepted (and logged by the route) unless `requireExp` is set (JIRA_WEBHOOK_REQUIRE_EXP=1);
+ * once the logs show every delivery carries one, it is turned on.
  *
- * @param {{ secret: string, authorization: string|undefined, now?: number }} input now in ms
+ * @param {{ secret: string, authorization: string|undefined, now?: number, requireExp?: boolean }} input now in ms
  * @returns {object} the token's claims
  * @throws {WebhookAuthError}
  */
-function verifyAtlassianJwt({ secret, authorization, now = Date.now() }) {
+function verifyAtlassianJwt({ secret, authorization, now = Date.now(), requireExp = false }) {
     const match = typeof authorization === 'string' && /^Bearer ([A-Za-z0-9_-]+)\.([A-Za-z0-9_-]+)\.([A-Za-z0-9_-]+)$/.exec(authorization);
     if (!match) throw new WebhookAuthError('missing or malformed bearer token');
     const [, head, body, sig] = match;
@@ -56,6 +58,7 @@ function verifyAtlassianJwt({ secret, authorization, now = Date.now() }) {
     if (!safeEqual(sig, expected)) throw new WebhookAuthError('token signature does not match');
     if (!claims || typeof claims !== 'object') throw new WebhookAuthError('token has no claims');
     const seconds = Math.floor(now / 1000);
+    if (requireExp && claims.exp === undefined) throw new WebhookAuthError('token has no exp');
     if (claims.exp !== undefined && (typeof claims.exp !== 'number' || claims.exp < seconds - CLOCK_SKEW_SECONDS)) throw new WebhookAuthError('token has expired');
     if (claims.iat !== undefined && (typeof claims.iat !== 'number' || claims.iat > seconds + CLOCK_SKEW_SECONDS)) throw new WebhookAuthError('token is from the future');
     return claims;

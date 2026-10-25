@@ -22,8 +22,9 @@ function registerWebhookRoutes(app, ctx) {
                 return undefined;
             }
         };
-        const refused = (reply, err) => {
+        const refused = (request, reply, err) => {
             if (!(err instanceof WebhookAuthError)) throw err;
+            request.log.info({ reason: err.message }, 'webhook refused');
             return reply.code(401).send({ error: 'Webhook signature is not valid' });
         };
 
@@ -32,7 +33,7 @@ function registerWebhookRoutes(app, ctx) {
                 try {
                     verifyGitHubSignature({ secret: githubApp.webhookSecret, rawBody: request.body, signature: request.headers['x-hub-signature-256'] });
                 } catch (err) {
-                    return refused(reply, err);
+                    return refused(request, reply, err);
                 }
                 const payload = parse(request.body);
                 if (payload === undefined) return reply.code(400).send({ error: 'Body is not JSON' });
@@ -43,11 +44,14 @@ function registerWebhookRoutes(app, ctx) {
         }
         if (atlassian) {
             scope.post('/webhooks/jira', async (request, reply) => {
+                let claims;
                 try {
-                    verifyAtlassianJwt({ secret: atlassian.clientSecret, authorization: request.headers.authorization });
+                    claims = verifyAtlassianJwt({ secret: atlassian.clientSecret, authorization: request.headers.authorization, requireExp: atlassian.requireWebhookExp === true });
                 } catch (err) {
-                    return refused(reply, err);
+                    return refused(request, reply, err);
                 }
+                // What tells whether JIRA_WEBHOOK_REQUIRE_EXP=1 can be turned on: no such line over a few weeks.
+                if (claims.exp === undefined) request.log.warn({ reason: 'token has no exp' }, 'jira webhook token without exp');
                 const payload = parse(request.body);
                 if (payload === undefined) return reply.code(400).send({ error: 'Body is not JSON' });
                 const keys = jiraSyncKeys(payload);

@@ -153,7 +153,9 @@ function loadSealingKeys(env, { withPrivate }) {
  * PUBLIC_BASE_URL (optional here) is where Atlassian sends Jira webhooks (`<url>/webhooks/jira`): the worker
  * registers them, so it needs the web service's public https address too; without one Jira only syncs periodically.
  *
- * @returns {{ clientId: string, clientSecret: string, encryptionKey: Buffer|{ current: Buffer, previous: Buffer[] }, webhookUrl: string|null }|null}
+ * JIRA_WEBHOOK_REQUIRE_EXP=1 refuses a Jira webhook whose token has no `exp` (lib/webhooks.js); unset or 0 accepts it.
+ *
+ * @returns {{ clientId: string, clientSecret: string, encryptionKey: Buffer|{ current: Buffer, previous: Buffer[] }, webhookUrl: string|null, requireWebhookExp: boolean }|null}
  * @throws {Error} naming every missing/invalid variable
  */
 function loadAtlassianConfig(env) {
@@ -169,12 +171,15 @@ function loadAtlassianConfig(env) {
             problems.push(err.message.replace(/^Invalid configuration: /, ''));
         }
     }
+    if (env.JIRA_WEBHOOK_REQUIRE_EXP !== undefined && !['', '0', '1'].includes(env.JIRA_WEBHOOK_REQUIRE_EXP)) {
+        problems.push('JIRA_WEBHOOK_REQUIRE_EXP must be 1 or 0');
+    }
     if (problems.length > 0) throw new Error(`Invalid configuration: ${problems.join('; ')}`);
 
     // Atlassian only calls public https URLs: an http one (local development) means no Jira webhooks, not an error.
     const base = (env.PUBLIC_BASE_URL || '').replace(/\/+$/, '');
     const webhookUrl = /^https:\/\/[A-Za-z0-9.-]+(:\d+)?$/.test(base) ? `${base}/webhooks/jira` : null;
-    return { clientId: env.ATLASSIAN_CLIENT_ID, clientSecret: env.ATLASSIAN_CLIENT_SECRET, encryptionKey, webhookUrl };
+    return { clientId: env.ATLASSIAN_CLIENT_ID, clientSecret: env.ATLASSIAN_CLIENT_SECRET, encryptionKey, webhookUrl, requireWebhookExp: env.JIRA_WEBHOOK_REQUIRE_EXP === '1' };
 }
 
 module.exports = { loadAuthConfig, loadGitHubAppConfig, loadAtlassianConfig, loadEncryptionKey, loadSealingKeys };
