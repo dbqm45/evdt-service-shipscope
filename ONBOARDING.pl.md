@@ -45,8 +45,10 @@ Gdy serwis trzyma flagi w pliku w swoim repozytorium (JSON, YAML, `.properties`,
 JavaScript), ShipScope sam czyta ten plik w commicie, który każde środowisko ostatnio wdrożyło z sukcesem. Nie
 potrzeba tokenu, workflow ani minut GitHub Actions (`design-docs/ADR-003-flag-sources.md`).
 
-1. W Settings → Sources, w części **Read flags from code**, nadaj źródłu nazwę, wybierz repozytorium i podaj plik,
-   np. `src/flags.ts` albo `config/flags.{env}.json`. `{env}` oznacza `test`, `qa` albo `prod`; inną nazwę
+1. W Settings → Sources, w części **Read flags from code**, nadaj źródłu nazwę i wybierz repozytorium. **Find flags
+   files** proponuje pliki, które wyglądają na pliki flag, każdy z odczytanymi flagami; **Use this** wypełnia formularz,
+   **Preview** pokazuje, co da wdrożenie na każdym środowisku. Albo podaj plik sam, np. `src/flags.ts` albo
+   `config/flags.{env}.json`. `{env}` oznacza `test`, `qa` albo `prod`; inną nazwę
    środowiska, np. `production`, można ustawić przez API (`envNames`).
 2. Opcjonalnie podaj obiekt z flagami (`features` dla `{ "features": { ... } }`). Plik `.env` albo `.properties`
    zawiera też inne ustawienia, więc dla nich podaj prefiks kluczy flag (`FF_`): żadna inna linia nigdy nie zostanie

@@ -4,6 +4,7 @@ const {
     recordIngestError, listFlags, setFlagDetails,
 } = require('../lib/flags');
 const { createLimiter } = require('../lib/request-limiter');
+const { CODE_CONFIG } = require('../schemas/flag-code-config');
 
 // Per token: a burst of 60 messages, then one a second. A sender posts once per environment per deployment or
 // polling round, far below this; the limit only stops a runaway sender from crowding out everyone else.
@@ -78,19 +79,6 @@ function registerFlagRoutes(app, ctx) {
             ...extra,
         },
     });
-    const shortText = { type: 'string', minLength: 1, maxLength: 100 };
-    const CODE_CONFIG = {
-        type: 'object',
-        required: ['file'],
-        additionalProperties: false,
-        properties: {
-            file: { type: 'string', minLength: 1, maxLength: 200 },
-            format: { type: 'string', enum: ['json', 'yaml', 'properties', 'env', 'ts', 'js'] },
-            path: shortText, valuePath: shortText, keyField: shortText, rolloutPath: shortText, prefix: shortText,
-            keys: { type: 'array', minItems: 1, maxItems: 500, uniqueItems: true, items: FLAG_KEY },
-            envNames: { type: 'object', additionalProperties: false, properties: { test: shortText, qa: shortText, prod: shortText } },
-        },
-    };
     const ONE_SCOPE = { not: { required: ['repoIds', 'repoId'] } };
     const sourceParams = { type: 'object', required: ['tenantId', 'sourceId'], properties: { tenantId: UUID_PARAM, sourceId: UUID_PARAM } };
 

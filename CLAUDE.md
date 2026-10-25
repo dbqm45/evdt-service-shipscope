@@ -196,6 +196,12 @@ success for 3 × `SYNC_INTERVAL_MINUTES` + 5 minutes, or an undrained webhook qu
   only when that ref differs from `flag_source_envs.last_ref`, under `lockTenantFlags()`, through
   `applyObservations()` (complete, `changedAt` = the deployment's time). A missing or unreadable file records the
   environment's `last_error` and keeps the flags; a rate limit is rethrown (`server/test/code-flags.test.js`).
+  Setting one up (`lib/flag-discovery.js`, admin, read only): `GET …/github/repos/:repoId/flag-files` proposes files
+  named like flags (`flagFileCandidates()`: json/yaml/ts, outside tests/builds, a file per environment folded into one
+  `{env}` template with `envNames`; never `.env`/`.properties`) at the latest prod deployment (else any, else `HEAD`),
+  each read as is or under a common path (`flags`, `features`, …); `POST …/flag-preview` reads a config per
+  environment at its own deployment. Settings → Sources: Find flags files, Use this, Preview, then Read from code
+  (`server/test/flag-discovery.test.js`).
   Sources of one kind fold into the dashboard's `build`/`runtime-be` slot by priority. Flags link to Jira issues
   from three origins merged in `readDashboardFlags()`: the sender's `jira_keys`, hand-set
   `manual_jira_keys`/`manual_description` (`PUT /tenants/:tenantId/flags/:key`, never overwritten by a sender), and

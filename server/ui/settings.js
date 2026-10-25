@@ -54,6 +54,8 @@ const settingsState = {
     tenantId: SETTINGS_TENANT_ID, me: null, tenant: null, features: { githubApp: false, jira: false },
     workspace: null, github: null, installationRepos: {}, trackPicker: false, editingRepo: null, jira: null, boards: null, flagFields: null, flags: null, flagList: null,
     once: {}, messages: {},
+    // The "Read flags from code" helper: the form's draft, the files found in a repository, a preview of a reading.
+    codeWizard: { draft: {}, found: null, preview: null },
 };
 
 const tenantPath = (suffix) => `/tenants/${settingsState.tenantId}${suffix}`;
@@ -788,6 +790,17 @@ function codeOf(values, current){
     return code;
 }
 
+/** The draft fields of the "Read flags from code" form. */
+function draftOf(values){
+    return { name: values.name || '', repoId: Number(values.repoId), file: values.file || '', path: values.path || '', prefix: values.prefix || '' };
+}
+
+/** What a proposed file brought besides the form's fields (its environment names), while the form still names it. */
+function wizardExtras(values){
+    const draft = settingsState.codeWizard.draft || {};
+    return draft.envNames && draft.file === values.file.trim() ? { envNames: draft.envNames } : {};
+}
+
 /** '' -> null (the kind's default), else the number of minutes. */
 function staleAfterOf(value){
     return value === '' || value === undefined ? null : Number(value);
@@ -836,7 +849,38 @@ function NewTokenForm(source){
 }
 
 /** @param {{ flags: object[]|null|{ error: string }, repos: object[], admin: boolean, once: object, origin: string, now?: Date }} props */
-function renderSources({ flags, repos, once, origin, now = new Date() }){
+/** One flag state as a short word: on, off, or the rollout. */
+function stateWord(v){
+    return v.state === 'partial' ? (v.rollout !== undefined && v.rollout !== null ? `${v.rollout}%` : 'partial') : v.state;
+}
+
+/** Up to six flags and their states, then how many more. */
+function FlagStates(flags){
+    const entries = Object.entries(flags || {});
+    const shown = entries.slice(0, 6).map(([key, v]) => `${key} ${stateWord(v)}`).join(', ');
+    return html`${entries.length} flag(s)${entries.length ? html`: <span class="mono">${shown}</span>${entries.length > 6 ? ` and ${entries.length - 6} more` : ''}` : ''}`;
+}
+
+/** The files ShipScope proposes, each with how it reads, and the preview of the reading in the form. */
+function CodeWizard(wizard){
+    const found = wizard.found;
+    const list = found ? html`<div class="settings-wizard">
+        <p class="settings-row-meta">Looked at ${found.ref === 'HEAD' ? 'the default branch' : `the deployed commit ${found.ref.slice(0, 12)}`}${found.truncated ? ' (a very large repository: not every file was listed)' : ''}.</p>
+        ${found.candidates.length ? html`<ul class="settings-list">${found.candidates.map((c, i) => html`<li>
+            <code>${c.file}</code>${c.path ? html` · flags under <code>${c.path}</code>` : ''}
+            ${c.error ? html`<span class="settings-error-inline">${c.error}</span>` : html`<span class="settings-row-meta">${FlagStates(c.flags)}</span>
+            <button type="button" class="btn" data-action="use-flag-file" data-index="${i}">Use this</button>`}
+        </li>`)}</ul>` : html`<p class="settings-hint">No file named like flags (flags.json, feature-flags.yaml, featureFlags.ts, ...). Name the file yourself.</p>`}
+    </div>` : '';
+    const preview = wizard.preview ? html`<div class="settings-wizard"><strong>Preview</strong><ul class="settings-list">${wizard.preview.map((e) => html`<li>
+            <span class="state-tag ${e.error ? 'fail' : 'ok'}">${e.env}</span> <code>${e.file}</code>
+            <span class="settings-row-meta">at ${e.ref === 'HEAD' ? 'the default branch' : e.ref.slice(0, 12)}</span>
+            ${e.error ? html`<span class="settings-error-inline">${e.error}</span>` : html`<span class="settings-row-meta">${FlagStates(e.flags)}</span>`}
+        </li>`)}</ul></div>` : '';
+    return html`${list}${preview}`;
+}
+
+function renderSources({ flags, repos, once, origin, now = new Date(), wizard = { draft: {}, found: null, preview: null } }){
     if (flags === null) {
         return html`<p class="settings-loading">Loading…</p>`;
     }
@@ -850,11 +894,15 @@ function renderSources({ flags, repos, once, origin, now = new Date() }){
     const kindOptions = (selected) => ['build', 'runtime'].map((k) => html`<option value="${k}" ${k === selected ? raw('selected') : ''}>${k}</option>`);
     const repoName = (id) => (repos.find((r) => r.repoId === id) || {}).fullName || `repository ${id}`;
     // A source read from code: one repository, a file (with {env} for one per environment), and how to read it.
-    const codeFields = (s) => html`
-            <label>Repository <select name="repoId" required>${repos.map((r) => html`<option value="${r.repoId}" ${(s && (s.repoIds || [])[0] === r.repoId) ? raw('selected') : ''}>${r.fullName}</option>`)}</select></label>
-            <label>File <input name="file" required maxlength="200" placeholder="config/flags.{env}.json" value="${s ? s.code.file : ''}"></label>
-            <label>Object with the flags (optional) <input name="path" maxlength="100" placeholder="features" value="${(s && s.code.path) || ''}"></label>
-            <label>Key prefix (needed for .env/.properties) <input name="prefix" maxlength="100" placeholder="FF_" value="${(s && s.code.prefix) || ''}"></label>`;
+    const codeFields = (s, draft = {}) => {
+        const code = s ? s.code : draft;
+        const repoId = s ? (s.repoIds || [])[0] : draft.repoId;
+        return html`
+            <label>Repository <select name="repoId" required>${repos.map((r) => html`<option value="${r.repoId}" ${repoId === r.repoId ? raw('selected') : ''}>${r.fullName}</option>`)}</select></label>
+            <label>File <input name="file" required maxlength="200" placeholder="config/flags.{env}.json" value="${code.file || ''}"></label>
+            <label>Object with the flags (optional) <input name="path" maxlength="100" placeholder="features" value="${code.path || ''}"></label>
+            <label>Key prefix (needed for .env/.properties) <input name="prefix" maxlength="100" placeholder="FF_" value="${code.prefix || ''}"></label>`;
+    };
     const codeRow = (s) => html`<tr><td>
         <form class="settings-form" data-action="save-source" data-source-id="${s.id}" data-origin="code">
             <label>Name <input name="name" required maxlength="100" value="${s.name}"></label>
@@ -890,10 +938,13 @@ function renderSources({ flags, repos, once, origin, now = new Date() }){
         <h3>Read flags from code</h3>
         <p class="settings-hint">For flags kept in a file in the repository (JSON, YAML, .properties, .env, TypeScript/JavaScript): ShipScope reads it at every new deployment. Nothing to set up in your pipelines.</p>
         ${repos.length ? html`<form class="settings-form" data-action="create-code-source">
-            <label>Name <input name="name" required maxlength="100" placeholder="e.g. Web flags"></label>
-            ${codeFields(null)}
+            <label>Name <input name="name" required maxlength="100" placeholder="e.g. Web flags" value="${wizard.draft.name || ''}"></label>
+            ${codeFields(null, wizard.draft)}
+            <button type="button" class="btn" data-action="find-flag-files">Find flags files</button>
+            <button type="button" class="btn" data-action="preview-code-source">Preview</button>
             <button type="submit" class="btn btn-primary">Read from code</button>
-        </form>` : html`<p class="settings-hint">Track a repository first (GitHub).</p>`}
+        </form>
+        ${CodeWizard(wizard)}` : html`<p class="settings-hint">Track a repository first (GitHub).</p>`}
         <h3>Add a source that sends its flags</h3>
         <form class="settings-form" data-action="create-source">
             <label>Name <input name="name" required maxlength="100" placeholder="e.g. LaunchDarkly"></label>
@@ -952,13 +1003,13 @@ function renderFlags({ flagList, admin, jiraUrl = null }){
 }
 
 /** @param {{ sources: object[]|null|{ error: string }, repos: object[], admin: boolean, once: object, origin: string }} props */
-function renderSourcesPage({ sources, repos, admin, once, origin }){
+function renderSourcesPage({ sources, repos, admin, once, origin, wizard }){
     return Page({
         id: 'sources',
         section: 'flags',
         title: 'Sources',
         hint: 'Where flags come from: a file in your code that ShipScope reads at each deployment, or a source (a flag service, a backend, a build step) that sends their full state to the ingest URL with its own token.',
-        body: Card({ body: admin ? renderSources({ flags: sources, repos, once, origin }) : html`<p class="settings-hint">Only admins manage flag sources.</p>` }),
+        body: Card({ body: admin ? renderSources({ flags: sources, repos, once, origin, wizard }) : html`<p class="settings-hint">Only admins manage flag sources.</p>` }),
     });
 }
 
@@ -978,7 +1029,7 @@ function renderSettings(){
         github: () => renderGitHub({ enabled: s.features.githubApp, webhooks: s.features.githubWebhooks, github: s.github, installationRepos: s.installationRepos, admin, picker: s.trackPicker, editing: s.editingRepo }),
         jira: () => renderJira({ enabled: s.features.jira, webhooks: s.features.jiraWebhooks, jira: s.jira, boards: s.boards, admin, flagFields: s.flagFields }),
         flags: () => renderFlags({ flagList: s.flagList, admin, jiraUrl: s.jira && s.jira.site ? s.jira.site.url : null }),
-        sources: () => renderSourcesPage({ sources: s.flags, repos, admin, once: s.once, origin: location.origin }),
+        sources: () => renderSourcesPage({ sources: s.flags, repos, admin, once: s.once, origin: location.origin, wizard: s.codeWizard }),
         danger: () => renderDangerZone({ tenantName: s.tenant && s.tenant.name }),
     };
     const counts = {
@@ -1244,10 +1295,40 @@ const actions = {
     },
     'create-code-source': async (form) => {
         const values = formValues(form);
+        if (!values.name.trim() || !values.file.trim()) {
+            throw new Error('Name the source and its file (or find one with Find flags files).');
+        }
         await api('POST', tenantPath('/flag-sources'), {
-            name: values.name.trim(), kind: 'build', origin: 'code', repoIds: [Number(values.repoId)], code: codeOf(values, {}),
+            name: values.name.trim(), kind: 'build', origin: 'code', repoIds: [Number(values.repoId)], code: codeOf(values, wizardExtras(values)),
         });
+        settingsState.codeWizard = { draft: {}, found: null, preview: null };
         return { section: 'flags', ok: 'Added: its flags are read at the next sync.' };
+    },
+    'find-flag-files': async (el) => {
+        const values = formValues(el.form);
+        const repoId = Number(values.repoId);
+        const found = await api('GET', tenantPath(`/github/repos/${repoId}/flag-files`));
+        settingsState.codeWizard = { draft: { ...draftOf(values), repoId }, found, preview: null };
+        return {};
+    },
+    'use-flag-file': async (el, data) => {
+        const wizard = settingsState.codeWizard;
+        const candidate = wizard.found && wizard.found.candidates[Number(data.index)];
+        if (!candidate) {
+            return null;
+        }
+        wizard.draft = { ...wizard.draft, file: candidate.file, path: candidate.path || '', prefix: '', envNames: candidate.envNames };
+        wizard.preview = null;
+        return {};
+    },
+    'preview-code-source': async (el) => {
+        const values = formValues(el.form);
+        if (!values.file.trim()) {
+            throw new Error('Name the file to preview (or find one with Find flags files).');
+        }
+        const { envs } = await api('POST', tenantPath(`/github/repos/${Number(values.repoId)}/flag-preview`), { code: codeOf(values, wizardExtras(values)) });
+        settingsState.codeWizard = { ...settingsState.codeWizard, draft: { ...settingsState.codeWizard.draft, ...draftOf(values) }, preview: envs };
+        return {};
     },
     'save-source': async (form, data) => {
         const values = formValues(form);

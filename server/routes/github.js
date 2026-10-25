@@ -1,5 +1,8 @@
 const crypto = require('crypto');
-const { listInstallationRepos } = require('../lib/github-app');
+const { listInstallationRepos, createInstallationToken } = require('../lib/github-app');
+const { discoverFlagFiles, previewCodeSource } = require('../lib/flag-discovery');
+const { checkCodeConfig } = require('../lib/flags-logic');
+const { CODE_CONFIG } = require('../schemas/flag-code-config');
 const {
     listConnections, trackedRepoIdsForAdmin, trackRepo, untrackRepo, updateRepoSettings, setRepoFlagStance, setRepoEnvironments, unlinkInstallation,
 } = require('../lib/github-connections');
@@ -191,6 +194,31 @@ function registerGitHubRoutes(app, ctx) {
         });
         if (!updated) return reply.code(404).send({ error: 'That repository is not tracked' });
         return updated;
+    });
+
+    // Setting up flags in code (lib/flag-discovery.js): files that look like flags files, and how a reading would come
+    // out per environment before it is saved. Read only; admins, since it reads the repository's files.
+    const tokenFor = (installationId) => createInstallationToken({ app: githubApp, installationId, fetch: fetchFn });
+    app.get('/tenants/:tenantId/github/repos/:repoId/flag-files', {
+        preHandler: requireUser,
+        schema: { params: repoParams },
+    }, async (request, reply) => {
+        await assertAdminOf(request.params.tenantId, request.user.id);
+        const found = await discoverFlagFiles({ pool, tenantId: request.params.tenantId, repoId: Number(request.params.repoId), tokenFor, fetch: fetchFn });
+        if (!found) return reply.code(404).send({ error: 'That repository is not tracked' });
+        return found;
+    });
+
+    app.post('/tenants/:tenantId/github/repos/:repoId/flag-preview', {
+        preHandler: requireUser,
+        schema: { params: repoParams, body: { type: 'object', required: ['code'], additionalProperties: false, properties: { code: CODE_CONFIG } } },
+    }, async (request, reply) => {
+        await assertAdminOf(request.params.tenantId, request.user.id);
+        const repoId = Number(request.params.repoId);
+        const code = checkCodeConfig(request.body.code, { kind: 'build', repoIds: [repoId] });
+        const envs = await previewCodeSource({ pool, tenantId: request.params.tenantId, repoId, code, tokenFor, fetch: fetchFn });
+        if (!envs) return reply.code(404).send({ error: 'That repository is not tracked' });
+        return { envs };
     });
 
     app.delete('/tenants/:tenantId/github/repos/:repoId', {

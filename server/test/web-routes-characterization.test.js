@@ -55,6 +55,8 @@ const EXPECTED_ROUTES = `\
     │       │   └── /repos/:repoId (PUT, DELETE)
     │       │       ├── /settings (PUT)
     │       │       ├── /flag-stance (PUT)
+    │       │       ├── /flag-files (GET, HEAD)
+    │       │       ├── /flag-preview (POST)
     │       │       └── /environments (PUT)
     │       └── /jira (GET, HEAD, DELETE)
     │           ├── /connect (GET, HEAD)
