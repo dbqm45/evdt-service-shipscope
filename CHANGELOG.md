@@ -7,6 +7,12 @@ dashboard, not a published package), so entries are grouped by date instead. See
 ShipScope is, `CLAUDE.md` for the technical reference, and `FAQ.md` for how specific numbers/badges are
 calculated.
 
+## [0.2.28] - 2026-10-25
+
+### Added
+
+- **SHP:** set up a repository's flags on its own card (#85)
+
 ## [0.2.27] - 2026-10-25
 
 ### Added
