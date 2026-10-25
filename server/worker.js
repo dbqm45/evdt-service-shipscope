@@ -255,8 +255,8 @@ async function sourcesTick(pool, logger = defaultLogger, deps = { flagSourceHeal
 async function cleanupTick(pool, logger = defaultLogger, deps = { cleanupAll }) {
     await runJob(pool, {
         job: 'cleanup', lock: CLEANUP_LOCK, logger, deps,
-        run: async () => ({ deleted: await deps.cleanupAll(pool) }),
-        summary: (r) => `cleanup done: ${r.deleted} old deployment records deleted`,
+        run: () => deps.cleanupAll(pool),
+        summary: (r) => `cleanup done: ${r.deployments} old deployment records and ${r.flagChanges} old flag changes deleted`,
     });
 }
 

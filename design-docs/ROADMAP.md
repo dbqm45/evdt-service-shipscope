@@ -86,7 +86,8 @@ korporacyjnych.
   odczyty z limitem per host.
 - [ ] Kopie zapasowe bazy z okresowym testem odtwarzania.
 - [ ] Cel dostępności (SLO), strona statusu.
-- [ ] Retencja `flag_value_history` (dziś bez limitu i czytana cała przy każdym ładowaniu dashboardu).
+- [x] Retencja `flag_value_history`: ta sama co wdrożeń (`deployment_retention_days`), zawsze z ostatnią zmianą każdej
+  flagi na źródle i środowisku; dashboard czyta najwyżej 5000 najnowszych zmian. (#102)
 
 ## Bezpieczeństwo (z przeglądu 2026-10-24)
 

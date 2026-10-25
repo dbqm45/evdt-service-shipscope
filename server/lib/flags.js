@@ -129,6 +129,8 @@ async function sourceEnvironments(client, tenantId, sourceRows, now) {
 }
 // A refused message's reason is kept for Settings up to this length.
 const MAX_ERROR_LENGTH = 500;
+// At most this many flag changes go to one dashboard (flagStateHistory), the newest.
+const HISTORY_READ_LIMIT = 5000;
 // A new token lasts this long unless the admin picks another lifetime or none ("never").
 const DEFAULT_TOKEN_DAYS = 365;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -748,10 +750,13 @@ async function readDashboardFlags(client, { tenantId, componentOf, now = new Dat
         'SELECT source_id, key, environment, state, rollout, changed_at, changed_by FROM flag_values WHERE tenant_id = $1 AND removed_at IS NULL',
         [tenantId]
     );
+    // The newest HISTORY_READ_LIMIT changes, oldest first: retention (lib/retention.js) keeps the table short, this
+    // keeps one dashboard load bounded even before it runs.
     const { rows: history } = await client.query(
-        `SELECT source_id, key, environment, state, changed_at, changed_by FROM flag_value_history
-         WHERE tenant_id = $1 AND NOT removed ORDER BY changed_at, id`,
-        [tenantId]
+        `SELECT * FROM (SELECT id, source_id, key, environment, state, changed_at, changed_by FROM flag_value_history
+                        WHERE tenant_id = $1 AND NOT removed ORDER BY changed_at DESC, id DESC LIMIT $2) h
+         ORDER BY changed_at, id`,
+        [tenantId, HISTORY_READ_LIMIT]
     );
 
     const { flagStates, byComponent, slotsOf, componentsOf } = pickWinningValues(values, sources);
@@ -810,6 +815,7 @@ async function flagSourceHealth(pool, { now = new Date() } = {}) {
 }
 
 module.exports = {
+    HISTORY_READ_LIMIT,
     flagSourceHealth,
     recordSourceEnvError,
     endpointTokenAad,

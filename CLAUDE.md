@@ -98,7 +98,7 @@ changelog entry by hand outside a `chore(release)` PR.
 
 Deployed to Render per `context/foundation/infrastructure.md`: `render.yaml` builds both the Web Service and the
 Background Worker from the repo root (`npm ci --prefix server`, `node server/web.js`), not `rootDir: server`, which
-would hide `docs/` from the Web Service. Migrations (`server/migrations/001`–`033`, applied by the hand-rolled
+would hide `docs/` from the Web Service. Migrations (`server/migrations/001`–`034`, applied by the hand-rolled
 `lib/migrate.js`) run as each service's `preDeployCommand` under an advisory lock (`test/render-blueprint.test.js`).
 Dependencies, all in `server/package.json`: `pg`, `fastify`, `@fastify/cookie`. Fastify runs with
 `removeAdditional: false, coerceTypes: false`: unknown fields and wrong types are a 400, never silently fixed.
@@ -152,7 +152,9 @@ environments by freshness, refused in the last hour, counts only) (`server/test/
 - **Deployment ingestion (FR-005)** — the worker (`worker.js`) runs `lib/deployment-sync.js` and the Jira sync
   every `SYNC_INTERVAL_MINUTES` (default 15) and `lib/retention.js` daily, each behind a Postgres advisory lock. Retention is per tenant
   (`tenants.deployment_retention_days`, default 90, 7–730) and always keeps each repo/environment's latest and latest
-  successful deployment. Version resolution (`lib/version-resolution.js`: release → tag → version file → commit
+  successful deployment; flag changes (`flag_value_history`, `cleanupFlagHistory()`, migration `034`) follow it too,
+  keeping each source/flag/environment's latest, and the dashboard reads at most the newest `HISTORY_READ_LIMIT` (5000)
+  (`server/test/flag-history-retention.test.js`). Version resolution (`lib/version-resolution.js`: release → tag → version file → commit
   message; compares use only a verified release/tag or the SHA, stored as `deployments.resolved_ref`). A version
   file's label goes through `matchVersionLabel()`: the tag as written, the `v` prefix toggled, the base `X.Y.Z` tag
   of a suffixed label (`1.4.25-okta`; label kept, tag used), and `latest` = the newest published non-prerelease

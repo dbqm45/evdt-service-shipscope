@@ -275,7 +275,10 @@ not stripped or coerced).
   another tenant is untouched). Render's database backups still hold the data until they expire.
 - **Retention**: records older than the tenant's `deployment_retention_days` are deleted daily, except each
   repo/environment's latest deployment and latest successful one. `issue_deployments` ("issue X first reached
-  ENV") is never trimmed. Untracking a repo deletes its deployments.
+  ENV") is never trimmed. Untracking a repo deletes its deployments. Flag changes (`flag_value_history`, the
+  Deployment history's flag events) follow the same retention, keeping each source/flag/environment's latest change
+  (`cleanupFlagHistory()`, migration `034`); current values are never trimmed, and one dashboard reads at most the
+  newest 5000 changes (`HISTORY_READ_LIMIT`).
 - **Dashboard files**: only an allowlist from `docs/` (`index.html`, `style.css`, `favicon.svg`, `app-*.js`) is
   read at startup and served from memory -- `docs/data/`, `components.json` and `jira-spaces.json` are never
   reachable, and no request path touches the filesystem. Responses carry `X-Frame-Options: DENY`,

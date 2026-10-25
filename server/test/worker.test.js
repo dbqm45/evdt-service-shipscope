@@ -86,7 +86,7 @@ test('syncTick and cleanupTick log their outcome with fields, record it, and nev
     assert.deepStrictEqual(options, { tenantBudgetMs: 30_000 }, 'each tenant\'s share of the pass');
     await syncTick(lockPool(false).pool, {}, logger, { recordRun, syncAll: async () => assert.fail('must not run') });
     await syncTick(lockPool(true).pool, {}, logger, { recordRun, syncAll: async () => { throw new Error('db down'); } });
-    await cleanupTick(lockPool(true).pool, logger, { recordRun, cleanupAll: async () => 4 });
+    await cleanupTick(lockPool(true).pool, logger, { recordRun, cleanupAll: async () => ({ deployments: 4, flagChanges: 7 }) });
     await cleanupTick({ connect: async () => { throw new Error('no db'); } }, logger, { recordRun });
 
     const done = lines[0];
@@ -94,7 +94,7 @@ test('syncTick and cleanupTick log their outcome with fields, record it, and nev
     assert.deepStrictEqual([done.level, done.job, done.repos, done.failed, typeof done.durationMs], ['warn', 'deployments', 2, 1, 'number'], 'a pass with failed repos is a warning');
     assert.match(lines[1].msg, /deployments skipped/);
     assert.deepStrictEqual([lines[2].level, lines[2].msg, lines[2].err.message], ['error', 'deployments failed', 'db down']);
-    assert.deepStrictEqual([lines[3].level, lines[3].msg, lines[3].deleted], ['info', 'cleanup done: 4 old deployment records deleted', 4]);
+    assert.deepStrictEqual([lines[3].level, lines[3].msg, lines[3].deployments, lines[3].flagChanges], ['info', 'cleanup done: 4 old deployment records and 7 old flag changes deleted', 4, 7]);
     assert.deepStrictEqual([lines[4].msg, lines[4].err.message], ['cleanup failed', 'no db']);
     assert.deepStrictEqual(runs.map((r) => [r.job, r.ok, r.error || null]), [
         ['deployments', true, null], ['deployments', false, 'db down'], ['cleanup', true, null], ['cleanup', false, 'no db'],
@@ -108,8 +108,8 @@ test('syncTick and cleanupTick log their outcome with fields, record it, and nev
 
 test('a job whose status cannot be recorded still runs, and says so', async () => {
     const { logger, lines } = memoryLogger();
-    await cleanupTick(lockPool(true).pool, logger, { recordRun: async () => { throw new Error('read-only'); }, cleanupAll: async () => 0 });
-    assert.deepStrictEqual(lines.map((l) => l.msg), ['cleanup done: 0 old deployment records deleted', 'could not record the worker status']);
+    await cleanupTick(lockPool(true).pool, logger, { recordRun: async () => { throw new Error('read-only'); }, cleanupAll: async () => ({ deployments: 0, flagChanges: 0 }) });
+    assert.deepStrictEqual(lines.map((l) => l.msg), ['cleanup done: 0 old deployment records and 0 old flag changes deleted', 'could not record the worker status']);
 });
 
 test('jiraTick runs the Jira sync under its own lock, logs its outcome and never throws', async () => {
