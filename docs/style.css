@@ -740,3 +740,5 @@ a.dn-item-title:hover { color:var(--accent-blue); text-decoration:underline; }
 .flag-overdue { border-color:color-mix(in srgb, var(--fail) 60%, transparent); background:color-mix(in srgb, var(--fail) 7%, transparent); }
 .rp-flag-remove-overdue { color:var(--fail); font-weight:600; }
 @media (max-width: 640px) { .rp-lines { grid-template-columns:1fr; } .rp-flag-remove { margin-left:0; } }
+.rp-problems { list-style:none; margin:0; padding:8px 10px; display:flex; flex-direction:column; gap:4px; border:1px solid color-mix(in srgb, var(--run) 55%, transparent); border-radius:6px; background:color-mix(in srgb, var(--run) 7%, transparent); font-size:12.5px; }
+.rp-problems li { display:flex; align-items:center; gap:6px; }

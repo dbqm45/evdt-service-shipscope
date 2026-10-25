@@ -1,0 +1,154 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/dbqm45/pdi/contract/release-plan.schema.json",
+  "title": "Plan wydania zmiany (pdi, kontrakt 0.4.0)",
+  "description": "Plik changes/CHG-n/release.yaml: MVP z miarą, linie wydań R1…Rn z cięciami, flagi z etapami udostępniania. Schemat sprawdza strukturę; spójność (mvp.release wśród linii, TSK zgodne z plan.md, flaga z etapami i remove_by) sprawdzają tf (check) i ci_for_sdlc (REL-001…008).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "change",
+    "releases"
+  ],
+  "properties": {
+    "change": {
+      "type": "string",
+      "pattern": "^[A-Z][A-Z0-9]+-[0-9]+$",
+      "description": "Zmiana, domyślnie CHG-n."
+    },
+    "mvp": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "release"
+      ],
+      "properties": {
+        "release": {
+          "type": "string",
+          "pattern": "^R[0-9]+$"
+        },
+        "outcome": {
+          "type": "string",
+          "minLength": 1
+        },
+        "metric": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "name",
+            "target"
+          ],
+          "properties": {
+            "name": {
+              "type": "string",
+              "minLength": 1
+            },
+            "target": {
+              "type": "string",
+              "minLength": 1
+            },
+            "horizon_days": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        },
+        "guardrails": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "Metryki ochronne."
+        }
+      }
+    },
+    "releases": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "tasks"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^R[0-9]+$"
+          },
+          "name": {
+            "type": "string"
+          },
+          "tasks": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^[A-Z][A-Z0-9]+-[0-9]+$",
+              "description": "TSK"
+            }
+          }
+        }
+      }
+    },
+    "flags": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "key"
+        ],
+        "properties": {
+          "key": {
+            "type": "string",
+            "minLength": 1
+          },
+          "tasks": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^[A-Z][A-Z0-9]+-[0-9]+$",
+              "description": "TSK"
+            }
+          },
+          "owner": {
+            "type": "string",
+            "minLength": 1
+          },
+          "remove_by": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+          },
+          "rollout": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "stage"
+              ],
+              "properties": {
+                "stage": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "np. internal, 10%, 100%"
+                },
+                "min_days": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "exit": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "Kryterium wyjścia z etapu."
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

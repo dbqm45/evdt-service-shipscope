@@ -146,7 +146,7 @@ async function setup(t) {
 test('sync: changes and tasks from the default branch; unchanged folder = one request; a change replaces; a bad file is an error', async (t) => {
     const { calls, rows, commit, read, items } = await setup(t);
     commit(1, { [`${DIR}/CHG-12/intent.md`]: INTENT, [`${DIR}/CHG-12/plan.md`]: PLAN, [`${DIR}/README.md`]: '# notes' });
-    assert.deepStrictEqual(await read(), { read: 4, errors: 0 });
+    assert.deepStrictEqual(await read(), { read: 4, errors: 0, plans: 0 });
     assert.deepStrictEqual(await items(), [
         ['CHG-12', 'change', null, 'Retry a failed payment without a double charge', 'accepted'],
         ['TSK-57', 'task', 'CHG-12', 'Retry endpoint for a failed payment', 'done'],
@@ -156,17 +156,21 @@ test('sync: changes and tasks from the default branch; unchanged folder = one re
     assert.deepStrictEqual((await rows('SELECT work_items_ref, work_items_error FROM tracked_repos'))[0], { work_items_ref: sha(1), work_items_error: null });
 
     calls.length = 0;
-    assert.deepStrictEqual(await read(), { read: 0, errors: 0, unchanged: true });
+    assert.deepStrictEqual(await read(), { read: 0, errors: 0, plans: 0, unchanged: true });
     assert.strictEqual(calls.length, 1, 'only the newest commit of the folder is asked for');
+    // A folder read by an older version of the reader (before release.yaml, migration 038) is read again.
+    await rows('UPDATE tracked_repos SET work_items_version = 0');
+    assert.deepStrictEqual(await read(), { read: 4, errors: 0, plans: 0 });
+    assert.strictEqual((await rows('SELECT work_items_version FROM tracked_repos'))[0].work_items_version, 1);
 
     commit(2, { [`${DIR}/CHG-13/intent.md`]: INTENT.replace('CHG-12', 'CHG-13'), [`${DIR}/CHG-14/plan.md`]: '# no header' });
-    assert.deepStrictEqual(await read(), { read: 1, errors: 1 });
+    assert.deepStrictEqual(await read(), { read: 1, errors: 1, plans: 0 });
     assert.deepStrictEqual((await items()).map((i) => i[0]), ['CHG-13'], 'the folder as it is now: CHG-12 is gone');
     assert.match((await rows('SELECT work_items_error FROM tracked_repos'))[0].work_items_error, /CHG-14\/plan\.md: no YAML header/);
 
     // A repo with no changes folder has no items and no error.
     commit(3, {});
-    assert.deepStrictEqual(await read(), { read: 0, errors: 0 });
+    assert.deepStrictEqual(await read(), { read: 0, errors: 0, plans: 0 });
     assert.deepStrictEqual(await items(), []);
 });
 

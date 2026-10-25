@@ -1,0 +1,58 @@
+{
+  "change": "CHG-12",
+  "mvp": {
+    "release": "R1",
+    "outcome": "Klient może ponowić nieudaną płatność bez podwójnego obciążenia",
+    "metric": {
+      "name": "odzyskane_platnosci",
+      "target": ">= 25%",
+      "horizon_days": 30
+    },
+    "guardrails": [
+      "podwojne_obciazenia = 0"
+    ]
+  },
+  "releases": [
+    {
+      "id": "R1",
+      "name": "MVP",
+      "tasks": [
+        "TSK-57",
+        "TSK-58"
+      ]
+    },
+    {
+      "id": "R2",
+      "tasks": [
+        "TSK-59",
+        "TSK-60"
+      ]
+    }
+  ],
+  "flags": [
+    {
+      "key": "payment-retry",
+      "tasks": [
+        "TSK-57",
+        "TSK-58"
+      ],
+      "owner": "PO Payments",
+      "remove_by": "2026-12-31",
+      "rollout": [
+        {
+          "stage": "internal",
+          "min_days": 3,
+          "exit": "0 błędów krytycznych"
+        },
+        {
+          "stage": "10%",
+          "min_days": 7,
+          "exit": "odzyskane >= 15%, duplikaty = 0"
+        },
+        {
+          "stage": "100%"
+        }
+      ]
+    }
+  ]
+}

@@ -202,3 +202,26 @@ test('no lines at all: an empty state that says how to mark one', () => {
     assert.deepEqual(app.ev('releasePlanModel()').groups, []);
     assert.ok(app.render().includes('release:R1'));
 });
+
+test('a broken plan is shown, not fixed: MVP line missing, a task in two lines, a flag task outside the lines', () => {
+    const app = loadApp();
+    const broken = {
+        ...PLAN,
+        mvp: { release: 'R3' },
+        releases: [{ id: 'R1', tasks: ['TSK-57', 'TSK-58'] }, { id: 'R2', tasks: ['TSK-58'] }],
+        flags: [{ key: 'payment-retry', tasks: ['TSK-57', 'TSK-99'], rollout: [{ stage: '100%' }] }],
+    };
+    app.setState(repoState({}, broken));
+    assert.deepEqual(app.ev('releasePlanProblems(state.releasePlan.plans[0])'), [
+        'The MVP line R3 is not among the lines',
+        'TSK-58 is in more than one line (R1, R2)',
+        'Flag payment-retry names TSK-99, which is in no line',
+    ]);
+    assert.deepEqual(app.ev('releasePlanModel().groups[0].problems').length, 3);
+    const out = app.render();
+    assert.ok(out.includes('rp-problems') && out.includes('TSK-58 is in more than one line (R1, R2)'));
+
+    app.setState(repoState({}));
+    assert.deepEqual(app.ev('releasePlanProblems(state.releasePlan.plans[0])'), []);
+    assert.ok(!app.render().includes('rp-problems'));
+});

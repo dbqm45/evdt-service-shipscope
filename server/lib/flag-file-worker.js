@@ -63,8 +63,21 @@ function parse({ text, fileName, format, options, limits }) {
     return flags;
 }
 
+/** A whole document (parseDocumentFile()): parsed and within the shape limits, nothing more. */
+function parseWhole({ text, fileName, format, limits }) {
+    let doc;
+    try {
+        doc = parseDocument(text, format, fileName);
+    } catch (err) {
+        const line = /line (\d+)/i.exec(String(err.message || ''));
+        throw new Refusal(`${fileName}: not valid ${FORMAT_NAMES[format] || format}${line ? ` (line ${line[1]})` : ''}`);
+    }
+    checkShape(doc, limits, fileName);
+    return doc;
+}
+
 try {
-    parentPort.postMessage({ ok: true, flags: parse(workerData) });
+    parentPort.postMessage(workerData.document ? { ok: true, doc: parseWhole(workerData) } : { ok: true, flags: parse(workerData) });
 } catch (err) {
     parentPort.postMessage({ ok: false, error: err instanceof Refusal ? err.message : `${workerData.fileName}: could not be read` });
 }

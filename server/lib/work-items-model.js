@@ -2,6 +2,8 @@
 // task.schema.json). A change lives in docs/project/changes/<CHG>/: intent.md (what and why, its title) and plan.md
 // (its tasks TSK-n). Both start with tf's "simple YAML" header between --- lines. The I/O is lib/work-items.js.
 
+const { validate } = require('./json-schema-lite');
+
 const WORK_ITEM_KEY = /^[A-Z][A-Z0-9]+-[0-9]+$/;
 const CHANGES_DIR = 'docs/project/changes';
 // The increment the dashboard shows work items in, next to PIs, sprints, releases and months (like NOW_KEY, not a name
@@ -189,4 +191,21 @@ function workItemIssues(items) {
     });
 }
 
-module.exports = { WORK_ITEM_KEY, CHANGES_DIR, CHANGES_KEY, CHANGES_LABEL, TASK_STATUSES, MAX_CHANGES, WorkItemFileError, parseFrontMatter, planTasks, buildWorkItems, workItemIssues };
+/**
+ * A change's release plan (release.yaml, pdi contract 0.4.0) checked against the pinned schema and its folder. Only
+ * the structure: consistency (the MVP among the lines, a task in one line) is tf's to check, the dashboard only shows
+ * it (releasePlanProblems() in docs/app-model.js).
+ *
+ * @param {unknown} doc the parsed file
+ * @param {{ dir: string, schema: object }} input
+ * @returns {{ change: string, mvp?: object, releases: object[], flags?: object[] }}
+ * @throws {WorkItemFileError} the first few problems, by path
+ */
+function checkReleasePlan(doc, { dir, schema }) {
+    const errors = validate(schema, doc);
+    if (errors.length) throw new WorkItemFileError(errors.slice(0, 5).join('; ') + (errors.length > 5 ? `; and ${errors.length - 5} more` : ''));
+    if (doc.change !== dir) throw new WorkItemFileError(`change is ${doc.change}, not ${dir}`);
+    return doc;
+}
+
+module.exports = { checkReleasePlan, WORK_ITEM_KEY, CHANGES_DIR, CHANGES_KEY, CHANGES_LABEL, TASK_STATUSES, MAX_CHANGES, WorkItemFileError, parseFrontMatter, planTasks, buildWorkItems, workItemIssues };

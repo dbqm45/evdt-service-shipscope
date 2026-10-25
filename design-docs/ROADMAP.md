@@ -85,8 +85,9 @@ korporacyjnych.
   - [x] F1 z planu jednego flow (`design-docs/F1-PLAN.pl.md`): elementy pracy CHG/TSK z
     `docs/project/changes/<CHG>/intent.md` i `plan.md` w śledzonych repo (migracja 037, `lib/work-items.js`), przyrost
     „Changes (repo)”, w którym commit z `Change: TSK-57` liczy się dla CHG-12, i `itemKeys` przy flagach w ingest.
-  - [ ] Tryb repo: `changes/CHG-n/release.yaml` przez Contents API (ten sam sync co elementy z F1), walidowany
-    przypiętą kopią schematu z kontraktu pdi 0.4.0, z widocznym błędem syncu przy złym pliku.
+  - [x] Tryb repo: `changes/CHG-n/release.yaml` przez Contents API (ten sam sync co elementy z F1), walidowany
+    przypiętą kopią schematu z kontraktu pdi 0.4.0, z widocznym błędem syncu przy złym pliku; złamana spójność
+    planu (MVP spoza linii, TSK w kilku liniach) jest wyświetlana, nie poprawiana.
   - [ ] Zdarzenia `release.stage_changed` i `feature.released` z polem `release` (G1.5, po wychodzących webhookach z F5).
 - [ ] Wysyłanie flag do panelu Jiry przez jej Feature Flags API (wymaga aplikacji Forge).
 

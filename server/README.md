@@ -308,7 +308,7 @@ not stripped or coerced).
   `github_installations` and `tracked_repos` (migration `004`), `deployments` and `issue_deployments`
   (migration `005`), `flag_sources`, `ingest_tokens`, `flags`, `flag_values` and `flag_value_history` (migration
   `008`), `jira_connections` (migration `009`), `jira_boards`, `jira_pis` and `jira_issues` (migration `010`),
-  `release_lines` and `flag_commit_links` (migration `036`), `work_items` (migration `037`) and the rest of `RLS_TABLES` in `lib/scope.js` are
+  `release_lines` and `flag_commit_links` (migration `036`), `work_items` (migration `037`), `release_plans` (migration `038`) and the rest of `RLS_TABLES` in `lib/scope.js` are
   tenant-scoped the same way. An ingest request carries no session: like an invitation, it can read
   exactly the one `ingest_tokens` row whose hash it holds (`app.ingest_token_hash`), then works under that row's
   tenant, one ingest per tenant at a time (a transaction advisory lock).

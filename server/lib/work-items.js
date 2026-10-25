@@ -6,10 +6,16 @@
 const { withScope } = require('./scope');
 const { roleOf, TenantNotFoundError } = require('./tenants');
 const { githubGet, GitHubApiError, GitHubRateLimitError } = require('./github-app');
-const { CHANGES_DIR, CHANGES_KEY, MAX_CHANGES, buildWorkItems, workItemIssues } = require('./work-items-model');
+const { CHANGES_DIR, CHANGES_KEY, MAX_CHANGES, WorkItemFileError, buildWorkItems, workItemIssues, checkReleasePlan } = require('./work-items-model');
+const { parseDocumentFile, FlagFileError } = require('./flag-file-parser');
+const RELEASE_PLAN_SCHEMA = require('../schemas/release-plan.v0.4.0.schema.json');
 
 const MAX_FILE_BYTES = 256 * 1024;
-const ARTIFACT = new RegExp(`^${CHANGES_DIR}/([^/]+)/(intent|plan)\\.md$`);
+const ARTIFACT = new RegExp(`^${CHANGES_DIR}/([^/]+)/(intent\\.md|plan\\.md|release\\.yaml)$`);
+const ARTIFACT_FIELD = { 'intent.md': 'intent', 'plan.md': 'plan', 'release.yaml': 'release' };
+// What a read understands (tracked_repos.work_items_version, migration 038): 1 = work items and release.yaml. A folder
+// read by an older version is read again even when no commit touched it.
+const WORK_ITEMS_VERSION = 1;
 const ERROR_MAX = 1000;
 
 /** A file's text at a commit; null when it is too big or not a file. */
@@ -25,22 +31,22 @@ async function fileText({ token, fullName, path, ref, fetch: fetchFn }) {
  * items with what the folder holds now.
  *
  * @param {{ pool: import('pg').Pool, token: string, tenantId: string, repo: { repoId: number, fullName: string }, fetch?: typeof fetch, log?: Function }} input
- * @returns {Promise<{ read: number, errors: number, unchanged?: true }>} read: items stored; errors: files (or the read) that failed
+ * @returns {Promise<{ read: number, errors: number, plans: number, unchanged?: true }>} read: items stored; plans: release plans stored; errors: files (or the read) that failed
  * @throws {GitHubRateLimitError}
  */
 async function refreshWorkItems({ pool, token, tenantId, repo, fetch: fetchFn = fetch, log = () => {} }) {
     const { repoId, fullName } = repo;
     const stored = await withScope(pool, { tenantId }, async (client) => (await client.query(
-        'SELECT work_items_ref FROM tracked_repos WHERE tenant_id = $1 AND repo_id = $2', [tenantId, repoId]
+        'SELECT work_items_ref, work_items_version FROM tracked_repos WHERE tenant_id = $1 AND repo_id = $2', [tenantId, repoId]
     )).rows[0]);
-    if (!stored) return { read: 0, errors: 0, unchanged: true };
+    if (!stored) return { read: 0, errors: 0, plans: 0, unchanged: true };
 
     let ref;
     let changes;
     try {
         const newest = await githubGet({ token, path: `/repos/${fullName}/commits?path=${encodeURIComponent(CHANGES_DIR)}&per_page=1`, fetch: fetchFn });
         ref = Array.isArray(newest) && typeof newest[0]?.sha === 'string' && /^[0-9a-f]{40}$/.test(newest[0].sha) ? newest[0].sha : null;
-        if (ref === stored.work_items_ref) return { read: 0, errors: 0, unchanged: true };
+        if (ref === stored.work_items_ref && stored.work_items_version === WORK_ITEMS_VERSION) return { read: 0, errors: 0, plans: 0, unchanged: true };
         changes = [];
         if (ref) {
             const tree = await githubGet({ token, path: `/repos/${fullName}/git/trees/${ref}?recursive=1`, fetch: fetchFn });
@@ -54,11 +60,11 @@ async function refreshWorkItems({ pool, token, tenantId, repo, fetch: fetchFn = 
                     if (byDir.size >= MAX_CHANGES) continue;
                     byDir.set(m[1], { dir: m[1] });
                 }
-                byDir.get(m[1])[m[2]] = entry.path;
+                byDir.get(m[1])[ARTIFACT_FIELD[m[2]]] = entry.path;
             }
             for (const c of byDir.values()) {
                 const change = { dir: c.dir };
-                for (const artifact of ['intent', 'plan']) {
+                for (const artifact of ['intent', 'plan', 'release']) {
                     if (!c[artifact]) continue;
                     const text = await fileText({ token, fullName, path: c[artifact], ref, fetch: fetchFn });
                     change[artifact] = text === null ? '' : text;
@@ -73,10 +79,22 @@ async function refreshWorkItems({ pool, token, tenantId, repo, fetch: fetchFn = 
             'UPDATE tracked_repos SET work_items_error = $3 WHERE tenant_id = $1 AND repo_id = $2', [tenantId, repoId, message]
         ));
         log(`${fullName}: ${message}`, { level: 'warn', tenantId, repo: fullName, err });
-        return { read: 0, errors: 1 };
+        return { read: 0, errors: 1, plans: 0 };
     }
 
     const { items, errors } = buildWorkItems(changes);
+    const plans = [];
+    for (const c of changes.filter((x) => x.release !== undefined)) {
+        const where = `${CHANGES_DIR}/${c.dir}/release.yaml`;
+        try {
+            const doc = await parseDocumentFile({ text: c.release, fileName: where, format: 'yaml' });
+            plans.push({ change: c.dir, plan: checkReleasePlan(doc, { dir: c.dir, schema: RELEASE_PLAN_SCHEMA }) });
+        } catch (err) {
+            if (err instanceof FlagFileError) errors.push({ change: c.dir, message: err.message });
+            else if (err instanceof WorkItemFileError) errors.push({ change: c.dir, message: `${where}: ${err.message}` });
+            else throw err;
+        }
+    }
     const errorText = errors.length ? errors.map((e) => e.message).join('; ').slice(0, ERROR_MAX) : null;
     await withScope(pool, { tenantId }, async (client) => {
         await client.query('DELETE FROM work_items WHERE tenant_id = $1 AND repo_id = $2 AND NOT (item_key = ANY($3))', [tenantId, repoId, items.map((i) => i.key)]);
@@ -89,10 +107,21 @@ async function refreshWorkItems({ pool, token, tenantId, repo, fetch: fetchFn = 
                 [tenantId, i.key, i.kind, i.parent, repoId, i.title, i.status, i.source, i.path, ref]
             );
         }
-        await client.query('UPDATE tracked_repos SET work_items_ref = $3, work_items_error = $4 WHERE tenant_id = $1 AND repo_id = $2', [tenantId, repoId, ref, errorText]);
+        await client.query('DELETE FROM release_plans WHERE tenant_id = $1 AND repo_id = $2 AND NOT (change_key = ANY($3))', [tenantId, repoId, plans.map((p) => p.change)]);
+        for (const p of plans) {
+            await client.query(
+                `INSERT INTO release_plans (tenant_id, change_key, repo_id, plan, ref, synced_at) VALUES ($1, $2, $3, $4, $5, now())
+                 ON CONFLICT (tenant_id, change_key) DO UPDATE SET repo_id = EXCLUDED.repo_id, plan = EXCLUDED.plan, ref = EXCLUDED.ref, synced_at = now()`,
+                [tenantId, p.change, repoId, JSON.stringify(p.plan), ref]
+            );
+        }
+        await client.query(
+            'UPDATE tracked_repos SET work_items_ref = $3, work_items_error = $4, work_items_version = $5 WHERE tenant_id = $1 AND repo_id = $2',
+            [tenantId, repoId, ref, errorText, WORK_ITEMS_VERSION]
+        );
     });
     if (errors.length) log(`${fullName}: ${errorText}`, { level: 'warn', tenantId, repo: fullName });
-    return { read: items.length, errors: errors.length };
+    return { read: items.length, errors: errors.length, plans: plans.length };
 }
 
 /**
@@ -130,4 +159,16 @@ async function listChangeIssues(pool, { tenantId, actorUserId }) {
     });
 }
 
-module.exports = { refreshWorkItems, readWorkItems, listChangeIssues, CHANGES_KEY };
+/**
+ * The tenant's release plans from its repos, in the contract's shape.
+ *
+ * @param {import('pg').PoolClient} client inside withScope()
+ * @param {string} tenantId
+ * @returns {Promise<object[]>}
+ */
+async function readReleasePlans(client, tenantId) {
+    const { rows } = await client.query('SELECT plan FROM release_plans WHERE tenant_id = $1 ORDER BY change_key', [tenantId]);
+    return rows.map((r) => r.plan);
+}
+
+module.exports = { refreshWorkItems, readWorkItems, readReleasePlans, listChangeIssues, CHANGES_KEY, WORK_ITEMS_VERSION };

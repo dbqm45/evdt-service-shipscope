@@ -89,6 +89,7 @@ async function populatedTenant({ pool, app, as }, owner, name, { jira = false } 
         await c.query("INSERT INTO release_lines (tenant_id, item_key, release, origin) VALUES ($1, 'ABC-1', 'R1', 'jira')", [tenantId]);
         await c.query("INSERT INTO flag_commit_links (tenant_id, flag_key, item_key, repo_id) VALUES ($1, 'newCheckout', 'ABC-1', 1)", [tenantId]);
         await c.query("INSERT INTO work_items (tenant_id, item_key, kind, repo_id, title, path, ref) SELECT $1, 'CHG-12', 'change', repo_id, 'x', 'p', 'r' FROM tracked_repos WHERE tenant_id = $1 LIMIT 1", [tenantId]);
+        await c.query("INSERT INTO release_plans (tenant_id, change_key, repo_id, plan, ref) SELECT $1, 'CHG-12', repo_id, '{}', 'r' FROM tracked_repos WHERE tenant_id = $1 LIMIT 1", [tenantId]);
     });
     return tenantId;
 }
