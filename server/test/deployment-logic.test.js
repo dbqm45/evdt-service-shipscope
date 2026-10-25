@@ -7,6 +7,18 @@ const {
 
 // Same cases as the file-based sync's test/deployment-records.test.js, which these functions were ported from.
 
+test('environmentFor: the repo\'s map first (without case, skip = not tracked), else the default rule; seen names kept once', () => {
+    const { environmentFor, mergeSeenEnvironments, MAX_SEEN_ENVIRONMENTS } = require('../lib/deployment-logic');
+    const map = { Staging: 'qa', 'prod-eu': 'skip', live: 'prod' };
+    assert.strictEqual(environmentFor('staging', map), 'qa');
+    assert.strictEqual(environmentFor('PROD-EU', map), null);
+    assert.strictEqual(environmentFor('live', map), 'prod');
+    assert.strictEqual(environmentFor('production', map), 'prod', 'not listed: the default rule');
+    assert.strictEqual(environmentFor('preprod', {}), null);
+    assert.deepStrictEqual(mergeSeenEnvironments(['qa'], ['QA', 'prod', ' prod ', '', null]), ['qa', 'prod']);
+    assert.strictEqual(mergeSeenEnvironments([], Array.from({ length: 80 }, (_, i) => `e${i}`)).length, MAX_SEEN_ENVIRONMENTS);
+});
+
 test('mapEnvironment: never maps pre-prod to prod, drops unknown environments', () => {
     assert.strictEqual(mapEnvironment('production'), 'prod');
     assert.strictEqual(mapEnvironment(' PROD-eu '), 'prod');

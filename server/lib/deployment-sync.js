@@ -1,6 +1,6 @@
 const { withScope } = require('./scope');
 const { createInstallationToken, githubGet, GitHubApiError, GitHubRateLimitError } = require('./github-app');
-const { buildDeploymentPlan, computeNextCursor, issuesFromMessages } = require('./deployment-logic');
+const { buildDeploymentPlan, computeNextCursor, issuesFromMessages, mergeSeenEnvironments } = require('./deployment-logic');
 const { fetchRefIndex, resolveVersionFile, resolveVersion } = require('./version-resolution');
 const { ENV_ORDER, computeEnvDrift } = require('./env-drift');
 const { MAX_RUN_LOOKUPS, createCaches, resolveManual, resolveDisplayName } = require('./deployment-people');
@@ -134,7 +134,7 @@ async function refreshDrift({ pool, token, tenantId, repo, fetch: fetchFn }) {
  * `deadline` (ms since the epoch, by `clock`) is the tenant's time budget: past it the repo stops between deployments
  * (`partial`), keeps what it did, and leaves the cursor before the rest. Drift then waits for a pass that finishes.
  *
- * @param {{ pool: import('pg').Pool, token: string, tenantId: string, repo: { repoId: number, fullName: string, cursor: number, versionFile?: string|null, driftIgnorePaths?: string[], drift?: object }, fetch?: typeof fetch, now?: number, options?: Partial<typeof DEFAULTS>, caches?: ReturnType<typeof createCaches>, deadline?: number, clock?: () => number }} input
+ * @param {{ pool: import('pg').Pool, token: string, tenantId: string, repo: { repoId: number, fullName: string, cursor: number, versionFile?: string|null, driftIgnorePaths?: string[], drift?: object, envMap?: object, seenEnvironments?: string[] }, fetch?: typeof fetch, now?: number, options?: Partial<typeof DEFAULTS>, caches?: ReturnType<typeof createCaches>, deadline?: number, clock?: () => number }} input
  * @returns {Promise<{ inserted: number, blocked: number, skipped: number, cursor: number, partial: boolean, driftRecomputed: boolean, codeFlags: { read: number, failed: number }, untracked?: true }>}
  * @throws {GitHubApiError} a GitHubRateLimitError when the installation's rate limit is spent
  */
@@ -160,7 +160,8 @@ async function syncRepo({ pool, token, tenantId, repo, fetch: fetchFn = fetch, n
     }
 
     const previousByEnv = await withScope(pool, { tenantId }, (client) => lastSuccessByEnv(client, { tenantId, repoId }));
-    const { plan, blockedIds, skipped } = buildDeploymentPlan(batch, statusesById, { now, stuckMaxAgeHours, fullName });
+    const { plan, blockedIds, skipped } = buildDeploymentPlan(batch, statusesById, { now, stuckMaxAgeHours, fullName, envMap: repo.envMap || {} });
+    const seenEnvironments = mergeSeenEnvironments(repo.seenEnvironments || [], batch.map((d) => d.environment));
 
     // Tags and releases: two list calls per repo, and only when there's something new to resolve.
     const refIndex = plan.length ? await fetchRefIndex({ token, fullName, fetch: fetchFn }) : null;
@@ -247,9 +248,10 @@ async function syncRepo({ pool, token, tenantId, repo, fetch: fetchFn = fetch, n
             }
         }
         await client.query(
-            `UPDATE tracked_repos SET deployments_cursor = $3, last_synced_at = now(), last_attempt_at = now(), last_sync_error = NULL
+            `UPDATE tracked_repos SET deployments_cursor = $3, last_synced_at = now(), last_attempt_at = now(), last_sync_error = NULL,
+                 seen_environments = $4
              WHERE tenant_id = $1 AND repo_id = $2`,
-            [tenantId, repoId, nextCursor]
+            [tenantId, repoId, nextCursor, seenEnvironments]
         );
         return { inserted, blocked: blockedIds.length, skipped: skipped.length, cursor: nextCursor, partial };
     });
@@ -289,7 +291,7 @@ async function syncAll({ pool, app, fetch: fetchFn = fetch, now = Date.now(), cl
     const work = [];
     for (const { id: tenantId } of tenantRows) {
         const repos = await withScope(pool, { tenantId }, async (client) => (await client.query(
-            `SELECT r.repo_id, r.full_name, r.installation_id, r.deployments_cursor, r.version_file, r.drift_ignore_paths, r.drift,
+            `SELECT r.repo_id, r.full_name, r.installation_id, r.deployments_cursor, r.version_file, r.drift_ignore_paths, r.drift, r.env_map, r.seen_environments,
                     r.last_attempt_at, i.rate_limited_until
              FROM tracked_repos r
              LEFT JOIN github_installations i ON i.tenant_id = r.tenant_id AND i.installation_id = r.installation_id
@@ -316,6 +318,8 @@ async function syncAll({ pool, app, fetch: fetchFn = fetch, now = Date.now(), cl
                 versionFile: row.version_file,
                 driftIgnorePaths: row.drift_ignore_paths,
                 drift: row.drift,
+                envMap: row.env_map,
+                seenEnvironments: row.seen_environments,
             };
             const limited = limitedUntil.get(installationId) || row.rate_limited_until;
             if (limited && limited.getTime() > clock()) {

@@ -45,7 +45,7 @@ Każdy punkt to osobny PR, wdrażalny sam; `[ ]` = do zrobienia, `[x]` = zrobion
 - [x] Parsery z `adapters/flags/lib.js` w izolowanym wątku (`worker_threads`, limity pamięci, timeout), limity
   rozmiaru, aliasów i głębokości; komunikaty błędów bez wartości; wymagany prefiks albo lista kluczy.
 - [ ] Automatyczne wykrywanie plików flag w repozytorium i propozycja do potwierdzenia.
-- [ ] Jawna mapa nazw środowisk per repozytorium (zamiast samego `mapEnvironment()`).
+- [x] Jawna mapa nazw środowisk per repozytorium (zamiast samego `mapEnvironment()`).
 - [ ] Kreator setupu: karta per repozytorium (środowiska, flagi, mapowanie) z podglądem przed zapisem.
 - [x] Reguła w `scripts/lib/module-boundaries.js`: serwer może wymagać tylko parserów adaptera.
 

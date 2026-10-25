@@ -15,6 +15,42 @@ function mapEnvironment(rawEnv) {
     return null;
 }
 
+const MAPPED_ENVS = ['test', 'qa', 'prod'];
+// GitHub environment names the sync remembers per repo for Settings (seen_environments); more are not shown.
+const MAX_SEEN_ENVIRONMENTS = 50;
+
+/**
+ * The ShipScope environment of a GitHub environment name: the repo's own map first (`envMap`, names compared without
+ * case; `skip` = not tracked), else the default rule (mapEnvironment()).
+ *
+ * @param {string} rawEnv
+ * @param {Record<string, 'test'|'qa'|'prod'|'skip'>} [envMap]
+ * @returns {'test'|'qa'|'prod'|null}
+ */
+function environmentFor(rawEnv, envMap = {}) {
+    const name = (rawEnv || '').trim().toLowerCase();
+    const mapped = Object.entries(envMap).find(([key]) => key.trim().toLowerCase() === name);
+    if (mapped) return MAPPED_ENVS.includes(mapped[1]) ? mapped[1] : null;
+    return mapEnvironment(rawEnv);
+}
+
+/**
+ * The GitHub environment names to remember for a repo: the ones stored plus the new ones, in first-seen order, at
+ * most MAX_SEEN_ENVIRONMENTS.
+ *
+ * @param {string[]} stored
+ * @param {string[]} seen
+ * @returns {string[]}
+ */
+function mergeSeenEnvironments(stored, seen) {
+    const out = [...(stored || [])];
+    for (const raw of seen) {
+        const name = String(raw || '').trim().slice(0, 100);
+        if (name && !out.some((n) => n.toLowerCase() === name.toLowerCase())) out.push(name);
+    }
+    return out.slice(0, MAX_SEEN_ENVIRONMENTS);
+}
+
 /** Jira-style issue keys (PROJ-123) in a text, deduplicated. */
 function extractIssueKeys(text) {
     return [...new Set((text || '').match(/[A-Z]{2,}-[0-9]+/g) || [])];
@@ -62,7 +98,7 @@ function trustedRunUrl(url, fullName) {
 
 /**
  * Turns fetched deployments + statuses into an ordered plan.
- * - unknown environment: permanent skip;
+ * - unknown environment (environmentFor(): the repo's `envMap`, else the default rule): permanent skip;
  * - no terminal status yet: `blockedIds` (the cursor must not pass it), unless older than stuckMaxAgeHours,
  *   then a permanent skip so one abandoned pipeline can't hold the cursor back forever;
  * - otherwise a plan entry, sorted by status time, with `previousSha` = the previous successful deploy's
@@ -71,13 +107,13 @@ function trustedRunUrl(url, fullName) {
  *
  * @returns {{ plan: object[], blockedIds: number[], skipped: Array<{ id: number, reason: 'environment'|'stuck' }> }}
  */
-function buildDeploymentPlan(deployments, statusesById, { now = Date.now(), stuckMaxAgeHours, previousShaByEnv = {}, fullName = null }) {
+function buildDeploymentPlan(deployments, statusesById, { now = Date.now(), stuckMaxAgeHours, previousShaByEnv = {}, fullName = null, envMap = {} }) {
     const withEnv = [];
     const blockedIds = [];
     const skipped = [];
 
     for (const dep of deployments) {
-        const environment = mapEnvironment(dep.environment);
+        const environment = environmentFor(dep.environment, envMap);
         if (!environment) {
             skipped.push({ id: dep.id, reason: 'environment' });
             continue;
@@ -142,6 +178,9 @@ function issuesFromMessages(messages) {
 
 module.exports = {
     mapEnvironment,
+    environmentFor,
+    mergeSeenEnvironments,
+    MAX_SEEN_ENVIRONMENTS,
     extractIssueKeys,
     extractCommitType,
     pickLatestStatus,
