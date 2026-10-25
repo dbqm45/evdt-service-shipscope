@@ -926,3 +926,25 @@ test('Flags: suggested links (issues whose commits changed the flag) with link a
     await ui.runAction('dismiss-link-suggestion', pageButton({ key: 'beta', jiraKey: 'EBO-7' }, 'flags', 'flags'));
     assert.deepStrictEqual(calls[0].body, { jiraKey: 'EBO-7', accept: false });
 });
+
+test('Sources: replacing the signing secret asks first; the secret activity lists who did what, escaped', async () => {
+    ui.settingsState.tenantId = TENANT;
+    const base = `/tenants/${TENANT}`;
+    const events = [{ at: '2026-10-25T10:00:00Z', kind: 'signing_secret_rotated', subject: null, actor: 'alice' },
+        { at: '2026-10-25T09:00:00Z', kind: 'endpoint_token_set', subject: '<API>', actor: null }];
+    const page = str(ui.renderSourcesPage({ sources: [], repos: [], admin: true, once: {}, origin: 'https://s', secretEvents: events }));
+    assert.match(page, /data-action="rotate-endpoint-signing">Replace it/);
+    assert.match(page, /<h3>Secret activity<\/h3>.*alice replaced the signing secret.*someone no longer here set the endpoint token of <strong>&lt;API&gt;<\/strong>/s);
+    assert.match(str(ui.renderSourcesPage({ sources: [], repos: [], admin: true, once: {}, origin: 'https://s', secretEvents: [] })), /Nothing yet/);
+
+    const { fn, calls } = fakeFetch({ [`POST ${base}/flag-endpoint-signing/rotate`]: { secret: 'ef'.repeat(32) } });
+    global.fetch = fn;
+    global.confirm = () => false;
+    await ui.runAction('rotate-endpoint-signing', pageButton({}, 'sources', 'flags'));
+    assert.deepStrictEqual(calls, [], 'not confirmed: nothing replaced');
+    global.confirm = () => true;
+    await ui.runAction('rotate-endpoint-signing', pageButton({}, 'sources', 'flags'));
+    delete global.confirm;
+    assert.deepStrictEqual(calls[0], { method: 'POST', url: `${base}/flag-endpoint-signing/rotate`, body: undefined });
+    assert.deepStrictEqual(ui.settingsState.once, { signing: { secret: 'ef'.repeat(32) } });
+});

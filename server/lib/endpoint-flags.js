@@ -17,10 +17,17 @@ const { open, seal, keyRing, SecretBoxError } = require('./secret-box');
 const { safeFetch, SafeFetchError } = require('./safe-fetch');
 const { parseFlagFile, FlagFileError } = require('./flag-file-parser');
 const { checkEndpointConfig, FlagSourceConfigError } = require('./flags-logic');
+const { recordSecretEvent } = require('./secret-audit');
 const { lockTenantFlags, applyObservations, recordSourceEnvError, endpointTokenAad, FlagSourceNotFoundError } = require('./flags');
 
 const ENVS = ['test', 'qa', 'prod'];
 const SIGNATURE_VERSION = 'v1';
+// How a customer's endpoint checks a signature, returned with the secret.
+const SIGNING_SCHEME = {
+    algorithm: 'HMAC-SHA256',
+    signedText: '<X-ShipScope-Timestamp>.GET.<the full URL>',
+    headers: ['X-ShipScope-Timestamp', `X-ShipScope-Signature (${SIGNATURE_VERSION}=<hex>)`],
+};
 
 /**
  * A tenant's first signing secret, derived from the key (HKDF-SHA256, the tenant id in the info): what versions before
@@ -217,14 +224,31 @@ async function endpointSigning(pool, { tenantId, actorUserId, encryptionKey }) {
     if (!encryptionKey) throw new FlagSourceConfigError('Reading flags from an endpoint needs TOKEN_ENCRYPTION_KEY on the server');
     const secret = await withScope(pool, { tenantId }, async (client) => {
         await assertAdmin(client, { tenantId, userId: actorUserId });
+        await recordSecretEvent(client, { tenantId, actorUserId, kind: 'signing_secret_viewed' });
         return tenantSigningSecret(client, { tenantId, encryptionKey });
     });
-    return {
-        secret,
-        algorithm: 'HMAC-SHA256',
-        signedText: '<X-ShipScope-Timestamp>.GET.<the full URL>',
-        headers: ['X-ShipScope-Timestamp', `X-ShipScope-Signature (${SIGNATURE_VERSION}=<hex>)`],
-    };
+    return { secret, ...SIGNING_SCHEME };
 }
 
-module.exports = { signingSecret, signingSecretAad, tenantSigningSecret, signatureHeaders, testEndpoint, refreshEndpointSource, endpointSigning };
+/**
+ * Replaces the workspace's signing secret with a new random one (a leaked secret, a staff change). From then on every
+ * request is signed with the new one only: until the customer's endpoint has it, it refuses ShipScope's reads, which
+ * show as errors and keep the flags. Admins only; returned once, like endpointSigning().
+ *
+ * @param {import('pg').Pool} pool
+ * @param {{ tenantId: string, actorUserId: string, encryptionKey: Buffer|{ current: Buffer, previous: Buffer[] }|null }} input
+ * @returns {Promise<{ secret: string, algorithm: 'HMAC-SHA256', signedText: string, headers: string[] }>}
+ * @throws {FlagSourceConfigError} without TOKEN_ENCRYPTION_KEY
+ */
+async function rotateSigningSecret(pool, { tenantId, actorUserId, encryptionKey }) {
+    if (!encryptionKey) throw new FlagSourceConfigError('Reading flags from an endpoint needs TOKEN_ENCRYPTION_KEY on the server');
+    const secret = crypto.randomBytes(32).toString('hex');
+    await withScope(pool, { tenantId }, async (client) => {
+        await assertAdmin(client, { tenantId, userId: actorUserId });
+        await client.query('UPDATE tenants SET endpoint_signing_secret_enc = $2 WHERE id = $1', [tenantId, seal(encryptionKey, secret, signingSecretAad(tenantId))]);
+        await recordSecretEvent(client, { tenantId, actorUserId, kind: 'signing_secret_rotated' });
+    });
+    return { secret, ...SIGNING_SCHEME };
+}
+
+module.exports = { rotateSigningSecret, signingSecret, signingSecretAad, tenantSigningSecret, signatureHeaders, testEndpoint, refreshEndpointSource, endpointSigning };

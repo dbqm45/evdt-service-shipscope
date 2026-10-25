@@ -95,6 +95,10 @@ function fromShipScope(req, secret) {
 }
 ```
 
+If the secret leaks, **Replace it** (next to Show the signing secret) makes a new one at once; the old one stops
+working, so put the new one in the endpoint right away. Settings → Sources lists who showed or replaced the secret
+and who set or removed endpoint tokens (**Secret activity**).
+
 A read that fails (an error status, a timeout, an answer that is not flags) never removes flags: the environment
 shows an error in Settings and a "?" on the dashboard, and ShipScope waits longer before each retry (up to an hour).
 Error messages never quote the answer. An endpoint inside a private network is not reachable yet; send its flags

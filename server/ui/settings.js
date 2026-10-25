@@ -58,6 +58,8 @@ const settingsState = {
     codeWizard: { draft: {}, found: null, preview: null },
     // "Test" of an endpoint source: which form asked (a source id, or 'new') and what each environment read.
     endpointTest: null,
+    // The workspace's secret events (who showed or replaced a secret), for admins.
+    secretEvents: null,
 };
 
 const tenantPath = (suffix) => `/tenants/${settingsState.tenantId}${suffix}`;
@@ -1018,6 +1020,22 @@ function EndpointSchedule(s){
     return html`<p class="settings-row-meta">Read from its endpoint every ${every} min (and when someone opens the dashboard): last ${fmtDateTime(s.lastPolledAt)}, next ${s.nextPollAt ? fmtDateTime(s.nextPollAt) : 'within a minute'} · token ${s.hasEndpointToken ? 'stored encrypted' : 'none'}${backoff}</p>`;
 }
 
+const SECRET_EVENT_LABELS = {
+    signing_secret_viewed: 'showed the signing secret', signing_secret_rotated: 'replaced the signing secret',
+    endpoint_token_set: 'set the endpoint token of', endpoint_token_removed: 'removed the endpoint token of',
+    jira_connected: 'connected Jira', jira_disconnected: 'disconnected Jira',
+};
+
+/** The audit log of the workspace's secrets: when, who, what (never a secret). */
+function SecretEvents(events){
+    if (!Array.isArray(events)) {
+        return events && events.error ? html`<p class="settings-error">${events.error}</p>` : '';
+    }
+    return html`<h3>Secret activity</h3>${events.length ? html`<ul class="settings-list">${events.slice(0, 20).map((e) => html`<li>
+            <span class="settings-row-meta">${fmtDateTime(e.at)}</span> ${e.actor || 'someone no longer here'} ${SECRET_EVENT_LABELS[e.kind] || e.kind}${e.subject ? html` <strong>${e.subject}</strong>` : ''}
+        </li>`)}</ul>` : html`<p class="settings-hint">Nothing yet: showing or replacing a secret, setting an endpoint token or connecting Jira is listed here.</p>`}`;
+}
+
 function renderSources({ flags, repos, once, origin, now = new Date(), wizard = { draft: {}, found: null, preview: null, place: 'sources' }, endpointTest = null }){
     if (flags === null) {
         return html`<p class="settings-loading">Loading…</p>`;
@@ -1103,7 +1121,8 @@ function renderSources({ flags, repos, once, origin, now = new Date(), wizard = 
             ${EndpointButtons('Read from endpoint')}
         </form>
         ${testFor('new')}
-        <p class="settings-row-meta">Requests are signed so your endpoint can tell ShipScope's calls from anyone else's. <button type="button" class="btn-link btn" data-action="show-endpoint-signing">Show the signing secret</button></p>
+        <p class="settings-row-meta">Requests are signed so your endpoint can tell ShipScope's calls from anyone else's. <button type="button" class="btn-link btn" data-action="show-endpoint-signing">Show the signing secret</button>
+            · <button type="button" class="btn-link btn" data-action="rotate-endpoint-signing">Replace it</button></p>
         <h3>Add a source that sends its flags</h3>
         <form class="settings-form" data-action="create-source">
             <label>Name <input name="name" required maxlength="100" placeholder="e.g. LaunchDarkly"></label>
@@ -1167,13 +1186,13 @@ function renderFlags({ flagList, admin, jiraUrl = null }){
 }
 
 /** @param {{ sources: object[]|null|{ error: string }, repos: object[], admin: boolean, once: object, origin: string }} props */
-function renderSourcesPage({ sources, repos, admin, once, origin, wizard, endpointTest = null }){
+function renderSourcesPage({ sources, repos, admin, once, origin, wizard, endpointTest = null, secretEvents = null }){
     return Page({
         id: 'sources',
         section: 'flags',
         title: 'Sources',
         hint: 'Where flags come from: a file in your code that ShipScope reads at each deployment, or a source (a flag service, a backend, a build step) that sends their full state to the ingest URL with its own token.',
-        body: Card({ body: admin ? renderSources({ flags: sources, repos, once, origin, wizard, endpointTest }) : html`<p class="settings-hint">Only admins manage flag sources.</p>` }),
+        body: Card({ body: admin ? html`${renderSources({ flags: sources, repos, once, origin, wizard, endpointTest })}${SecretEvents(secretEvents)}` : html`<p class="settings-hint">Only admins manage flag sources.</p>` }),
     });
 }
 
@@ -1193,7 +1212,7 @@ function renderSettings(){
         github: () => renderGitHub({ enabled: s.features.githubApp, webhooks: s.features.githubWebhooks, github: s.github, installationRepos: s.installationRepos, admin, picker: s.trackPicker, editing: s.editingRepo, sources: s.flags, wizard: s.codeWizard }),
         jira: () => renderJira({ enabled: s.features.jira, webhooks: s.features.jiraWebhooks, jira: s.jira, boards: s.boards, admin, flagFields: s.flagFields }),
         flags: () => renderFlags({ flagList: s.flagList, admin, jiraUrl: s.jira && s.jira.site ? s.jira.site.url : null }),
-        sources: () => renderSourcesPage({ sources: s.flags, repos, admin, once: s.once, origin: location.origin, wizard: s.codeWizard, endpointTest: s.endpointTest }),
+        sources: () => renderSourcesPage({ sources: s.flags, repos, admin, once: s.once, origin: location.origin, wizard: s.codeWizard, endpointTest: s.endpointTest, secretEvents: s.secretEvents }),
         danger: () => renderDangerZone({ tenantName: s.tenant && s.tenant.name }),
     };
     const counts = {
@@ -1250,12 +1269,14 @@ const loaders = {
         }
     },
     async flags(){
-        const [list, sources] = await Promise.all([
+        const [list, sources, events] = await Promise.all([
             api('GET', tenantPath('/flags')).then((r) => r.flags, (err) => ({ error: err.message })),
             isAdmin() ? api('GET', tenantPath('/flag-sources')).then((r) => r.sources, (err) => ({ error: err.message })) : Promise.resolve(null),
+            isAdmin() ? api('GET', tenantPath('/secret-events')).then((r) => r.events, (err) => ({ error: err.message })) : Promise.resolve(null),
         ]);
         settingsState.flagList = list;
         settingsState.flags = sources;
+        settingsState.secretEvents = events;
     },
 };
 
@@ -1510,6 +1531,13 @@ const actions = {
         const { envs } = await api('POST', tenantPath('/flag-endpoint-test'), body);
         settingsState.endpointTest = { place: sourceId || 'new', envs };
         return {};
+    },
+    'rotate-endpoint-signing': async () => {
+        if (!confirmed('Replace the signing secret? The old one stops working at once: until your endpoint has the new one, it refuses ShipScope\'s reads (the flags stay as they are).')) {
+            return null;
+        }
+        settingsState.once = { signing: await api('POST', tenantPath('/flag-endpoint-signing/rotate')) };
+        return { section: 'flags', ok: 'Signing secret replaced: put the new one in your endpoint.' };
     },
     'show-endpoint-signing': async () => {
         settingsState.once = { signing: await api('GET', tenantPath('/flag-endpoint-signing')) };
