@@ -4,7 +4,7 @@ const {
     recordIngestError, listFlags, setFlagDetails,
 } = require('../lib/flags');
 const { createLimiter } = require('../lib/request-limiter');
-const { testEndpoint, endpointSigning, rotateSigningSecret } = require('../lib/endpoint-flags');
+const { testEndpoint, endpointTestResult, endpointSigning, rotateSigningSecret } = require('../lib/endpoint-flags');
 const { listSecretEvents } = require('../lib/secret-audit');
 const { answerLinkSuggestion } = require('../lib/flag-link-suggestions');
 const { CODE_CONFIG, ENDPOINT_CONFIG, ENDPOINT_TOKEN } = require('../schemas/flag-code-config');
@@ -35,6 +35,7 @@ const INGEST_SCHEMA = require('../schemas/flags-ingest.v2.schema.json');
  */
 function registerFlagRoutes(app, ctx) {
     const { pool, requireUser, UUID_PARAM, encryptionKey } = ctx;
+    const sealingKeys = ctx.sealingKeys || null;
     const limiter = createLimiter(ctx.ingestRateLimit || INGEST_RATE_LIMIT);
     const testLimiter = createLimiter(ENDPOINT_TEST_LIMIT);
     const fetchImpl = ctx.safeFetch || undefined;
@@ -98,7 +99,7 @@ function registerFlagRoutes(app, ctx) {
         preHandler: requireUser,
         schema: { params: tenantOnlyParams, body: { ...sourceBody(['name', 'kind'], { tokenExpiresInDays: EXPIRES_IN_DAYS, tokenEnvironments: TOKEN_ENVIRONMENTS, origin: { type: 'string', enum: ['push', 'code', 'endpoint'] } }), ...ONE_SCOPE } },
     }, async (request, reply) => reply.code(201).send(await createFlagSource(pool, {
-        tenantId: request.params.tenantId, actorUserId: request.user.id, ...request.body, encryptionKey,
+        tenantId: request.params.tenantId, actorUserId: request.user.id, ...request.body, encryptionKey, sealingKeys,
     })));
 
     // The flags themselves, for the settings page: descriptions and Jira links by origin, state per environment.
@@ -147,21 +148,28 @@ function registerFlagRoutes(app, ctx) {
         preHandler: requireUser,
         schema: { params: sourceParams, body: { ...sourceBody(['name', 'kind', 'priority']), anyOf: [{ required: ['repoIds'] }, { required: ['repoId'] }], ...ONE_SCOPE } },
     }, async (request) => updateFlagSource(pool, {
-        tenantId: request.params.tenantId, actorUserId: request.user.id, sourceId: request.params.sourceId, ...request.body, encryptionKey,
+        tenantId: request.params.tenantId, actorUserId: request.user.id, sourceId: request.params.sourceId, ...request.body, encryptionKey, sealingKeys,
     }));
 
     // "Test" for an endpoint source, saved or not: only the parsed flags per environment come back, never the answer.
+    // A saved token only the worker can read is tested there: 202 { pending, testId }, then GET .../:testId.
     app.post('/tenants/:tenantId/flag-endpoint-test', {
         preHandler: requireUser,
         schema: {
             params: tenantOnlyParams,
             body: { type: 'object', required: ['endpoint'], additionalProperties: false, properties: { endpoint: ENDPOINT_CONFIG, endpointToken: ENDPOINT_TOKEN, sourceId: UUID_PARAM } },
         },
-    }, async (request) => {
+    }, async (request, reply) => {
         const { ok, retryAfterSeconds } = testLimiter.take(request.params.tenantId);
         if (!ok) throw new IngestRateLimitError(retryAfterSeconds, 'Too many endpoint tests; wait a moment');
-        return { envs: await testEndpoint(pool, { tenantId: request.params.tenantId, actorUserId: request.user.id, ...request.body, encryptionKey, fetchImpl }) };
+        const result = await testEndpoint(pool, { tenantId: request.params.tenantId, actorUserId: request.user.id, ...request.body, encryptionKey, sealingKeys, fetchImpl });
+        return result.pending ? reply.code(202).send(result) : result;
     });
+
+    app.get('/tenants/:tenantId/flag-endpoint-test/:testId', {
+        preHandler: requireUser,
+        schema: { params: { type: 'object', required: ['tenantId', 'testId'], properties: { tenantId: UUID_PARAM, testId: UUID_PARAM } } },
+    }, async (request) => endpointTestResult(pool, { tenantId: request.params.tenantId, actorUserId: request.user.id, testId: request.params.testId }));
 
     // How the customer's endpoint checks a request came from ShipScope for this workspace (admins only).
     app.get('/tenants/:tenantId/flag-endpoint-signing', {

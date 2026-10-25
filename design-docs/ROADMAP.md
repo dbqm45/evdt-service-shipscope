@@ -91,8 +91,10 @@ niezawodność usługi, reszta bezpieczeństwa i potrzeby klientów korporacyjny
 - [x] Rotacja `TOKEN_ENCRYPTION_KEY` z identyfikatorem klucza w zaszyfrowanej wartości (`v2.<key id>…`), stare klucze
   w `TOKEN_ENCRYPTION_KEY_PREVIOUS`, przeszyfrowanie przez workera; sekret podpisu zapisany per workspace. (#92)
 - [x] Zmiana sekretu podpisu przez admina jednego workspace'u i log audytowy dostępu do sekretów (`secret_events`). (#93)
-- [ ] Osobny klucz szyfrowania sekretów tylko w workerze (dziś `TOKEN_ENCRYPTION_KEY` jest w obu usługach, bo web
-  zapisuje tokeny i pokazuje sekret podpisu).
+- [x] Tokeny endpointów czytelne tylko dla workera: web szyfruje kluczem publicznym (`SECRETS_PUBLIC_KEY`), klucz
+  prywatny tylko w workerze, „Testuj" z zapisanym tokenem przez kolejkę do workera. (etap 1)
+- [ ] Etap 2: tokeny Jiry tylko w workerze (listy tablic i pól, „Sync now" i odłączanie przez workera); wtedy web
+  potrzebuje `TOKEN_ENCRYPTION_KEY` już tylko do sekretu podpisu.
 - [ ] Log audytowy zmian pozostałych ustawień (członkowie, źródła flag, repozytoria), nie tylko sekretów.
 - [ ] Webhook Jiry: sprawdzić, czy Atlassian zawsze wysyła `exp`, i jeśli tak — wymagać go (dziś token bez `exp`
   jest przyjmowany, `server/lib/webhooks.js`).

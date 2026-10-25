@@ -73,6 +73,8 @@ async function populatedTenant({ pool, app, as }, owner, name, { jira = false } 
         await c.query("INSERT INTO issue_deployments (tenant_id, issue_key, environment, repo_id, first_deployed_at) VALUES ($1, 'ABC-1', 'prod', $2, now())", [tenantId, jira ? 1 : 2]);
     });
     await call('PUT', `/tenants/${tenantId}/flag-sources/${source.id}`, { name: 'LD', kind: 'runtime', priority: 0, repoIds: [jira ? 1 : 2] });
+    // A "Test" queued for the worker (lib/endpoint-flags.js), as for an endpoint token only the worker can read.
+    await withScope(pool, { tenantId }, (c) => c.query("INSERT INTO endpoint_tests (tenant_id, source_id, endpoint_config) VALUES ($1, $2, '{}')", [tenantId, source.id]));
     if (jira) {
         const start = await call('GET', `/tenants/${tenantId}/jira/connect`);
         const state = new URL(start.headers.location).searchParams.get('state');

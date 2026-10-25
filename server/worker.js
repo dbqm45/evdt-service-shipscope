@@ -1,10 +1,11 @@
 const { createPool, checkConnection } = require('./lib/db');
-const { loadGitHubAppConfig, loadAtlassianConfig, loadEncryptionKey } = require('./lib/config');
+const { loadGitHubAppConfig, loadAtlassianConfig, loadEncryptionKey, loadSealingKeys } = require('./lib/config');
 const { syncAllJira } = require('./lib/jira-sync');
 const { syncAll } = require('./lib/deployment-sync');
 const { cleanupAll } = require('./lib/retention');
 const { pollEndpoints } = require('./lib/flag-poll');
 const { resealSecrets } = require('./lib/secret-rotation');
+const { runQueuedEndpointTest } = require('./lib/endpoint-flags');
 const { pendingSyncRequests, finishSyncRequests } = require('./lib/webhooks');
 const { recordRun } = require('./lib/worker-status');
 const { createLogger, logLevel, logProcessFailures } = require('./lib/log');
@@ -22,6 +23,8 @@ const CLEANUP_LOCK = 727_002;
 const JIRA_LOCK = 727_003;
 const FLAGS_LOCK = 727_004;
 const SECRETS_LOCK = 727_005;
+const ENDPOINT_TEST_LOCK = 727_006;
+const ENDPOINT_TEST_INTERVAL_MS = 2_000; // an admin waits on these in Settings
 
 const defaultLogger = createLogger({ service: 'worker', level: logLevel(process.env), base: { version: APP_VERSION } });
 
@@ -141,12 +144,34 @@ async function jiraTick(pool, atlassian, logger = defaultLogger, deps = { syncAl
 }
 
 /** One pass over the endpoint sources that are due (lib/flag-poll.js), never overlapping another or a dashboard's request. */
-async function flagsTick(pool, encryptionKey, logger = defaultLogger, deps = { pollEndpoints }) {
+async function flagsTick(pool, encryptionKey, logger = defaultLogger, deps = { pollEndpoints }, sealingKeys = null) {
     await runJob(pool, {
         job: 'flags', lock: FLAGS_LOCK, logger, deps,
-        run: () => deps.pollEndpoints({ pool, encryptionKey, log: syncLogger(logger.child({ job: 'flags' })) }),
+        run: () => deps.pollEndpoints({ pool, encryptionKey, sealingKeys, log: syncLogger(logger.child({ job: 'flags' })) }),
         summary: (r) => `flags poll done: ${r.sources} endpoint source(s) in ${r.tenants} tenant(s), ${r.failed} failed`,
     });
+}
+
+/**
+ * Runs the "Test" requests Settings queued for endpoint tokens only the worker can read (lib/endpoint-flags.js), every
+ * couple of seconds. Logged only when it ran one; a failure leaves the request queued for the next tick.
+ */
+async function endpointTestTick(pool, { encryptionKey, sealingKeys }, logger = defaultLogger, deps = { runQueuedEndpointTest }) {
+    try {
+        const requests = await pendingSyncRequests(pool, 'endpoint-test');
+        if (!requests.length) return;
+        const run = await runExclusive(pool, ENDPOINT_TEST_LOCK, async () => {
+            for (const { key } of requests) {
+                const [tenantId, testId] = key.split('/');
+                if (tenantId && testId) await deps.runQueuedEndpointTest(pool, { tenantId, testId, encryptionKey, sealingKeys });
+            }
+        });
+        if (run.skipped) return;
+        await finishSyncRequests(pool, 'endpoint-test', requests);
+        logger.info(`endpoint tests run: ${requests.length}`, { job: 'endpoint-tests', requests: requests.length });
+    } catch (err) {
+        logger.error('endpoint tests failed', { job: 'endpoint-tests', err });
+    }
 }
 
 /**
@@ -155,7 +180,7 @@ async function flagsTick(pool, encryptionKey, logger = defaultLogger, deps = { p
  * (lock held, or the sync failed as a whole) stays queued for the next tick. Errors are logged, never thrown; the
  * tick is recorded as one job (`webhooks`), failed when any source failed.
  */
-async function webhookTick(pool, { app, atlassian, encryptionKey = null, tenantBudgetMs = DEFAULT_TENANT_BUDGET_SECONDS * 1000 }, logger = defaultLogger, deps = { syncAll, syncAllJira, pollEndpoints }) {
+async function webhookTick(pool, { app, atlassian, encryptionKey = null, sealingKeys = null, tenantBudgetMs = DEFAULT_TENANT_BUDGET_SECONDS * 1000 }, logger = defaultLogger, deps = { syncAll, syncAllJira, pollEndpoints }) {
     const log = logger.child({ job: 'webhooks' });
     const sources = [
         app && ['github', SYNC_LOCK, (requests) => deps.syncAll({
@@ -163,7 +188,7 @@ async function webhookTick(pool, { app, atlassian, encryptionKey = null, tenantB
         })],
         atlassian && ['jira', JIRA_LOCK, (requests) => deps.syncAllJira({ pool, atlassian, log: syncLogger(log), tenantBudgetMs, keys: requests.map((r) => r.key) })],
         // A dashboard was opened: its tenant's endpoint sources, unless just read (lib/flag-poll.js onDemand).
-        encryptionKey && ['flags', FLAGS_LOCK, (requests) => deps.pollEndpoints({ pool, encryptionKey, log: syncLogger(log), tenantIds: requests.map((r) => r.key), onDemand: true })],
+        encryptionKey && ['flags', FLAGS_LOCK, (requests) => deps.pollEndpoints({ pool, encryptionKey, sealingKeys, log: syncLogger(log), tenantIds: requests.map((r) => r.key), onDemand: true })],
     ].filter(Boolean);
     const errors = [];
     const handled = {};
@@ -186,10 +211,10 @@ async function webhookTick(pool, { app, atlassian, encryptionKey = null, tenantB
 }
 
 /** Seals every stored secret with the current TOKEN_ENCRYPTION_KEY (lib/secret-rotation.js), at start and daily. */
-async function secretsTick(pool, encryptionKey, logger = defaultLogger, deps = { resealSecrets }) {
+async function secretsTick(pool, encryptionKey, logger = defaultLogger, deps = { resealSecrets }, sealingKeys = null) {
     await runJob(pool, {
         job: 'secrets', lock: SECRETS_LOCK, logger, deps,
-        run: () => deps.resealSecrets({ pool, encryptionKey, log: syncLogger(logger.child({ job: 'secrets' })) }),
+        run: () => deps.resealSecrets({ pool, encryptionKey, sealingKeys, log: syncLogger(logger.child({ job: 'secrets' })) }),
         summary: (r) => `secrets re-sealed: ${r.resealed} in ${r.tenants} tenant(s), ${r.stale} still on an older key (${r.unreadable} unreadable)`,
     });
 }
@@ -228,15 +253,18 @@ if (require.main === module) {
         defaultLogger.warn('ATLASSIAN_* not set: Jira sync is off');
     }
     const encryptionKey = loadEncryptionKey(process.env);
+    // The private half too: only the worker reads customers' endpoint tokens (lib/sealed-box.js).
+    const sealingKeys = loadSealingKeys(process.env, { withPrivate: true });
     if (encryptionKey) {
-        timers.push(setInterval(() => flagsTick(pool, encryptionKey), FLAGS_INTERVAL_MS));
-        flagsTick(pool, encryptionKey);
-        timers.push(setInterval(() => secretsTick(pool, encryptionKey), CLEANUP_INTERVAL_MS));
-        secretsTick(pool, encryptionKey);
+        timers.push(setInterval(() => flagsTick(pool, encryptionKey, undefined, undefined, sealingKeys), FLAGS_INTERVAL_MS));
+        flagsTick(pool, encryptionKey, undefined, undefined, sealingKeys);
+        timers.push(setInterval(() => secretsTick(pool, encryptionKey, undefined, undefined, sealingKeys), CLEANUP_INTERVAL_MS));
+        secretsTick(pool, encryptionKey, undefined, undefined, sealingKeys);
+        if (sealingKeys) timers.push(setInterval(() => endpointTestTick(pool, { encryptionKey, sealingKeys }), ENDPOINT_TEST_INTERVAL_MS));
     } else {
         defaultLogger.warn('TOKEN_ENCRYPTION_KEY not set: flags from endpoints are off');
     }
-    if (app || atlassian || encryptionKey) timers.push(setInterval(() => webhookTick(pool, { app, atlassian, encryptionKey, tenantBudgetMs: budgetMs }), WEBHOOK_INTERVAL_MS));
+    if (app || atlassian || encryptionKey) timers.push(setInterval(() => webhookTick(pool, { app, atlassian, encryptionKey, sealingKeys, tenantBudgetMs: budgetMs }), WEBHOOK_INTERVAL_MS));
     timers.push(setInterval(() => cleanupTick(pool), CLEANUP_INTERVAL_MS));
     cleanupTick(pool);
 
@@ -247,4 +275,4 @@ if (require.main === module) {
     });
 }
 
-module.exports = { heartbeatTick, runExclusive, syncIntervalMinutes, tenantBudgetSeconds, syncTick, jiraTick, flagsTick, secretsTick, webhookTick, cleanupTick };
+module.exports = { heartbeatTick, runExclusive, syncIntervalMinutes, tenantBudgetSeconds, syncTick, jiraTick, flagsTick, secretsTick, endpointTestTick, webhookTick, cleanupTick };

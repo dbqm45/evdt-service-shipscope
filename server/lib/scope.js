@@ -16,7 +16,7 @@
 const RLS_TABLES = [
     'memberships', 'invitations', 'github_installations', 'tracked_repos', 'deployments', 'issue_deployments',
     'flag_sources', 'flag_source_repos', 'flag_source_envs', 'ingest_tokens', 'flags', 'flag_values', 'flag_value_history', 'jira_connections', 'jira_boards',
-    'jira_pis', 'jira_issues', 'secret_events',
+    'jira_pis', 'jira_issues', 'secret_events', 'endpoint_tests',
 ];
 
 /**

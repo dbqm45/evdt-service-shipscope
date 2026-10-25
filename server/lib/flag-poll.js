@@ -46,11 +46,11 @@ async function schedule(pool, { tenantId, sourceId, now, failures, intervalMinut
  * read; its errors are already recorded on its environments (Settings, the dashboard's "?"). Never throws for one
  * source: an unexpected error is logged and backs that source off like any other failure.
  *
- * @param {{ pool: import('pg').Pool, encryptionKey: Buffer, tenantIds?: string[]|null, onDemand?: boolean, now?: Date, fetchImpl?: Function, log?: Function, random?: () => number }} input
+ * @param {{ pool: import('pg').Pool, encryptionKey: Buffer, sealingKeys?: object|null, tenantIds?: string[]|null, onDemand?: boolean, now?: Date, fetchImpl?: Function, log?: Function, random?: () => number }} input
  *   `tenantIds` limits the pass (a dashboard's request); `onDemand` reads what a viewer would want fresh instead of what is due
  * @returns {Promise<{ tenants: number, sources: number, failed: number }>}
  */
-async function pollEndpoints({ pool, encryptionKey, tenantIds = null, onDemand = false, now = new Date(), fetchImpl, log = () => {}, random = Math.random }) {
+async function pollEndpoints({ pool, encryptionKey, sealingKeys = null, tenantIds = null, onDemand = false, now = new Date(), fetchImpl, log = () => {}, random = Math.random }) {
     const ids = tenantIds
         ? tenantIds.filter((id) => UUID.test(id))
         : (await pool.query('SELECT id FROM tenants ORDER BY created_at')).rows.map((r) => r.id);
@@ -62,7 +62,7 @@ async function pollEndpoints({ pool, encryptionKey, tenantIds = null, onDemand =
         for (const source of sources) {
             let failed;
             try {
-                const result = await refreshEndpointSource(pool, { tenantId, sourceId: source.id, encryptionKey, fetchImpl, now, log });
+                const result = await refreshEndpointSource(pool, { tenantId, sourceId: source.id, encryptionKey, sealingKeys, fetchImpl, now, log });
                 if (!result) continue;
                 failed = result.read === 0 && result.failed > 0;
             } catch (err) {

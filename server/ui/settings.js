@@ -1005,6 +1005,10 @@ function EndpointButtons(submitLabel){
     return html`<button type="button" class="btn" data-action="test-endpoint-source">Test</button> <button type="submit" class="btn${submitLabel === 'Save' ? '' : ' btn-primary'}">${submitLabel}</button>`;
 }
 
+// How Settings waits for a test the worker runs: every 1.5 s, for up to a minute.
+const ENDPOINT_TEST_WAIT_MS = 1500;
+const ENDPOINT_TEST_WAITS = 40;
+
 /** What "Test" read: per environment its host and flags, or why not (never the answer itself). */
 function EndpointTest(envs){
     return html`<div class="settings-wizard"><strong>Test</strong><ul class="settings-list">${envs.map((e) => html`<li>
@@ -1063,7 +1067,12 @@ function renderSources({ flags, repos, once, origin, now = new Date(), wizard = 
         <div class="settings-source-status">${SourceStatus(s)}</div>
         ${SourceFreshness(s)}
         </td><td class="actions"><button type="button" class="btn btn-danger" data-action="delete-source" data-source-id="${s.id}">Delete</button></td></tr>`;
-    const testFor = (place) => (endpointTest && endpointTest.place === place ? EndpointTest(endpointTest.envs) : '');
+    const testFor = (place) => {
+        if (!endpointTest || endpointTest.place !== place) {
+            return '';
+        }
+        return endpointTest.pending ? html`<p class="settings-loading">Testing with the stored token: the worker reads it…</p>` : EndpointTest(endpointTest.envs);
+    };
     const endpointRow = (s) => html`<tr><td>
         <form class="settings-form" data-action="save-source" data-source-id="${s.id}" data-origin="endpoint">
             <label>Name <input name="name" required maxlength="100" value="${s.name}"></label>
@@ -1528,9 +1537,25 @@ const actions = {
         } else if (sourceId && !(values.clearToken || []).length) {
             body.sourceId = sourceId;
         }
-        const { envs } = await api('POST', tenantPath('/flag-endpoint-test'), body);
-        settingsState.endpointTest = { place: sourceId || 'new', envs };
-        return {};
+        const place = sourceId || 'new';
+        const result = await api('POST', tenantPath('/flag-endpoint-test'), body);
+        if (!result.pending) {
+            settingsState.endpointTest = { place, envs: result.envs };
+            return {};
+        }
+        // A stored token only the worker can read: it runs the test within seconds; this waits for its result.
+        settingsState.endpointTest = { place, pending: true };
+        rerender();
+        for (let i = 0; i < ENDPOINT_TEST_WAITS; i++) {
+            await new Promise((resolve) => setTimeout(resolve, settingsState.endpointTestWaitMs ?? ENDPOINT_TEST_WAIT_MS));
+            const answer = await api('GET', tenantPath(`/flag-endpoint-test/${result.testId}`));
+            if (answer.status === 'done') {
+                settingsState.endpointTest = { place, envs: answer.envs };
+                return {};
+            }
+        }
+        settingsState.endpointTest = null;
+        throw new Error('The worker did not run the test within a minute: is it running, with SECRETS_PRIVATE_KEY?');
     },
     'rotate-endpoint-signing': async () => {
         if (!confirmed('Replace the signing secret? The old one stops working at once: until your endpoint has the new one, it refuses ShipScope\'s reads (the flags stay as they are).')) {
