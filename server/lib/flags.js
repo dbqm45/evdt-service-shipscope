@@ -573,7 +573,7 @@ class FlagNotFoundError extends Error {}
  *
  * @param {import('pg').Pool} pool
  * @param {{ tenantId: string, actorUserId: string }} input
- * @returns {Promise<Array<{ key: string, description: string, senderDescription: string|null, manualDescription: string|null, links: { sender: string[], manual: string[], jira: string[] }, states: object, components: string[] }>>}
+ * @returns {Promise<Array<{ key: string, description: string, senderDescription: string|null, manualDescription: string|null, links: { sender: string[], manual: string[], jira: string[] }, suggestions: string[], states: object, components: string[] }>>}
  * @throws {TenantNotFoundError}
  */
 async function listFlags(pool, { tenantId, actorUserId }) {
@@ -583,7 +583,7 @@ async function listFlags(pool, { tenantId, actorUserId }) {
         const names = new Map(repos.map((r) => [Number(r.repo_id), r.full_name.split('/').pop()]));
         const { flagsMeta, flagStates } = await readDashboardFlags(client, { tenantId, componentOf: (id) => names.get(id) });
         const { rows } = await client.query(
-            'SELECT key, description, jira_keys, manual_description, manual_jira_keys FROM flags WHERE tenant_id = $1 ORDER BY key',
+            'SELECT key, description, jira_keys, manual_description, manual_jira_keys, suggested_jira_keys FROM flags WHERE tenant_id = $1 ORDER BY key',
             [tenantId]
         );
         const fromJira = await jiraLinks(client, tenantId);
@@ -593,6 +593,8 @@ async function listFlags(pool, { tenantId, actorUserId }) {
             senderDescription: r.description,
             manualDescription: r.manual_description,
             links: { sender: r.jira_keys, manual: r.manual_jira_keys, jira: fromJira.get(r.key) || [] },
+            // Issues whose commits changed this flag in a flags file (lib/flag-link-suggestions.js), not linked yet.
+            suggestions: r.suggested_jira_keys.filter((k) => ![...r.jira_keys, ...r.manual_jira_keys, ...(fromJira.get(r.key) || [])].includes(k)),
             states: flagStates[r.key] || {},
             components: flagsMeta[r.key].components,
         }));

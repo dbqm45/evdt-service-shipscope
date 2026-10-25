@@ -1137,9 +1137,14 @@ function FlagRow(flag, { admin, jiraUrl }){
             <label>Description (shown instead of the source's) <input name="description" maxlength="500" value="${flag.manualDescription || ''}" placeholder="${flag.senderDescription || ''}"></label>
             <label>Jira issues linked here <input name="jiraKeys" value="${flag.links.manual.join(', ')}" placeholder="e.g. ABC-12, ABC-15"></label>
             <button type="submit" class="btn">Save</button></form>` : '';
+    // Issues whose commits changed this flag in its flags file: an admin links one or dismisses it.
+    const suggested = (flag.suggestions || []).length ? html`<div class="settings-row-meta">Suggested (its commits changed this flag): ${flag.suggestions.map((k, i) => html`${i ? ' · ' : ''}${issue(k)}${admin
+        ? html` <button type="button" class="btn-link btn" data-action="accept-link-suggestion" data-key="${flag.key}" data-jira-key="${k}">link</button>
+            <button type="button" class="btn-link btn" data-action="dismiss-link-suggestion" data-key="${flag.key}" data-jira-key="${k}">dismiss</button>` : ''}`)}</div>` : '';
     return html`<tr><td><strong class="mono">${flag.key}</strong> ${ENVS.map(stateTag)}
         <div>${flag.description || html`<span class="settings-hint">No description</span>`}</div>
         <div class="settings-row-meta">Jira: ${links.length ? links.map((l, i) => html`${i ? ' · ' : ''}${l}`) : 'not linked'}</div>
+        ${suggested}
         ${edit}</td></tr>`;
 }
 
@@ -1428,6 +1433,14 @@ const actions = {
         const jiraKeys = [...new Set(values.jiraKeys.split(/[\s,;]+/).map((k) => k.trim().toUpperCase()).filter(Boolean))];
         await api('PUT', tenantPath(`/flags/${encodeURIComponent(data.key)}`), { description: values.description.trim() || null, jiraKeys });
         return { section: 'flags', ok: `Saved ${data.key}.` };
+    },
+    'accept-link-suggestion': async (el, data) => {
+        await api('POST', tenantPath(`/flags/${encodeURIComponent(data.key)}/suggestions`), { jiraKey: data.jiraKey, accept: true });
+        return { section: 'flags', ok: `Linked ${data.jiraKey} to ${data.key}.` };
+    },
+    'dismiss-link-suggestion': async (el, data) => {
+        await api('POST', tenantPath(`/flags/${encodeURIComponent(data.key)}/suggestions`), { jiraKey: data.jiraKey, accept: false });
+        return { section: 'flags', ok: `${data.jiraKey} is no longer suggested for ${data.key}.` };
     },
     'sync-jira': async () => {
         const result = await api('POST', tenantPath('/jira/sync'));

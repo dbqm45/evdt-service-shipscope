@@ -8,11 +8,14 @@
 // - A missing or unreadable file is an error on that environment, never a removal: the flags stay as they were and
 //   the dashboard shows the doubt (flagFreshness). The next pass tries again.
 // - Parsing happens in lib/flag-file-parser.js's isolated thread; errors never carry a value from the file.
+// - Flags a reading changes get the issues of the commits that changed the file as suggested links
+//   (lib/flag-link-suggestions.js); a failure there never fails the reading.
 const { withScope } = require('./scope');
 const { githubGet, GitHubApiError, GitHubRateLimitError } = require('./github-app');
 const { parseFlagFile, FlagFileError } = require('./flag-file-parser');
-const { codeFileFor } = require('./flags-logic');
+const { codeFileFor, changedFlagKeys } = require('./flags-logic');
 const { lockTenantFlags, applyObservations, recordSourceEnvError } = require('./flags');
+const { suggestLinks } = require('./flag-link-suggestions');
 
 // GitHub's contents API sends a file's content inline up to 1 MB; the parser's own limit is far below that.
 const MAX_FILE_BYTES = 256 * 1024;
@@ -61,6 +64,17 @@ async function fetchFile({ token, fullName, file, ref, fetch: fetchFn }) {
     return Buffer.from(body.content, 'base64').toString('utf8');
 }
 
+/** Suggested links for the flags one reading changed; a rate limit is rethrown, anything else only logged. */
+async function suggestFor({ pool, tenantId, token, repo, file, fromRef, toRef, changed, fetch: fetchFn, log, fields }) {
+    try {
+        const { issueKeys, flags } = await suggestLinks(pool, { tenantId, token, fullName: repo.fullName, file, fromRef, toRef, changedKeys: changed, fetch: fetchFn });
+        if (flags) log(`${repo.fullName}: suggested ${issueKeys.join(', ')} for ${flags} changed flag(s) in ${file}`, { ...fields, issueKeys, flags });
+    } catch (err) {
+        if (err instanceof GitHubRateLimitError) throw err;
+        log(`${repo.fullName}: no link suggestions for ${file}: ${err.message}`, { level: 'warn', ...fields, err });
+    }
+}
+
 /**
  * Reads every code source of one repo where an environment's latest successful deployment changed since the last read.
  * Never fails the repo's sync: a read that fails is recorded on its environment and tried again next pass. A rate
@@ -86,8 +100,12 @@ async function refreshCodeFlags({ pool, token, tenantId, repo, fetch: fetchFn = 
                 if (text === null) throw new FlagFileError(`${file} is not in ${repo.fullName} at ${ref.slice(0, 12)}`);
                 const flags = await parseFlagFile({ text, fileName: file, format: source.code_config.format, options: source.code_config });
                 const observations = Object.entries(flags).map(([key, v]) => ({ key, env, state: v.state, rollout: v.rollout ?? null, changedAt: deployment.deployed_at }));
-                const result = await withScope(pool, { tenantId }, async (client) => {
+                const { summary: result, changed } = await withScope(pool, { tenantId }, async (client) => {
                     await lockTenantFlags(client, tenantId);
+                    const { rows: before } = await client.query(
+                        'SELECT key, state, rollout, removed_at FROM flag_values WHERE tenant_id = $1 AND source_id = $2 AND environment = $3',
+                        [tenantId, source.id, env]
+                    );
                     const written = await applyObservations(client, {
                         tenantId, sourceId: source.id, observations, metaByKey: new Map(), complete: true, environments: [env],
                         changedBy: `deploy of ${ref.slice(0, 12)}`, now,
@@ -99,10 +117,11 @@ async function refreshCodeFlags({ pool, token, tenantId, repo, fetch: fetchFn = 
                     );
                     const summary = { flags: written.flags, changed: written.changed, removed: written.removed, stale: written.stale };
                     await client.query('UPDATE flag_sources SET last_ingest_at = $3, last_ingest = $4 WHERE tenant_id = $1 AND id = $2', [tenantId, source.id, now, summary]);
-                    return summary;
+                    return { summary, changed: changedFlagKeys(before, observations) };
                 });
                 totals.read += 1;
                 log(`${repo.fullName}: flags read from ${file} at ${ref.slice(0, 12)} (${env})`, { ...fields, ...result });
+                await suggestFor({ pool, tenantId, token, repo, file, fromRef: lastRef.get(`${source.id}/${env}`), toRef: ref, changed, fetch: fetchFn, log, fields });
             } catch (err) {
                 if (err instanceof GitHubRateLimitError) throw err;
                 totals.failed += 1;

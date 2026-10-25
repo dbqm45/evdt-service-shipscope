@@ -5,6 +5,7 @@ const {
 } = require('../lib/flags');
 const { createLimiter } = require('../lib/request-limiter');
 const { testEndpoint, endpointSigning } = require('../lib/endpoint-flags');
+const { answerLinkSuggestion } = require('../lib/flag-link-suggestions');
 const { CODE_CONFIG, ENDPOINT_CONFIG, ENDPOINT_TOKEN } = require('../schemas/flag-code-config');
 
 // Per token: a burst of 60 messages, then one a second. A sender posts once per environment per deployment or
@@ -122,6 +123,17 @@ function registerFlagRoutes(app, ctx) {
             },
         },
     }, async (request) => setFlagDetails(pool, {
+        tenantId: request.params.tenantId, actorUserId: request.user.id, key: request.params.key, ...request.body,
+    }));
+
+    // An admin's answer to a suggested link (an issue whose commits changed the flag): link it by hand, or dismiss it.
+    app.post('/tenants/:tenantId/flags/:key/suggestions', {
+        preHandler: requireUser,
+        schema: {
+            params: { type: 'object', required: ['tenantId', 'key'], properties: { tenantId: UUID_PARAM, key: FLAG_KEY } },
+            body: { type: 'object', required: ['jiraKey', 'accept'], additionalProperties: false, properties: { jiraKey: JIRA_KEY, accept: { type: 'boolean' } } },
+        },
+    }, async (request) => answerLinkSuggestion(pool, {
         tenantId: request.params.tenantId, actorUserId: request.user.id, key: request.params.key, ...request.body,
     }));
 

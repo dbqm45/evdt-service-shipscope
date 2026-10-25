@@ -907,3 +907,22 @@ test('Sources: reading flags from an endpoint -- addresses per environment, a to
     assert.deepStrictEqual(ui.settingsState.once, { signing: { secret: 'cd'.repeat(32) } });
 });
 
+
+test('Flags: suggested links (issues whose commits changed the flag) with link and dismiss for admins', async () => {
+    ui.settingsState.tenantId = TENANT;
+    const base = `/tenants/${TENANT}`;
+    const flag = { key: 'beta', description: 'Beta', links: { sender: [], manual: [], jira: [] }, suggestions: ['EBO-7'], states: {}, components: [] };
+    const page = (admin) => str(ui.renderFlags({ flagList: [flag], admin, jiraUrl: 'https://acme.atlassian.net' }));
+    assert.match(page(true), /Suggested \(its commits changed this flag\): <a href="https:\/\/acme.atlassian.net\/browse\/EBO-7"[^>]*>EBO-7<\/a> <button type="button" class="btn-link btn" data-action="accept-link-suggestion" data-key="beta" data-jira-key="EBO-7">link<\/button>/);
+    assert.match(page(true), /data-action="dismiss-link-suggestion" data-key="beta" data-jira-key="EBO-7"/);
+    assert.doesNotMatch(page(false), /accept-link-suggestion/, 'members see the suggestion, admins answer it');
+    assert.doesNotMatch(str(ui.renderFlags({ flagList: [{ ...flag, suggestions: [] }], admin: true })), /Suggested/);
+
+    const { fn, calls } = fakeFetch();
+    global.fetch = fn;
+    await ui.runAction('accept-link-suggestion', pageButton({ key: 'beta', jiraKey: 'EBO-7' }, 'flags', 'flags'));
+    assert.deepStrictEqual(calls[0], { method: 'POST', url: `${base}/flags/beta/suggestions`, body: { jiraKey: 'EBO-7', accept: true } });
+    calls.length = 0;
+    await ui.runAction('dismiss-link-suggestion', pageButton({ key: 'beta', jiraKey: 'EBO-7' }, 'flags', 'flags'));
+    assert.deepStrictEqual(calls[0].body, { jiraKey: 'EBO-7', accept: false });
+});

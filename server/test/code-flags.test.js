@@ -6,7 +6,7 @@ const { createTestDb } = require('./helpers/test-db');
 const { fakeGitHub, AUTH, signIn } = require('./helpers/auth');
 const { buildApp } = require('../web');
 const { withScope } = require('../lib/scope');
-const { createFlagSource, createIngestToken, listFlagSources, updateFlagSource, FlagSourceConfigError } = require('../lib/flags');
+const { createFlagSource, createIngestToken, listFlagSources, listFlags, updateFlagSource, FlagSourceConfigError } = require('../lib/flags');
 const { refreshCodeFlags } = require('../lib/code-flags');
 const { checkCodeConfig, codeFileFor } = require('../lib/flags-logic');
 
@@ -141,4 +141,63 @@ test('the API: a code source over one repo, no token, its config checked; a push
     assert.strictEqual((await post({ name: 'X', kind: 'build', origin: 'code', repoIds: [1], code: { file: 'f.json', extra: 1 } })).statusCode, 400);
     const list = (await app.inject({ method: 'GET', url: `/tenants/${tenantId}/flag-sources`, cookies: { sid: alice } })).json().sources;
     assert.deepStrictEqual(list.map((s) => [s.name, s.origin, s.tokens.length]), [['Code', 'code', 0]]);
+});
+
+test('suggested links: a deployment that changes flags suggests the issues of the commits that changed the file', async (t) => {
+    const { pool, app, alice, aliceId, tenantId, repo, deploy, read } = await setup(t);
+    await createFlagSource(pool, { tenantId, actorUserId: aliceId, name: 'Web code', kind: 'build', repoIds: [1], origin: 'code', code: { file: 'flags.json' } });
+    repo.files[sha(1)] = { 'flags.json': '{"newCheckout": true, "beta": false, "old": true}' };
+    repo.files[sha(3)] = { 'flags.json': '{"newCheckout": true, "beta": true, "search": 20}' };
+    const compares = [];
+    repo.compare = (base, head) => {
+        compares.push([base, head]);
+        return {
+            status: 'ahead', files: [{ filename: 'flags.json' }, { filename: 'src/app.ts' }],
+            commits: [{ sha: sha(2), commit: { message: 'feat(EBO-7): turn beta on, add search' } }, { sha: sha(3), commit: { message: 'fix: EBO-8 typo in the header' } }],
+        };
+    };
+    repo.fileCommits = { 'flags.json': [sha(2), sha(9)] };
+    await deploy('prod', sha(1), '2026-10-20T10:00:00Z');
+    await read();
+    assert.deepStrictEqual(compares, [], 'a first reading has nothing to compare with');
+
+    await deploy('prod', sha(3), '2026-10-22T10:00:00Z');
+    await read();
+    assert.deepStrictEqual(compares, [[sha(1), sha(3)]]);
+    const suggestions = async () => Object.fromEntries((await listFlags(pool, { tenantId, actorUserId: aliceId })).map((f) => [f.key, f.suggestions]));
+    // beta changed, search is new, old was removed (no longer listed, so not in the list); newCheckout did not change.
+    assert.deepStrictEqual(await suggestions(), { newCheckout: [], beta: ['EBO-7'], search: ['EBO-7'] }, 'only the commit that touched flags.json, only the changed flags');
+
+    // Linking one makes it a hand-set link; dismissing one keeps it from coming back.
+    const answer = (key, jiraKey, accept, sid = alice) => app.inject({ method: 'POST', url: `/tenants/${tenantId}/flags/${key}/suggestions`, cookies: { sid }, payload: { jiraKey, accept } });
+    const linked = await answer('beta', 'EBO-7', true);
+    assert.deepStrictEqual(linked.json(), { key: 'beta', manualJiraKeys: ['EBO-7'], suggestedJiraKeys: [] });
+    assert.strictEqual((await answer('search', 'EBO-7', false)).statusCode, 200);
+    assert.deepStrictEqual(await suggestions(), { newCheckout: [], beta: [], search: [] });
+    assert.strictEqual((await answer('nope', 'EBO-7', true)).statusCode, 404);
+    assert.strictEqual((await answer('beta', 'not a key', true)).statusCode, 400);
+
+    // The same issue changes search again: dismissed, so not suggested again; a rollback (behind) suggests nothing.
+    repo.files[sha(4)] = { 'flags.json': '{"newCheckout": true, "beta": true, "search": 40}' };
+    repo.compare = () => ({ status: 'ahead', files: [{ filename: 'flags.json' }], commits: [{ sha: sha(4), commit: { message: 'EBO-7 more search' } }] });
+    repo.fileCommits = { 'flags.json': [sha(4)] };
+    await deploy('prod', sha(4), '2026-10-23T10:00:00Z');
+    await read();
+    assert.deepStrictEqual((await suggestions()).search, []);
+    repo.compare = () => ({ status: 'behind', files: [{ filename: 'flags.json' }], commits: [] });
+    await deploy('prod', sha(1), '2026-10-24T10:00:00Z');
+    await read();
+    // Back on the listing after the rollback: `old`, which EBO-7's commit removed (so suggested then); search is gone.
+    assert.deepStrictEqual(await suggestions(), { newCheckout: [], beta: [], old: ['EBO-7'] });
+});
+
+test('changedFlagKeys and planLinkSuggestions: what a reading changed, and which issues to suggest for it', () => {
+    const { changedFlagKeys, planLinkSuggestions } = require('../lib/flags-logic');
+    const before = [{ key: 'a', state: 'on', rollout: null, removed_at: null }, { key: 'b', state: 'partial', rollout: '30.00', removed_at: null },
+        { key: 'c', state: 'on', rollout: null, removed_at: null }, { key: 'gone', state: 'on', rollout: null, removed_at: new Date() }];
+    assert.deepStrictEqual(changedFlagKeys(before, [{ key: 'a', state: 'on' }, { key: 'b', state: 'partial', rollout: 30 }, { key: 'gone', state: 'on' }, { key: 'new', state: 'off' }]),
+        ['c', 'gone', 'new'], 'c no longer listed, gone back, new; a and b unchanged (30 = "30.00")');
+    const row = (key, extra = {}) => ({ key, jira_keys: [], manual_jira_keys: [], suggested_jira_keys: [], dismissed_jira_keys: [], ...extra });
+    const plan = planLinkSuggestions({ flags: [row('a', { jira_keys: ['K-1'] }), row('b', { dismissed_jira_keys: ['K-2'], suggested_jira_keys: ['K-9'] }), row('c', { manual_jira_keys: ['K-1', 'K-2'] })], issueKeys: ['K-1', 'K-2'] });
+    assert.deepStrictEqual([...plan], [['a', ['K-2']], ['b', ['K-9', 'K-1']]], 'never what a flag is linked to, already suggested or dismissed');
 });

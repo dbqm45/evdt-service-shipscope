@@ -146,6 +146,11 @@ From three places, merged: the keys the sending source attaches, keys an admin s
 overwritten by a source), and Jira itself — a custom field or a label prefix chosen in Settings (Jira → Feature flags
 in Jira).
 
+For flags read from code, ShipScope also suggests links. When a deployment changes a flag in the file (a new value, a
+new flag, a flag removed), the commits since the previous reading that touched that file name their Jira keys. Those
+keys show as "Suggested" on the flag in Settings → Flags, where an admin links one (it becomes a hand-set link) or
+dismisses it (never suggested again for that flag). A suggestion is never a link by itself.
+
 ### How is the stale flag note (🧹) calculated?
 
 Only for a flag with at least one linked Jira issue, all of them Done. ShipScope then takes the longest time the
