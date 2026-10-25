@@ -370,6 +370,47 @@ function nextPollAt({ now, intervalMinutes, failures, random = Math.random }) {
     return new Date(now.getTime() + minutes * jitter * 60_000);
 }
 
+/**
+ * The flags a full reading of one environment changes: a key new there (or back after removal), one whose state or
+ * rollout differs, and one no longer listed.
+ *
+ * @param {Array<{ key: string, state: string, rollout: number|string|null, removed_at: Date|null }>} before that environment's stored values
+ * @param {Array<{ key: string, state: string, rollout?: number|null }>} observations the reading
+ * @returns {string[]} sorted
+ */
+function changedFlagKeys(before, observations) {
+    const old = new Map(before.filter((v) => !v.removed_at).map((v) => [v.key, v]));
+    const changed = new Set();
+    for (const o of observations) {
+        const v = old.get(o.key);
+        if (!v || v.state !== o.state || Number(v.rollout ?? -1) !== Number(o.rollout ?? -1)) changed.add(o.key);
+    }
+    const listed = new Set(observations.map((o) => o.key));
+    for (const key of old.keys()) if (!listed.has(key)) changed.add(key);
+    return [...changed].sort();
+}
+
+// A flag keeps at most this many suggested issues; the oldest go first.
+const MAX_SUGGESTIONS = 20;
+
+/**
+ * The suggested issues to store per flag: each changed flag gets the issue keys of the commits that changed it, except
+ * the ones it is already linked to (by its sender, by hand) or an admin dismissed.
+ *
+ * @param {{ flags: Array<{ key: string, jira_keys: string[], manual_jira_keys: string[], suggested_jira_keys: string[], dismissed_jira_keys: string[] }>, issueKeys: string[] }} input
+ *   `flags`: the changed flags' rows
+ * @returns {Map<string, string[]>} flag key -> its new suggested keys, only for flags that gain one
+ */
+function planLinkSuggestions({ flags, issueKeys }) {
+    const out = new Map();
+    for (const f of flags) {
+        const known = new Set([...f.jira_keys, ...f.manual_jira_keys, ...f.suggested_jira_keys, ...f.dismissed_jira_keys]);
+        const added = issueKeys.filter((k) => !known.has(k));
+        if (added.length) out.set(f.key, [...f.suggested_jira_keys, ...added].slice(-MAX_SUGGESTIONS));
+    }
+    return out;
+}
+
 /** Minutes a confirmation stays fresh when the source sets no threshold: a runtime value can change any time, a
  *  build value only with a deployment (null = never stale). */
 const STALE_AFTER_MINUTES = { runtime: 24 * 60, build: null };
@@ -419,6 +460,8 @@ module.exports = {
     codeFileFor,
     codeFileFormat,
     checkEndpointConfig,
+    changedFlagKeys,
+    planLinkSuggestions,
     POLL,
     nextPollAt,
     STALE_AFTER_MINUTES,

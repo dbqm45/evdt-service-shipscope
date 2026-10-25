@@ -74,7 +74,7 @@ function fakeGitHub(usersByCode, github = {}) {
         // statuses: { [id]: [...] (newest first) }, commits: { [sha]: message }, compare(base, head) -> body,
         // tags: [{ name, commit: { sha } }], releases: [{ tag_name }], files: { [sha]: { [path]: text } },
         // treeOf: { [commitSha]: treeSha } (default `tree-<sha>`), trees: { [treeSha]: listing },
-        // runs: { [runId]: { event } }, fail: HTTP status to answer everything with }. Refs in commits/compare
+        // runs: { [runId]: { event } }, fileCommits: { [path]: [sha, ...] }, fail: HTTP status to answer everything with }. Refs in commits/compare
         // may be tag names. github.users[login] = { name } answers GET /users/<login> (the sync's display names).
         m = url.match(/^https:\/\/api\.github\.com\/users\/([^/?]+)$/);
         if (m && github.users) {
@@ -92,6 +92,11 @@ function fakeGitHub(usersByCode, github = {}) {
             if (rest.startsWith('deployments?')) return json(pageOf(repo.deployments, url));
             if (rest.startsWith('tags?')) return json(pageOf(repo.tags || [], url));
             if (rest.startsWith('releases?')) return json(pageOf(repo.releases || [], url));
+            // The commits touching one file up to a ref (fileCommits: { [path]: [sha, ...] newest first }).
+            if (rest.startsWith('commits?')) {
+                const params = new URL(url).searchParams;
+                return json((repo.fileCommits?.[params.get('path')] || []).map((sha) => ({ sha })));
+            }
             let sub = rest.match(/^deployments\/(\d+)\/statuses/);
             if (sub) return json((repo.statuses[sub[1]] || []).slice(0, 10));
             sub = rest.match(/^commits\/([^/?]+)$/);

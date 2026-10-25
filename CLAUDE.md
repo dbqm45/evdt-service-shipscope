@@ -96,7 +96,7 @@ changelog entry by hand outside a `chore(release)` PR.
 
 Deployed to Render per `context/foundation/infrastructure.md`: `render.yaml` builds both the Web Service and the
 Background Worker from the repo root (`npm ci --prefix server`, `node server/web.js`), not `rootDir: server`, which
-would hide `docs/` from the Web Service. Migrations (`server/migrations/001`–`025`, applied by the hand-rolled
+would hide `docs/` from the Web Service. Migrations (`server/migrations/001`–`026`, applied by the hand-rolled
 `lib/migrate.js`) run as each service's `preDeployCommand` under an advisory lock (`test/render-blueprint.test.js`).
 Dependencies, all in `server/package.json`: `pg`, `fastify`, `@fastify/cookie`. Fastify runs with
 `removeAdditional: false, coerceTypes: false`: unknown fields and wrong types are a 400, never silently fixed.
@@ -196,6 +196,12 @@ success for 3 × `SYNC_INTERVAL_MINUTES` + 5 minutes, or an undrained webhook qu
   only when that ref differs from `flag_source_envs.last_ref`, under `lockTenantFlags()`, through
   `applyObservations()` (complete, `changedAt` = the deployment's time). A missing or unreadable file records the
   environment's `last_error` and keeps the flags; a rate limit is rethrown (`server/test/code-flags.test.js`).
+  Suggested links (migration `026`, `lib/flag-link-suggestions.js`): flags a reading changes (`changedFlagKeys()`)
+  get the Jira keys of the commits between the environment's previous `last_ref` and the new one that touched the file
+  (compare ∩ `commits?path=`; none for a rollback) in `flags.suggested_jira_keys` (`planLinkSuggestions()`: never one
+  already linked or in `dismissed_jira_keys`, at most 20); `listFlags()` returns `suggestions`, and
+  `POST /tenants/:tenantId/flags/:key/suggestions` `{ jiraKey, accept }` links it by hand or dismisses it for good
+  (Settings → Flags). A failure there is logged and never fails the reading.
   Every request to an address a customer gives goes through `safeFetch()` (`lib/safe-fetch.js`): https:443, every
   DNS answer public (`forbiddenAddress()`, a `net.BlockList`), the connection pinned to the checked address, no
   redirects, a time limit and a size limit after decompression (`server/test/safe-fetch.test.js`, a local TLS server).
