@@ -96,7 +96,7 @@ changelog entry by hand outside a `chore(release)` PR.
 
 Deployed to Render per `context/foundation/infrastructure.md`: `render.yaml` builds both the Web Service and the
 Background Worker from the repo root (`npm ci --prefix server`, `node server/web.js`), not `rootDir: server`, which
-would hide `docs/` from the Web Service. Migrations (`server/migrations/001`–`020`, applied by the hand-rolled
+would hide `docs/` from the Web Service. Migrations (`server/migrations/001`–`021`, applied by the hand-rolled
 `lib/migrate.js`) run as each service's `preDeployCommand` under an advisory lock (`test/render-blueprint.test.js`).
 Dependencies, all in `server/package.json`: `pg`, `fastify`, `@fastify/cookie`. Fastify runs with
 `removeAdditional: false, coerceTypes: false`: unknown fields and wrong types are a 400, never silently fixed.
@@ -189,6 +189,13 @@ success for 3 × `SYNC_INTERVAL_MINUTES` + 5 minutes, or an undrained webhook qu
   (`lib/flag-file-worker.js`, no env, 64 MB, 2 s) behind size/nesting/node/flag limits (`LIMITS`), `.env` and
   `.properties` only with a prefix or a key list, and errors that never carry a value from the file
   (`server/test/flag-file-parser.test.js`). `render.yaml` redeploys both services on `adapters/flags/*.js`.
+  Flags in code (migration `021`, `lib/code-flags.js`): a source with `origin: 'code'` (a build source over exactly
+  one repo, no token; `code_config` checked by `checkCodeConfig()`: `file` with at most one `{env}`, `envNames`,
+  `path`/`valuePath`/`keyField`/`rolloutPath`/`prefix`/`keys`) is read by `refreshCodeFlags()` after each complete
+  repo sync (`syncRepo()`, after drift): per environment, the file at the latest successful deployment's resolved ref,
+  only when that ref differs from `flag_source_envs.last_ref`, under `lockTenantFlags()`, through
+  `applyObservations()` (complete, `changedAt` = the deployment's time). A missing or unreadable file records the
+  environment's `last_error` and keeps the flags; a rate limit is rethrown (`server/test/code-flags.test.js`).
   Sources of one kind fold into the dashboard's `build`/`runtime-be` slot by priority. Flags link to Jira issues
   from three origins merged in `readDashboardFlags()`: the sender's `jira_keys`, hand-set
   `manual_jira_keys`/`manual_description` (`PUT /tenants/:tenantId/flags/:key`, never overwritten by a sender), and

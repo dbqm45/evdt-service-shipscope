@@ -3,7 +3,7 @@ const { withScope, setScope } = require('./scope');
 const { assertAdmin, roleOf, TenantNotFoundError } = require('./tenants');
 const {
     IngestPayloadError, checkPayload, planIngestWrites, sourceDescriptors, pickWinningValues, visibleFlagsMeta, historyRecords,
-    STALE_AFTER_MINUTES, freshnessOf, freshnessByComponent,
+    STALE_AFTER_MINUTES, freshnessOf, freshnessByComponent, FlagSourceConfigError, checkCodeConfig,
 } = require('./flags-logic');
 
 /**
@@ -85,12 +85,14 @@ function toSource(row, repoIds = []) {
         id: row.id, name: row.name, kind: row.kind, priority: row.priority, repoIds, repoId: repoIds[0] ?? null, createdAt: row.created_at,
         lastIngestAt: row.last_ingest_at, lastIngest: row.last_ingest,
         lastError: row.last_error_at ? { at: row.last_error_at, message: row.last_error } : null,
+        origin: row.origin || 'push',
+        code: row.code_config || null,
         staleAfterMinutes: row.stale_after_minutes ?? null,
         effectiveStaleAfterMinutes: row.stale_after_minutes ?? STALE_AFTER_MINUTES[row.kind],
     };
 }
 
-const SOURCE_COLUMNS = 'id, name, kind, priority, repo_id, created_at, last_ingest_at, last_ingest, last_error, last_error_at, stale_after_minutes';
+const SOURCE_COLUMNS = 'id, name, kind, priority, repo_id, created_at, last_ingest_at, last_ingest, last_error, last_error_at, stale_after_minutes, origin, code_config';
 
 /** source id -> its environments' freshness (freshnessOf()), by environment name. */
 async function sourceEnvironments(client, tenantId, sourceRows, now) {
@@ -130,23 +132,27 @@ const LOCK_NOT_AVAILABLE = '55P03';
  * Creates a flag source with its first token. Admins only. The token is returned once and never stored.
  *
  * @param {import('pg').Pool} pool
- * @param {{ tenantId: string, actorUserId: string, name: string, kind: 'build'|'runtime', priority?: number, repoIds?: number[], repoId?: number|null, tokenExpiresInDays?: number|null, tokenEnvironments?: string[]|null, staleAfterMinutes?: number|null }} input
- *   the first token's lifetime and environments, as for createIngestToken(); `staleAfterMinutes` null = the kind's default
+ * @param {{ tenantId: string, actorUserId: string, name: string, kind: 'build'|'runtime', priority?: number, repoIds?: number[], repoId?: number|null, tokenExpiresInDays?: number|null, tokenEnvironments?: string[]|null, staleAfterMinutes?: number|null, origin?: 'push'|'code', code?: object }} input
+ *   the first token's lifetime and environments, as for createIngestToken(); `staleAfterMinutes` null = the kind's default.
+ *   `origin: 'code'` with `code` (checkCodeConfig()): a source ShipScope reads itself from one repository; it has no token.
  * @returns {Promise<{ source: FlagSource, token: { id: string, token: string, expiresAt: Date|null, environments: string[]|null } }>}
  * @throws {FlagSourceNotFoundError} a repo in its scope isn't tracked
  * @throws {FlagSourceConflictError} the name is taken
  */
-async function createFlagSource(pool, { tenantId, actorUserId, name, kind, priority, repoIds, repoId, tokenExpiresInDays, tokenEnvironments = null, staleAfterMinutes = null }) {
+async function createFlagSource(pool, { tenantId, actorUserId, name, kind, priority, repoIds, repoId, tokenExpiresInDays, tokenEnvironments = null, staleAfterMinutes = null, origin = 'push', code }) {
     return withScope(pool, { tenantId }, async (client) => {
         await assertAdmin(client, { tenantId, userId: actorUserId });
         const scope = scopeOf({ repoIds, repoId });
+        if (origin !== 'code' && code !== undefined) throw new FlagSourceConfigError('Only a source read from code has a file to read');
+        const codeConfig = origin === 'code' ? checkCodeConfig(code, { kind, repoIds: scope }) : null;
         await assertTrackedRepos(client, tenantId, scope);
         let row = await saveSource(client, () => client.query(
-            `INSERT INTO flag_sources (tenant_id, name, kind, priority, stale_after_minutes) VALUES ($1, $2, $3, $4, $5) RETURNING ${SOURCE_COLUMNS}`,
-            [tenantId, name, kind, priority ?? DEFAULT_PRIORITY[kind], staleAfterMinutes]
+            `INSERT INTO flag_sources (tenant_id, name, kind, priority, stale_after_minutes, origin, code_config) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING ${SOURCE_COLUMNS}`,
+            [tenantId, name, kind, priority ?? DEFAULT_PRIORITY[kind], staleAfterMinutes, origin, codeConfig]
         ));
         await setSourceScope(client, tenantId, row.id, scope);
         row = { ...row, repo_id: scope[0] ?? null };
+        if (codeConfig) return { source: toSource(row, scope), token: null };
         const token = await insertToken(client, { tenantId, sourceId: row.id, actorUserId, expiresInDays: tokenExpiresInDays, environments: tokenEnvironments });
         return { source: toSource(row, scope), token };
     });
@@ -185,25 +191,35 @@ async function saveSource(client, query) {
 
 /**
  * Changes a source's name, kind, priority, the services it covers (`repoIds`; the older `repoId` sets one) or its
- * freshness threshold (`staleAfterMinutes`; left out = unchanged, null = the kind's default). Admins only.
+ * freshness threshold (`staleAfterMinutes`; left out = unchanged, null = the kind's default); for a source read from
+ * code, its `code` (left out = unchanged; a change reads every environment again on the next pass). Admins only.
  *
  * @param {import('pg').Pool} pool
- * @param {{ tenantId: string, actorUserId: string, sourceId: string, name: string, kind: 'build'|'runtime', priority: number, repoIds?: number[], repoId?: number|null, staleAfterMinutes?: number|null }} input
+ * @param {{ tenantId: string, actorUserId: string, sourceId: string, name: string, kind: 'build'|'runtime', priority: number, repoIds?: number[], repoId?: number|null, staleAfterMinutes?: number|null, code?: object }} input
  * @returns {Promise<FlagSource>}
  * @throws {FlagSourceNotFoundError|FlagSourceConflictError}
  */
-async function updateFlagSource(pool, { tenantId, actorUserId, sourceId, name, kind, priority, repoIds, repoId, staleAfterMinutes }) {
+async function updateFlagSource(pool, { tenantId, actorUserId, sourceId, name, kind, priority, repoIds, repoId, staleAfterMinutes, code }) {
     return withScope(pool, { tenantId }, async (client) => {
         await assertAdmin(client, { tenantId, userId: actorUserId });
         const scope = scopeOf({ repoIds, repoId });
+        const { rows: [current] } = await client.query('SELECT origin, code_config FROM flag_sources WHERE tenant_id = $1 AND id = $2', [tenantId, sourceId]);
+        if (!current) throw new FlagSourceNotFoundError('No such flag source');
+        if (current.origin !== 'code' && code !== undefined) throw new FlagSourceConfigError('Only a source read from code has a file to read');
+        const codeConfig = current.origin === 'code' ? checkCodeConfig(code ?? current.code_config, { kind, repoIds: scope }) : null;
         await assertTrackedRepos(client, tenantId, scope);
         const row = await saveSource(client, () => client.query(
             `UPDATE flag_sources SET name = $3, kind = $4, priority = $5, repo_id = $6,
-                 stale_after_minutes = CASE WHEN $7 THEN $8::integer ELSE stale_after_minutes END
+                 stale_after_minutes = CASE WHEN $7 THEN $8::integer ELSE stale_after_minutes END,
+                 code_config = $9
              WHERE tenant_id = $1 AND id = $2 RETURNING ${SOURCE_COLUMNS}`,
-            [tenantId, sourceId, name, kind, priority, scope[0] ?? null, staleAfterMinutes !== undefined, staleAfterMinutes ?? null]
+            [tenantId, sourceId, name, kind, priority, scope[0] ?? null, staleAfterMinutes !== undefined, staleAfterMinutes ?? null, codeConfig]
         ));
         if (!row) throw new FlagSourceNotFoundError('No such flag source');
+        if (codeConfig && JSON.stringify(codeConfig) !== JSON.stringify(current.code_config)) {
+            // A new file or reading: every environment is read again on the next pass.
+            await client.query('UPDATE flag_source_envs SET last_ref = NULL WHERE tenant_id = $1 AND source_id = $2', [tenantId, sourceId]);
+        }
         await setSourceScope(client, tenantId, sourceId, scope);
         return toSource(row, scope);
     });
@@ -264,8 +280,9 @@ async function listFlagSources(pool, { tenantId, actorUserId, now = new Date() }
 async function createIngestToken(pool, { tenantId, actorUserId, sourceId, expiresInDays, environments = null }) {
     return withScope(pool, { tenantId }, async (client) => {
         await assertAdmin(client, { tenantId, userId: actorUserId });
-        const { rows: source } = await client.query('SELECT 1 FROM flag_sources WHERE tenant_id = $1 AND id = $2', [tenantId, sourceId]);
+        const { rows: source } = await client.query('SELECT origin FROM flag_sources WHERE tenant_id = $1 AND id = $2', [tenantId, sourceId]);
         if (!source.length) throw new FlagSourceNotFoundError('No such flag source');
+        if (source[0].origin === 'code') throw new FlagSourceConfigError('A source read from code takes no token: ShipScope reads it from the repository');
         return insertToken(client, { tenantId, sourceId, actorUserId, expiresInDays, environments });
     });
 }
@@ -343,6 +360,31 @@ async function recordIngestError(pool, { token, message, now = new Date() }) {
     });
 }
 
+/**
+ * Inside withScope: takes the tenant's flag-writing lock for the rest of the transaction. One writer per tenant at a
+ * time (a pushed message, a file read from code), so two of one source can't interleave their full-state diffs. The
+ * wait is bounded: a writer queued behind a slow one gives its pooled connection back instead of holding it, so a
+ * flood of messages for one tenant can't use up the pool every other request needs.
+ *
+ * @param {import('pg').PoolClient} client
+ * @param {string} tenantId
+ * @param {number} [lockTimeoutMs]
+ * @returns {Promise<void>}
+ * @throws {IngestBusyError} the wait ran out
+ */
+async function lockTenantFlags(client, tenantId, lockTimeoutMs = INGEST_LOCK_TIMEOUT_MS) {
+    await client.query("SELECT set_config('lock_timeout', $1, true)", [`${Math.max(1, Math.floor(lockTimeoutMs))}ms`]);
+    try {
+        await client.query("SELECT pg_advisory_xact_lock(hashtextextended('flags:' || $1, 0))", [tenantId]);
+    } catch (err) {
+        if (err.code === LOCK_NOT_AVAILABLE) {
+            throw new IngestBusyError('Another flag message for this workspace is still being written; try again shortly', INGEST_RETRY_AFTER_SECONDS);
+        }
+        throw err;
+    }
+    await client.query("SELECT set_config('lock_timeout', '0', true)");
+}
+
 async function applyIngest(pool, { token, payload, now, lockTimeoutMs }) {
     if (!TOKEN_PATTERN.test(token || '')) throw new IngestTokenError('Invalid ingest token');
     return withScope(pool, { ingestTokenHash: hashToken(token) }, async (client) => {
@@ -352,19 +394,7 @@ async function applyIngest(pool, { token, payload, now, lockTimeoutMs }) {
         if (found.expiresAt && found.expiresAt <= now) {
             throw new IngestTokenExpiredError(`Ingest token expired on ${found.expiresAt.toISOString().slice(0, 10)}; create a new one in Settings`);
         }
-        // One ingest per tenant at a time, so two messages from one source can't interleave their full-state diffs.
-        // The wait is bounded: a request queued behind a slow one gives its pooled connection back instead of
-        // holding it, so a flood of messages for one tenant can't use up the pool every other request needs.
-        await client.query("SELECT set_config('lock_timeout', $1, true)", [`${Math.max(1, Math.floor(lockTimeoutMs))}ms`]);
-        try {
-            await client.query("SELECT pg_advisory_xact_lock(hashtextextended('flags:' || $1, 0))", [tenantId]);
-        } catch (err) {
-            if (err.code === LOCK_NOT_AVAILABLE) {
-                throw new IngestBusyError('Another flag message for this workspace is still being written; try again shortly', INGEST_RETRY_AFTER_SECONDS);
-            }
-            throw err;
-        }
-        await client.query("SELECT set_config('lock_timeout', '0', true)");
+        await lockTenantFlags(client, tenantId, lockTimeoutMs);
 
         const { rows: [source] } = await client.query('SELECT name FROM flag_sources WHERE tenant_id = $1 AND id = $2', [tenantId, sourceId]);
         const { complete, environments, observations, metaByKey } = checkPayload(payload, now);
@@ -589,6 +619,9 @@ module.exports = {
     recordIngestError,
     FlagSourceNotFoundError,
     FlagSourceConflictError,
+    FlagSourceConfigError,
+    lockTenantFlags,
+    applyObservations,
     createFlagSource,
     updateFlagSource,
     deleteFlagSource,

@@ -264,11 +264,18 @@ function onboardingSteps({ features, github, jira, boards, sources, flagList, wo
         const refused = sources.filter(sourceRefused);
         steps.push(step('flags', 'Send feature flags', true, 'problem',
             `Message refused: ${refused.map((src) => `${src.name} — ${src.lastError.message}`).join('; ')}`, '#sources'));
+    } else if (sources.some((src) => src.origin === 'code' && (src.environments || []).some((e) => e.state === 'error'))) {
+        const failing = sources.filter((src) => src.origin === 'code' && (src.environments || []).some((e) => e.state === 'error'));
+        steps.push(step('flags', 'Send feature flags', true, 'problem',
+            `Could not read the flags file of ${failing.map((src) => src.name).join(', ')}: see the source for why.`, '#sources'));
+    } else if (sources.some((src) => src.origin === 'code')) {
+        steps.push(step('flags', 'Send feature flags', true, 'waiting',
+            `Waiting for a deployment: ${sources.filter((src) => src.origin === 'code').map((src) => src.name).join(', ')} is read at the next sync of its repository.`, '#sources'));
     } else if (sources.some((src) => activeTokens(src, now).length)) {
         steps.push(step('flags', 'Send feature flags', true, 'waiting',
             `Waiting for the first message from ${sources.filter((src) => activeTokens(src, now).length).map((src) => src.name).join(', ')} (POST /api/flags/ingest with its token).`, '#sources'));
     } else {
-        steps.push(step('flags', 'Send feature flags', true, 'todo', 'Name where your flags live (a build step, a flag service) and give it a token; it then pushes their state.', '#sources', 'Add a source'));
+        steps.push(step('flags', 'Send feature flags', true, 'todo', 'Point ShipScope at the flags file in your code (read at every deployment), or name a source that sends them with a token.', '#sources', 'Add a source'));
     }
 
     if (!workspace) {
@@ -716,6 +723,20 @@ function StaleAfterInput(value){
     return html`<label>Stale after (minutes) <input name="staleAfterMinutes" type="number" min="5" max="43200" placeholder="default" value="${value ?? ''}"></label>`;
 }
 
+/** A code source's reading from its form: the fields shown, over what the API set besides (key list, env names). */
+function codeOf(values, current){
+    const code = { ...current, file: values.file.trim() };
+    for (const field of ['path', 'prefix']) {
+        const value = (values[field] || '').trim();
+        if (value) {
+            code[field] = value;
+        } else {
+            delete code[field];
+        }
+    }
+    return code;
+}
+
 /** '' -> null (the kind's default), else the number of minutes. */
 function staleAfterOf(value){
     return value === '' || value === undefined ? null : Number(value);
@@ -776,7 +797,25 @@ function renderSources({ flags, repos, once, origin, now = new Date() }){
         ? repos.map((r) => html`<label class="inline"><input type="checkbox" name="repoIds" value="${r.repoId}" ${selected.includes(r.repoId) ? raw('checked') : ''}> ${r.fullName}</label>`)
         : html`<span class="settings-row-meta">no tracked repository</span>`}</fieldset>`;
     const kindOptions = (selected) => ['build', 'runtime'].map((k) => html`<option value="${k}" ${k === selected ? raw('selected') : ''}>${k}</option>`);
-    const rows = flags.map((s) => html`<tr><td>
+    const repoName = (id) => (repos.find((r) => r.repoId === id) || {}).fullName || `repository ${id}`;
+    // A source read from code: one repository, a file (with {env} for one per environment), and how to read it.
+    const codeFields = (s) => html`
+            <label>Repository <select name="repoId" required>${repos.map((r) => html`<option value="${r.repoId}" ${(s && (s.repoIds || [])[0] === r.repoId) ? raw('selected') : ''}>${r.fullName}</option>`)}</select></label>
+            <label>File <input name="file" required maxlength="200" placeholder="config/flags.{env}.json" value="${s ? s.code.file : ''}"></label>
+            <label>Object with the flags (optional) <input name="path" maxlength="100" placeholder="features" value="${(s && s.code.path) || ''}"></label>
+            <label>Key prefix (needed for .env/.properties) <input name="prefix" maxlength="100" placeholder="FF_" value="${(s && s.code.prefix) || ''}"></label>`;
+    const codeRow = (s) => html`<tr><td>
+        <form class="settings-form" data-action="save-source" data-source-id="${s.id}" data-origin="code">
+            <label>Name <input name="name" required maxlength="100" value="${s.name}"></label>
+            <label>Priority <input name="priority" type="number" min="0" max="1000" required value="${s.priority}"></label>
+            ${codeFields(s)}
+            <button type="submit" class="btn">Save</button>
+        </form>
+        <p class="settings-row-meta">Read from code: ShipScope reads <code>${s.code.file}</code> in ${repoName((s.repoIds || [])[0])} at each environment's latest successful deployment. No token, no workflow.</p>
+        <div class="settings-source-status">${SourceStatus(s)}</div>
+        ${SourceFreshness(s)}
+        </td><td class="actions"><button type="button" class="btn btn-danger" data-action="delete-source" data-source-id="${s.id}">Delete</button></td></tr>`;
+    const rows = flags.map((s) => (s.origin === 'code' ? codeRow(s) : html`<tr><td>
         <form class="settings-form" data-action="save-source" data-source-id="${s.id}">
             <label>Name <input name="name" required maxlength="100" value="${s.name}"></label>
             <label>Kind <select name="kind">${kindOptions(s.kind)}</select></label>
@@ -790,14 +829,21 @@ function renderSources({ flags, repos, once, origin, now = new Date() }){
         ${SourceFreshness(s)}
         <div class="settings-row-meta">Tokens: ${s.tokens.length ? s.tokens.map((t) => TokenLine(t, now)) : 'none — the source can\'t send anything'}</div>
         ${NewTokenForm(s)}
-        </td><td class="actions"><button type="button" class="btn btn-danger" data-action="delete-source" data-source-id="${s.id}">Delete</button></td></tr>`);
+        </td><td class="actions"><button type="button" class="btn btn-danger" data-action="delete-source" data-source-id="${s.id}">Delete</button></td></tr>`));
     return html`${once.token ? SecretBox({
         label: 'Ingest token — shown only once',
         value: once.token,
         note: `The source sends POST ${origin}/api/flags/ingest with the header "Authorization: Bearer <token>".`,
     }) : ''}
         ${rows.length ? html`<table class="settings-table"><tbody>${rows}</tbody></table>` : html`<p class="settings-hint">No flag source yet.</p>`}
-        <h3>Add a source</h3>
+        <h3>Read flags from code</h3>
+        <p class="settings-hint">For flags kept in a file in the repository (JSON, YAML, .properties, .env, TypeScript/JavaScript): ShipScope reads it at every new deployment. Nothing to set up in your pipelines.</p>
+        ${repos.length ? html`<form class="settings-form" data-action="create-code-source">
+            <label>Name <input name="name" required maxlength="100" placeholder="e.g. Web flags"></label>
+            ${codeFields(null)}
+            <button type="submit" class="btn btn-primary">Read from code</button>
+        </form>` : html`<p class="settings-hint">Track a repository first (GitHub).</p>`}
+        <h3>Add a source that sends its flags</h3>
         <form class="settings-form" data-action="create-source">
             <label>Name <input name="name" required maxlength="100" placeholder="e.g. LaunchDarkly"></label>
             <label>Kind <select name="kind">${kindOptions('runtime')}</select></label>
@@ -860,7 +906,7 @@ function renderSourcesPage({ sources, repos, admin, once, origin }){
         id: 'sources',
         section: 'flags',
         title: 'Sources',
-        hint: 'ShipScope never reads your flags: each source (a build step, a flag service, a cron job) sends their full state to the ingest URL with its own token.',
+        hint: 'Where flags come from: a file in your code that ShipScope reads at each deployment, or a source (a flag service, a backend, a build step) that sends their full state to the ingest URL with its own token.',
         body: Card({ body: admin ? renderSources({ flags: sources, repos, once, origin }) : html`<p class="settings-hint">Only admins manage flag sources.</p>` }),
     });
 }
@@ -1141,8 +1187,23 @@ const actions = {
         settingsState.once = { token: token.token };
         return { section: 'flags' };
     },
+    'create-code-source': async (form) => {
+        const values = formValues(form);
+        await api('POST', tenantPath('/flag-sources'), {
+            name: values.name.trim(), kind: 'build', origin: 'code', repoIds: [Number(values.repoId)], code: codeOf(values, {}),
+        });
+        return { section: 'flags', ok: 'Added: its flags are read at the next sync.' };
+    },
     'save-source': async (form, data) => {
         const values = formValues(form);
+        if (data.origin === 'code') {
+            const current = (Array.isArray(settingsState.flags) ? settingsState.flags : []).find((s) => s.id === data.sourceId);
+            await api('PUT', tenantPath(`/flag-sources/${data.sourceId}`), {
+                name: values.name.trim(), kind: 'build', priority: Number(values.priority), repoIds: [Number(values.repoId)],
+                code: codeOf(values, (current && current.code) || {}),
+            });
+            return { section: 'flags', ok: 'Saved; the file is read again at the next sync.' };
+        }
         await api('PUT', tenantPath(`/flag-sources/${data.sourceId}`), {
             name: values.name.trim(), kind: values.kind, priority: Number(values.priority), repoIds: (values.repoIds || []).map(Number),
             staleAfterMinutes: staleAfterOf(values.staleAfterMinutes),

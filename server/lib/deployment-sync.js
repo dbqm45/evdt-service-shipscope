@@ -4,6 +4,7 @@ const { buildDeploymentPlan, computeNextCursor, issuesFromMessages } = require('
 const { fetchRefIndex, resolveVersionFile, resolveVersion } = require('./version-resolution');
 const { ENV_ORDER, computeEnvDrift } = require('./env-drift');
 const { MAX_RUN_LOOKUPS, createCaches, resolveManual, resolveDisplayName } = require('./deployment-people');
+const { refreshCodeFlags } = require('./code-flags');
 
 /**
  * FR-005: pulls new GitHub deployments of every tracked repo into the tenant's `deployments` table.
@@ -134,10 +135,10 @@ async function refreshDrift({ pool, token, tenantId, repo, fetch: fetchFn }) {
  * (`partial`), keeps what it did, and leaves the cursor before the rest. Drift then waits for a pass that finishes.
  *
  * @param {{ pool: import('pg').Pool, token: string, tenantId: string, repo: { repoId: number, fullName: string, cursor: number, versionFile?: string|null, driftIgnorePaths?: string[], drift?: object }, fetch?: typeof fetch, now?: number, options?: Partial<typeof DEFAULTS>, caches?: ReturnType<typeof createCaches>, deadline?: number, clock?: () => number }} input
- * @returns {Promise<{ inserted: number, blocked: number, skipped: number, cursor: number, partial: boolean, driftRecomputed: boolean, untracked?: true }>}
+ * @returns {Promise<{ inserted: number, blocked: number, skipped: number, cursor: number, partial: boolean, driftRecomputed: boolean, codeFlags: { read: number, failed: number }, untracked?: true }>}
  * @throws {GitHubApiError} a GitHubRateLimitError when the installation's rate limit is spent
  */
-async function syncRepo({ pool, token, tenantId, repo, fetch: fetchFn = fetch, now = Date.now(), options = {}, caches = createCaches(), deadline = Infinity, clock = Date.now }) {
+async function syncRepo({ pool, token, tenantId, repo, fetch: fetchFn = fetch, now = Date.now(), options = {}, caches = createCaches(), deadline = Infinity, clock = Date.now, log = () => {} }) {
     const { maxPerRun, stuckMaxAgeHours, maxPages } = { ...DEFAULTS, ...options };
     const { repoId, fullName, cursor } = repo;
     // Past the tenant's time budget (syncAll), stop between deployments -- after at least one, so every pass makes
@@ -253,10 +254,12 @@ async function syncRepo({ pool, token, tenantId, repo, fetch: fetchFn = fetch, n
         return { inserted, blocked: blockedIds.length, skipped: skipped.length, cursor: nextCursor, partial };
     });
     // A cut-short repo's latest deploys may still change this pass's picture; drift waits for a complete pass.
-    if (written.untracked || written.partial) return { ...written, driftRecomputed: false };
+    if (written.untracked || written.partial) return { ...written, driftRecomputed: false, codeFlags: { read: 0, failed: 0 } };
 
     const driftRecomputed = await refreshDrift({ pool, token, tenantId, repo, fetch: fetchFn });
-    return { ...written, driftRecomputed };
+    // Flags kept in the repo's code, read at what each environment now runs (ADR-003). Never fails the sync.
+    const codeFlags = await refreshCodeFlags({ pool, token, tenantId, repo, fetch: fetchFn, now: new Date(now), log });
+    return { ...written, driftRecomputed, codeFlags };
 }
 
 /**
@@ -326,7 +329,7 @@ async function syncAll({ pool, app, fetch: fetchFn = fetch, now = Date.now(), cl
             totals.repos += 1;
             try {
                 const token = await tokenFor(installationId);
-                const result = await syncRepo({ pool, token, tenantId, repo, fetch: fetchFn, now, options, caches, deadline, clock });
+                const result = await syncRepo({ pool, token, tenantId, repo, fetch: fetchFn, now, options, caches, deadline, clock, log });
                 totals.inserted += result.inserted;
                 if (result.partial) totals.deferred += 1;
                 if (result.inserted || result.blocked || result.partial) {
