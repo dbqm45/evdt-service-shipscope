@@ -88,7 +88,9 @@ korporacyjnych.
   kopia poza Renderem, odtworzenie, test raz na kwartał) i `npm run verify-restore`, który sprawdza odtworzoną kopię. (#103)
 - [ ] Ustawić kopię poza Renderem (eksport co tydzień albo cron job „PostgreSQL S3 Backups”) i wpisać pierwszy test
   odtwarzania do kalendarza.
-- [ ] Cel dostępności (SLO), strona statusu.
+- [x] Cel dostępności (SLO), strona statusu: cele, budżet błędów i alerty w `server/SLO.pl.md`; publiczne `/status` i
+  `/status.json` z historią 90 dni. (#104)
+- [ ] Podłączyć zewnętrzny monitor (`/health`, `/health/worker`, `/status.json`) i reguły alertów z SLO.pl.md.
 - [x] Retencja `flag_value_history`: ta sama co wdrożeń (`deployment_retention_days`), zawsze z ostatnią zmianą każdej
   flagi na źródle i środowisku; dashboard czyta najwyżej 5000 najnowszych zmian. (#102)
 

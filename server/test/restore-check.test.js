@@ -45,7 +45,7 @@ test('a sound copy passes; missing migrations, tables out of RLS and secrets the
 
     // A checkout newer than the copy, an older one, a table taken out of RLS.
     assert.match(judgeRestore(facts, { expectedMigrations: [...MIGRATIONS, '999_future.sql'] }).problems[0], /migrations not applied: 999_future\.sql/);
-    assert.match(judgeRestore(facts, { expectedMigrations: MIGRATIONS.slice(0, -1) }).problems[0], /this checkout does not have.*034/);
+    assert.strictEqual(judgeRestore(facts, { expectedMigrations: MIGRATIONS.slice(0, -1) }).problems[0], `migrations this checkout does not have (restore with a newer one): ${MIGRATIONS.at(-1)}`);
     await pool.query('ALTER TABLE flags NO FORCE ROW LEVEL SECURITY');
     facts = await collectRestoreFacts(pool, { encryptionKey: KEY });
     assert.deepStrictEqual(judgeRestore(facts, { expectedMigrations: MIGRATIONS }).problems, ['table flags is not under forced row-level security']);

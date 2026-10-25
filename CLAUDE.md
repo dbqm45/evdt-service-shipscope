@@ -15,7 +15,8 @@ history of how they came about is in git and `CHANGELOG.md`. Related documents:
   `server/SEKRETY.pl.md` — the encryption keys (what each is for, first setup, rotation, troubleshooting);
   `server/KOPIE.pl.md` — database backups (Render's PITR and exports, a copy outside Render), restoring, and the
   quarterly restore test with `npm run verify-restore --prefix server` (`lib/restore-check.js`, read only, takes
-  `RESTORE_DATABASE_URL`, never `DATABASE_URL`; `server/test/restore-check.test.js`);
+  `RESTORE_DATABASE_URL`, never `DATABASE_URL`; `server/test/restore-check.test.js`); `server/SLO.pl.md` — the SLOs,
+  error budget, alerts and the public status page;
   `RELEASING.md` — versions.
 
 ## What this repo is
@@ -101,7 +102,7 @@ changelog entry by hand outside a `chore(release)` PR.
 
 Deployed to Render per `context/foundation/infrastructure.md`: `render.yaml` builds both the Web Service and the
 Background Worker from the repo root (`npm ci --prefix server`, `node server/web.js`), not `rootDir: server`, which
-would hide `docs/` from the Web Service. Migrations (`server/migrations/001`–`034`, applied by the hand-rolled
+would hide `docs/` from the Web Service. Migrations (`server/migrations/001`–`035`, applied by the hand-rolled
 `lib/migrate.js`) run as each service's `preDeployCommand` under an advisory lock (`test/render-blueprint.test.js`).
 Dependencies, all in `server/package.json`: `pg`, `fastify`, `@fastify/cookie`. Fastify runs with
 `removeAdditional: false, coerceTypes: false`: unknown fields and wrong types are a 400, never silently fixed.
@@ -123,7 +124,7 @@ flag_values, flag_value_history, jira_connections, jira_boards, jira_pis, jira_i
 `lib/withscope-guard.js` (`server/test/withscope-guard.test.js`) fails on any `pool.query(...)` in `server/lib/`
 that names an RLS table. Every tenant table cascades from `tenants`; `DELETE /tenants/:tenantId` (admin, name typed
 back, `deleteTenant()`) relies on it, and `server/test/tenant-delete.test.js` checks every table in `RLS_TABLES` is
-emptied. `sync_requests` (webhook, dashboard-refresh and worker-request queue: `github`/`jira`/`flags`/`endpoint-test`/`jira-token`) and `worker_status` (migration `020`) are the non-RLS tables; neither holds
+emptied. `sync_requests` (webhook, dashboard-refresh and worker-request queue: `github`/`jira`/`flags`/`endpoint-test`/`jira-token`), `worker_status` (migration `020`) and `status_samples` (`035`) are the non-RLS tables; none holds
 tenant data.
 
 **Logs and health.** Both services log JSON lines through `lib/log.js` (`createLogger()`, `LOG_LEVEL`; the web
@@ -138,7 +139,11 @@ success for 3 × `SYNC_INTERVAL_MINUTES` + 5 minutes, or an undrained webhook qu
 `onResponse` hook: ingest outcomes by status, webhook deliveries, status classes) plus `worker_status` (migration
 `033`: any job name, `last_duration_ms`, `runs_total`, `failures_total`; `runJob()` passes `durationMs`) and the
 worker's `sources` job (`sourcesTick()`, every 5 minutes, `flagSourceHealth()` in `lib/flags.js`: sources by origin,
-environments by freshness, refused in the last hour, counts only) (`server/test/metrics.test.js`).
+environments by freshness, refused in the last hour, counts only) (`server/test/metrics.test.js`). The public
+`GET /status` (HTML, no script) and `GET /status.json` (`lib/status-page.js`): judgeWorker()'s components now and per
+day for 90 days, from `status_samples` (migration `035`, non-RLS, counts per component and day, kept 120 days) that
+the web service fills once a minute (`sampleStatus()`, web.js); a day is an outage above 1% `down`
+(`server/test/status-page.test.js`).
 
 **Features, by PRD requirement:**
 

@@ -3,6 +3,7 @@ const { APP_VERSION } = require('../lib/version');
 const crypto = require('crypto');
 const { workerHealth } = require('../lib/worker-status');
 const { renderMetrics, readWorkerMetrics } = require('../lib/metrics');
+const { statusModel, readStatusSamples, renderStatusPage } = require('../lib/status-page');
 
 /**
  * `/health`, `/health/db` and `/health/worker` — the only routes that exist without an `auth` config (CLAUDE.md's
@@ -16,7 +17,7 @@ const { renderMetrics, readWorkerMetrics } = require('../lib/metrics');
  *
  * @param {{ pool: import('pg').Pool, expectWorker: { deployments: boolean, jira: boolean, flags?: boolean }, syncIntervalMinutes: number, metrics?: ReturnType<typeof import('../lib/metrics').createMetrics>, metricsToken?: string|null }} ctx
  */
-function registerHealthRoutes(app, { pool, expectWorker, syncIntervalMinutes, metrics = null, metricsToken = null }) {
+function registerHealthRoutes(app, { pool, expectWorker, syncIntervalMinutes, metrics = null, metricsToken = null, pageHeaders = {} }) {
     app.get('/health', async () => ({ status: 'ok', version: APP_VERSION }));
 
     app.get('/health/db', async (request, reply) => {
@@ -37,6 +38,32 @@ function registerHealthRoutes(app, { pool, expectWorker, syncIntervalMinutes, me
         }
         if (health.status !== 'ok') request.log.warn({ health }, `worker health: ${health.status}`);
         return reply.code(health.status === 'down' ? 503 : 200).header('Cache-Control', 'no-store').send(health);
+    });
+
+    // The public status page (lib/status-page.js, server/SLO.pl.md): the worker's state now and per day, no tenant data.
+    const statusNow = async (request) => {
+        const now = new Date();
+        let health = null;
+        let rows = [];
+        try {
+            health = await workerHealth(pool, { expect: expectWorker, syncIntervalMinutes, now });
+            rows = await readStatusSamples(pool, { now });
+        } catch (err) {
+            request.log.error({ err }, 'status page could not read the database');
+        }
+        return { ...statusModel({ health, rows, now }), now };
+    };
+    app.get('/status', async (request, reply) => {
+        const model = await statusNow(request);
+        return reply.headers({ ...pageHeaders, 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' })
+            .send(renderStatusPage({ ...model, version: APP_VERSION }));
+    });
+    app.get('/status.json', async (request, reply) => {
+        const { overall, components, now } = await statusNow(request);
+        return reply.header('Cache-Control', 'no-store').send({
+            status: overall, updatedAt: now.toISOString(), version: APP_VERSION,
+            components: components.map((c) => ({ id: c.id, label: c.label, status: c.state, uptime: c.uptime, days: c.days.map((d) => ({ day: d.day, status: d.state })) })),
+        });
     });
 
     if (metrics && metricsToken) {
