@@ -27,6 +27,10 @@ const { registerInvitationRoutes } = require('./routes/invitations');
 const { registerFlagRoutes, IngestRateLimitError } = require('./routes/flags');
 const { createOidcVerifier } = require('./lib/github-oidc');
 const { createMetrics } = require('./lib/metrics');
+const { sampleStatus } = require('./lib/status-page');
+const { workerHealth } = require('./lib/worker-status');
+
+const STATUS_SAMPLE_INTERVAL_MS = 60_000;
 const { registerDashboardRoutes } = require('./routes/dashboard');
 const { registerWebhookRoutes } = require('./routes/webhooks');
 const { registerGitHubRoutes } = require('./routes/github');
@@ -193,7 +197,7 @@ function buildApp({ pool, auth, githubApp = null, atlassian = null, fetch: fetch
     // Counted for GET /metrics (lib/metrics.js): every answer, by its route's pattern, never its URL.
     const metrics = createMetrics();
     app.addHook('onResponse', async (request, reply) => metrics.observe(request.routeOptions && request.routeOptions.url, reply.statusCode));
-    registerHealthRoutes(app, { pool, expectWorker: { deployments: !!githubApp, jira: !!atlassian, flags: !!encryptionKey }, syncIntervalMinutes, metrics, metricsToken });
+    registerHealthRoutes(app, { pool, expectWorker: { deployments: !!githubApp, jira: !!atlassian, flags: !!encryptionKey }, syncIntervalMinutes, metrics, metricsToken, pageHeaders: DASHBOARD_HEADERS });
 
     if (!auth) return app;
 
@@ -265,6 +269,13 @@ if (require.main === module) {
     const syncIntervalMinutes = Number(process.env.SYNC_INTERVAL_MINUTES) || 15;
     const metricsToken = loadMetricsToken(process.env);
     const app = buildApp({ pool, auth, githubApp, atlassian, encryptionKey, sealingKeys, logger: loggerOptions({ level, version: APP_VERSION }), dashboardDir, mockDashboard, syncIntervalMinutes, metricsToken });
+    // Once a minute, today's sample for the status page (lib/status-page.js); a failure is logged, never fatal.
+    const expectWorker = { deployments: !!githubApp, jira: !!atlassian, flags: !!encryptionKey };
+    setInterval(() => {
+        workerHealth(pool, { expect: expectWorker, syncIntervalMinutes })
+            .then((health) => sampleStatus(pool, { health }))
+            .catch((err) => log.warn('status sample failed', { err }));
+    }, STATUS_SAMPLE_INTERVAL_MS).unref();
     const port = Number(process.env.PORT) || 3000;
     app.listen({ port, host: '0.0.0.0' }).then(() => {
         log.info('web started', { port, github: !!githubApp, jira: !!atlassian, logLevel: level });

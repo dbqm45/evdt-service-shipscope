@@ -24,6 +24,9 @@ const EXPECTED_ROUTES = `\
     ├── health (GET, HEAD)
     │   ├── /db (GET, HEAD)
     │   └── /worker (GET, HEAD)
+    ├── status (GET, HEAD)
+    │   └── .json (GET, HEAD)
+    ├── start (GET, HEAD)
     ├── auth/github/login (GET, HEAD)
     ├── auth/github/callback (GET, HEAD)
     ├── auth/logout (POST)
@@ -81,7 +84,6 @@ const EXPECTED_ROUTES = `\
     │       └── :asset (GET, HEAD)
     ├── invitations/:token (GET, HEAD)
     │   └── /accept (POST)
-    ├── start (GET, HEAD)
     ├── ui/:asset (GET, HEAD)
     ├── github/setup (GET, HEAD)
     ├── webhooks/github (POST)
@@ -109,6 +111,9 @@ test('characterizing: auth-only route tree (no githubApp/atlassian) is unchanged
     ├── health (GET, HEAD)
     │   ├── /db (GET, HEAD)
     │   └── /worker (GET, HEAD)
+    ├── status (GET, HEAD)
+    │   └── .json (GET, HEAD)
+    ├── start (GET, HEAD)
     ├── auth/github/login (GET, HEAD)
     ├── auth/github/callback (GET, HEAD)
     ├── auth/logout (POST)
@@ -145,7 +150,6 @@ test('characterizing: auth-only route tree (no githubApp/atlassian) is unchanged
     │       └── :asset (GET, HEAD)
     ├── invitations/:token (GET, HEAD)
     │   └── /accept (POST)
-    ├── start (GET, HEAD)
     └── ui/:asset (GET, HEAD)
 `
         );
@@ -161,9 +165,11 @@ test('characterizing: health-only route tree (no auth config) is unchanged by th
         assert.equal(
             app.printRoutes({ commonPrefix: false }),
             `\
-└── /health (GET, HEAD)
-    ├── /db (GET, HEAD)
-    └── /worker (GET, HEAD)
+├── /health (GET, HEAD)
+│   ├── /db (GET, HEAD)
+│   └── /worker (GET, HEAD)
+└── /status (GET, HEAD)
+    └── .json (GET, HEAD)
 `
         );
     } finally {

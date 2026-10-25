@@ -439,6 +439,10 @@ optionally alert on the word `degraded` too. The worker records each job's last 
 `worker_status` (migration `020`, `lib/worker-status.js`); the web service judges them (`judgeWorker()`). If you change
 `SYNC_INTERVAL_MINUTES`, set it on both services.
 
+**Status page and SLOs.** `GET /status` (public HTML, no script, no tenant data) and `GET /status.json` show the
+worker's components (`judgeWorker()`) now and for the last 90 days, sampled once a minute by the web service into
+`status_samples` (migration `035`). Targets, error budget and alert rules: [SLO.pl.md](SLO.pl.md).
+
 **Metrics.** With `METRICS_TOKEN` set on the web service (32+ characters, `openssl rand -hex 32`), `GET /metrics`
 answers Prometheus' text format to `Authorization: Bearer <METRICS_TOKEN>` (401 otherwise; without the variable the
 route does not exist). Labels are fixed words, never a tenant, key or error text (`lib/metrics.js`):
