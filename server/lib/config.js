@@ -73,6 +73,28 @@ function loadGitHubAppConfig(env) {
     return { appId: env.GITHUB_APP_ID, slug: env.GITHUB_APP_SLUG, privateKey, webhookSecret: env.GITHUB_APP_WEBHOOK_SECRET || null };
 }
 
+const BAD_KEY = 'TOKEN_ENCRYPTION_KEY must be 32 bytes, base64-encoded (openssl rand -base64 32)';
+
+function parseEncryptionKey(value) {
+    const key = /^[A-Za-z0-9+/]{43}=$/.test(value) ? Buffer.from(value, 'base64') : null;
+    return key && key.length === 32 ? key : null;
+}
+
+/**
+ * The key that seals stored customer secrets (Jira refresh tokens, endpoint tokens) and derives each tenant's
+ * endpoint signing secret: TOKEN_ENCRYPTION_KEY, optional (without it Jira and endpoint sources are off).
+ *
+ * @param {NodeJS.ProcessEnv} env
+ * @returns {Buffer|null}
+ * @throws {Error} set but not 32 base64-encoded bytes
+ */
+function loadEncryptionKey(env) {
+    if (!env.TOKEN_ENCRYPTION_KEY) return null;
+    const key = parseEncryptionKey(env.TOKEN_ENCRYPTION_KEY);
+    if (!key) throw new Error(`Invalid configuration: ${BAD_KEY}`);
+    return key;
+}
+
 /**
  * Reads the Atlassian OAuth 2.0 (3LO) app's credentials and the key that encrypts stored Jira tokens (FR-007).
  * Optional as a whole -- without them the Jira routes are off -- but a partial set fails fast.
@@ -92,8 +114,8 @@ function loadAtlassianConfig(env) {
     const problems = keys.filter((key) => !env[key]).map((key) => `${key} is not set (the other Atlassian variables are)`);
     let encryptionKey = null;
     if (env.TOKEN_ENCRYPTION_KEY) {
-        encryptionKey = /^[A-Za-z0-9+/]{43}=$/.test(env.TOKEN_ENCRYPTION_KEY) ? Buffer.from(env.TOKEN_ENCRYPTION_KEY, 'base64') : null;
-        if (!encryptionKey || encryptionKey.length !== 32) problems.push('TOKEN_ENCRYPTION_KEY must be 32 bytes, base64-encoded (openssl rand -base64 32)');
+        encryptionKey = parseEncryptionKey(env.TOKEN_ENCRYPTION_KEY);
+        if (!encryptionKey) problems.push(BAD_KEY);
     }
     if (problems.length > 0) throw new Error(`Invalid configuration: ${problems.join('; ')}`);
 
@@ -103,4 +125,4 @@ function loadAtlassianConfig(env) {
     return { clientId: env.ATLASSIAN_CLIENT_ID, clientSecret: env.ATLASSIAN_CLIENT_SECRET, encryptionKey, webhookUrl };
 }
 
-module.exports = { loadAuthConfig, loadGitHubAppConfig, loadAtlassianConfig };
+module.exports = { loadAuthConfig, loadGitHubAppConfig, loadAtlassianConfig, loadEncryptionKey };

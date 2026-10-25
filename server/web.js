@@ -3,7 +3,7 @@ const path = require('path');
 const Fastify = require('fastify');
 const cookie = require('@fastify/cookie');
 const { createPool } = require('./lib/db');
-const { loadAuthConfig, loadGitHubAppConfig, loadAtlassianConfig } = require('./lib/config');
+const { loadAuthConfig, loadGitHubAppConfig, loadAtlassianConfig, loadEncryptionKey } = require('./lib/config');
 const { AtlassianError } = require('./lib/atlassian');
 const { JiraNotConnectedError, JiraSiteError } = require('./lib/jira-connections');
 const { JiraBoardError } = require('./lib/jira-sync');
@@ -129,10 +129,12 @@ function splitCookie(value, first, second) {
  * the small set of cross-domain helpers (requireUser, assertAdminOf, ...) every route file receives through
  * `ctx` instead of its own copy.
  *
- * @param {{ pool: import('pg').Pool, auth?: ReturnType<typeof loadAuthConfig>, githubApp?: ReturnType<typeof loadGitHubAppConfig>, atlassian?: ReturnType<typeof loadAtlassianConfig>, fetch?: typeof fetch, logger?: boolean|object, dashboardDir?: string, mockDashboard?: { data: object, issuesByPi: Record<string, object[]> }|null, ingestRateLimit?: { capacity: number, refillPerSecond: number }, syncIntervalMinutes?: number }} options
+ * @param {{ pool: import('pg').Pool, auth?: ReturnType<typeof loadAuthConfig>, githubApp?: ReturnType<typeof loadGitHubAppConfig>, atlassian?: ReturnType<typeof loadAtlassianConfig>, fetch?: typeof fetch, logger?: boolean|object, dashboardDir?: string, mockDashboard?: { data: object, issuesByPi: Record<string, object[]> }|null, ingestRateLimit?: { capacity: number, refillPerSecond: number }, syncIntervalMinutes?: number, encryptionKey?: Buffer|null, safeFetch?: Function }} options
+ *   `encryptionKey` (TOKEN_ENCRYPTION_KEY, default the Atlassian config's) seals endpoint tokens and signs endpoint
+ *   requests; `safeFetch` replaces lib/safe-fetch.js's in tests
  * @returns {import('fastify').FastifyInstance}
  */
-function buildApp({ pool, auth, githubApp = null, atlassian = null, fetch: fetchFn = fetch, logger = false, dashboardDir = DEFAULT_DASHBOARD_DIR, mockDashboard = null, ingestRateLimit = null, syncIntervalMinutes = 15 }) {
+function buildApp({ pool, auth, githubApp = null, atlassian = null, fetch: fetchFn = fetch, logger = false, dashboardDir = DEFAULT_DASHBOARD_DIR, mockDashboard = null, ingestRateLimit = null, syncIntervalMinutes = 15, encryptionKey = atlassian ? atlassian.encryptionKey : null, safeFetch = null }) {
     const app = Fastify({
         // A request id on every log line of a request and in the response (X-Request-Id), so a user's report can be
         // matched to the logs; one sent by the caller (Render's proxy, a load balancer) is kept.
@@ -209,7 +211,7 @@ function buildApp({ pool, auth, githubApp = null, atlassian = null, fetch: fetch
     }
 
     const ctx = {
-        pool, auth, githubApp, atlassian, fetchFn, baseCookie,
+        pool, auth, githubApp, atlassian, fetchFn, baseCookie, encryptionKey, safeFetch,
         requireUser, requireUserOrSignIn, assertAdminOf,
         safeEqual, splitCookie,
         cookies: { SESSION_COOKIE, LINK_COOKIE },
@@ -238,6 +240,7 @@ if (require.main === module) {
     const auth = loadAuthConfig(process.env);
     const githubApp = loadGitHubAppConfig(process.env);
     const atlassian = loadAtlassianConfig(process.env);
+    const encryptionKey = loadEncryptionKey(process.env);
     const pool = createPool();
     const dashboardDir = process.env.DASHBOARD_DIR || DEFAULT_DASHBOARD_DIR;
     const mockDashboard = mockDataEnabled(process.env) ? loadMockDashboard(dashboardDir) : null;
@@ -247,7 +250,7 @@ if (require.main === module) {
     pool.on('error', (err) => log.error('idle database connection failed', { err }));
     if (mockDashboard) log.warn('SHIPSCOPE_MOCK_DATA=1: every dashboard shows the built-in sample data');
     const syncIntervalMinutes = Number(process.env.SYNC_INTERVAL_MINUTES) || 15;
-    const app = buildApp({ pool, auth, githubApp, atlassian, logger: loggerOptions({ level, version: APP_VERSION }), dashboardDir, mockDashboard, syncIntervalMinutes });
+    const app = buildApp({ pool, auth, githubApp, atlassian, encryptionKey, logger: loggerOptions({ level, version: APP_VERSION }), dashboardDir, mockDashboard, syncIntervalMinutes });
     const port = Number(process.env.PORT) || 3000;
     app.listen({ port, host: '0.0.0.0' }).then(() => {
         log.info('web started', { port, github: !!githubApp, jira: !!atlassian, logLevel: level });

@@ -96,7 +96,7 @@ changelog entry by hand outside a `chore(release)` PR.
 
 Deployed to Render per `context/foundation/infrastructure.md`: `render.yaml` builds both the Web Service and the
 Background Worker from the repo root (`npm ci --prefix server`, `node server/web.js`), not `rootDir: server`, which
-would hide `docs/` from the Web Service. Migrations (`server/migrations/001`–`022`, applied by the hand-rolled
+would hide `docs/` from the Web Service. Migrations (`server/migrations/001`–`023`, applied by the hand-rolled
 `lib/migrate.js`) run as each service's `preDeployCommand` under an advisory lock (`test/render-blueprint.test.js`).
 Dependencies, all in `server/package.json`: `pg`, `fastify`, `@fastify/cookie`. Fastify runs with
 `removeAdditional: false, coerceTypes: false`: unknown fields and wrong types are a 400, never silently fixed.
@@ -199,6 +199,15 @@ success for 3 × `SYNC_INTERVAL_MINUTES` + 5 minutes, or an undrained webhook qu
   Every request to an address a customer gives goes through `safeFetch()` (`lib/safe-fetch.js`): https:443, every
   DNS answer public (`forbiddenAddress()`, a `net.BlockList`), the connection pinned to the checked address, no
   redirects, a time limit and a size limit after decompression (`server/test/safe-fetch.test.js`, a local TLS server).
+  Flags from an endpoint (migration `023`, `lib/endpoint-flags.js`): a runtime source with `origin: 'endpoint'`,
+  `endpoint_config` checked by `checkEndpointConfig()` (`urls` per environment through `checkUrl()`, `format`
+  json/yaml else the content type, the file reading fields, `tokenHeader`), the customer's token sealed in
+  `endpoint_token_enc` with `endpointTokenAad()` (tenant, source, purpose), never returned (`hasEndpointToken`).
+  Requests carry `X-ShipScope-Timestamp`/`X-ShipScope-Signature` (`signatureHeaders()`, HMAC-SHA256 with
+  `signingSecret()`: HKDF of `TOKEN_ENCRYPTION_KEY` per tenant, `loadEncryptionKey()`; `GET …/flag-endpoint-signing`).
+  `refreshEndpointSource()` writes each environment's full state through `applyObservations()` (`changedAt` = now); a
+  failure is `recordSourceEnvError()` and keeps the flags. `POST …/flag-endpoint-test` (admin, per-workspace limit)
+  returns only parsed flags (`server/test/endpoint-flags.test.js`).
   Setting one up (`lib/flag-discovery.js`, admin, read only): `GET …/github/repos/:repoId/flag-files` proposes files
   named like flags (`flagFileCandidates()`: json/yaml/ts, outside tests/builds, a file per environment folded into one
   `{env}` template with `envNames`; never `.env`/`.properties`) at the latest prod deployment (else any, else `HEAD`),
