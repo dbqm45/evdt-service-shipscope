@@ -7,6 +7,12 @@ dashboard, not a published package), so entries are grouped by date instead. See
 ShipScope is, `CLAUDE.md` for the technical reference, and `FAQ.md` for how specific numbers/badges are
 calculated.
 
+## [0.2.39] - 2026-10-25
+
+### Added
+
+- **SHP:** log every settings change in the workspace's audit log (#98)
+
 ## [0.2.38] - 2026-10-25
 
 ### Added
