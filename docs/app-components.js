@@ -658,7 +658,7 @@ function ReleasePlanFlag({ flagKey, rolloutText, stageText, progressText, owner,
 }
 
 /** A group of lines (an Epic in Jira mode, a change in repo mode) with its flags. */
-function ReleasePlanGroup({ title, groupKey, outcome, mvpReleased, lines, flags }){
+function ReleasePlanGroup({ title, groupKey, outcome, mvpReleased, lines, flags, problems = [] }){
     return html`<section class="panel rp-group">
         <div class="rp-group-head">
             <h2>${title}</h2>
@@ -666,6 +666,7 @@ function ReleasePlanGroup({ title, groupKey, outcome, mvpReleased, lines, flags 
             ${mvpReleased ? Tag({ text: 'MVP with users', cls: 'tag-released' }) : ''}
         </div>
         ${outcome ? html`<p class="rp-outcome">${outcome}</p>` : ''}
+        ${problems.length ? html`<ul class="rp-problems" title="tf checks the plan when it is written (decision_record.py check); ShipScope only shows what is off">${problems.map(p => html`<li>${ICONS.warn}${p}</li>`)}</ul>` : ''}
         <div class="rp-lines">${lines}</div>
         ${flags.length ? html`<div class="rp-flags"><h3>Flags</h3><ul>${flags}</ul></div>` : ''}
     </section>`;

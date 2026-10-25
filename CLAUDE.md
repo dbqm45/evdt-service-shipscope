@@ -102,7 +102,7 @@ changelog entry by hand outside a `chore(release)` PR.
 
 Deployed to Render per `context/foundation/infrastructure.md`: `render.yaml` builds both the Web Service and the
 Background Worker from the repo root (`npm ci --prefix server`, `node server/web.js`), not `rootDir: server`, which
-would hide `docs/` from the Web Service. Migrations (`server/migrations/001`–`037`, applied by the hand-rolled
+would hide `docs/` from the Web Service. Migrations (`server/migrations/001`–`038`, applied by the hand-rolled
 `lib/migrate.js`) run as each service's `preDeployCommand` under an advisory lock (`test/render-blueprint.test.js`).
 Dependencies, all in `server/package.json`: `pg`, `fastify`, `@fastify/cookie`. Fastify runs with
 `removeAdditional: false, coerceTypes: false`: unknown fields and wrong types are a 400, never silently fixed.
@@ -118,7 +118,7 @@ New rules go into the pure file; the I/O file orchestrates.
 
 **Tenant isolation (RLS).** Every query on an RLS table — the list is `RLS_TABLES` in `lib/scope.js` (memberships,
 invitations, github_installations, tracked_repos, deployments, issue_deployments, flag_sources, flag_source_repos, flag_source_envs, ingest_tokens, flags,
-flag_values, flag_value_history, jira_connections, jira_boards, jira_pis, jira_issues, audit_events, endpoint_tests, jira_access_grants, release_lines, flag_commit_links, work_items) — must run inside
+flag_values, flag_value_history, jira_connections, jira_boards, jira_pis, jira_issues, audit_events, endpoint_tests, jira_access_grants, release_lines, flag_commit_links, work_items, release_plans) — must run inside
 `withScope()`, which sets `app.current_tenant_id`/`app.current_user_id` with transaction-local
 `set_config(..., true)`. An unscoped read returns zero rows; an unscoped write is an RLS error.
 `lib/withscope-guard.js` (`server/test/withscope-guard.test.js`) fails on any `pool.query(...)` in `server/lib/`
@@ -306,8 +306,12 @@ the web service fills once a minute (`sampleStatus()`, web.js); a day is an outa
   an optional prefix, a text/select `field`, or `none`; `PUT …/jira/release-link`, audited `jira_release_link_changed`,
   Settings → Jira `ReleaseLinkForm()`), read by `extractReleaseLine()` in `lib/jira-model.js` (the lowest of several)
   into the issue's `releaseLine`; the sync keeps `release_lines` (origin `jira`) in step with every issue it read
-  (`writeReleaseLines()`) (`server/test/release-lines.test.js`). The repo mode (`changes/CHG-n/release.yaml`, origin
-  `repo`, a pinned copy of the contract's schema) comes next (design-docs/G1.3-PLAN.pl.md).
+  (`writeReleaseLines()`) (`server/test/release-lines.test.js`). Repo mode: `<CHG>/release.yaml`, read with the work
+  items below, parsed by `parseDocumentFile()` (`lib/flag-file-parser.js`, the flags files' isolated thread and
+  limits), validated by `checkReleasePlan()` against `schemas/release-plan.v0.4.0.schema.json` (a 1:1 copy of the pdi
+  contract's, never edited; `lib/json-schema-lite.js` enforces exactly the keywords it uses, `KNOWN_KEYWORDS`, and the
+  test fails on any other) and `change` = folder, kept in `release_plans` (migration `038`, RLS, cascade from
+  `tracked_repos`); a bad file is a `work_items_error`, never an empty plan (`server/test/release-plans.test.js`).
 - **Work items from a repo (F1 of the pdi one-flow plan)** — `lib/work-items.js` `refreshWorkItems()`, run by
   `syncRepo()` after the flags in code: the newest commit touching `docs/project/changes` on the default branch
   (`commits?path=…&per_page=1`), compared with `tracked_repos.work_items_ref` (migration `037`; unchanged = one
@@ -317,7 +321,8 @@ the web service fills once a minute (`sampleStatus()`, web.js); a day is an outa
   (`change` = folder, `source`/`tasks` keys), the title = intent's first `# ` heading, `planTasks()` (the first body
   line naming a task: table cells or list text, a task.schema.json status; `dropped` left out). A bad file is recorded
   in `tracked_repos.work_items_error` (Settings → GitHub, "changes folder: N problems") and only its change is left
-  out; a GitHub failure keeps the stored items; a rate limit is rethrown. The dashboard data appends the increment
+  out; a GitHub failure keeps the stored items; a rate limit is rethrown. `tracked_repos.work_items_version`
+  (`WORK_ITEMS_VERSION`, migration `038`) makes a folder read by an older reader be read again. The dashboard data appends the increment
   `{ pi: '@changes', kind: 'change', label: 'Changes (repo)' }` (`CHANGES_KEY`; `currentPi` when there is no Jira),
   puts the items in `issueStatusIndex` and gives `workItemUrls` (key → the file on GitHub, which `jiraIssueUrl()`
   prefers); `GET …/jira-issues?pi=@changes` answers `workItemIssues()`: a change as an Epic whose `subtaskKeys` are its
@@ -362,7 +367,9 @@ reading it through `loadData()` in a `vm`; `server-test.yml` also runs on `docs/
 `flagStatesByComponent`, `flagFreshness`, `componentsOrder` (the tracked repos), `lastSyncedAt`, `jiraBrowseUrl`,
 `workItemUrls` (F1), `releasePlan` (`readReleasePlan()`: `{ mode: 'jira', lines: [{ key, release, title, type, epicKey, epicTitle,
 subtaskKeys, blockedByKeys, dependencyBlocked, featureFlags }], plans: [] }`, every item with a line, from its newest
-synced copy whatever its increment; `plans` = release.yaml objects in the contract's shape, none until the repo mode).
+synced copy whatever its increment; `plans` = the repos' release.yaml objects in the contract's shape, their tasks
+added to `lines` titled from `work_items`, a planned task winning over a Jira line of the same key, `mode: 'repo'`
+when there are plans).
 The `FALLBACK` sample data has the same shape.
 
 - **Deployment record**: `component`, environment (`test`/`qa`/`prod`; `environmentFor()`: the repo's
@@ -504,7 +511,8 @@ its items with `issueStatusForEnv()` on PROD (`StatusPill`), `onProdCount` and `
 exposure (`flagProdExposure()`: widest across services, on = 100, off = 0), the last planned stage reached (a `N%`
 stage once the rollout is ≥ N, a named stage once on for anyone), `daysInStage` from the value's `changedAt` against
 `min_days` (`waiting`/`ready`/`final`/`not_started`), `overdue`/`daysPastRemoveBy` after `remove_by`; without a plan
-(Jira mode) `no_plan`. Markup: `ReleasePlanGroup`, `ReleaseLineCard`, `ReleasePlanItem`, `ReleasePlanFlag`
+(Jira mode) `no_plan`. `releasePlanProblems(plan)` lists what breaks a repo plan's consistency (MVP line not among the
+lines, a task in several lines, a flag task in no line), shown above its lines, never fixed (tf checks it). Markup: `ReleasePlanGroup`, `ReleaseLineCard`, `ReleasePlanItem`, `ReleasePlanFlag`
 (`test/app-release-plan.test.js`). The `FALLBACK` shows the retry-queue Epic's lines and a `CHG-12` plan with a flag
 past its remove-by.
 

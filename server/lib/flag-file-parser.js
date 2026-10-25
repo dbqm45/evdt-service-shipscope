@@ -57,9 +57,32 @@ async function parseFlagFile({ text, fileName, format, options = {}, limits = {}
     if (NEEDS_SELECTION.includes(fmt) && !options.prefix && !(options.keys && options.keys.length)) {
         throw new FlagFileError(`${fileName}: name the flags' prefix or their keys (a .${fmt} file holds other settings too)`);
     }
+    return inThread({ text, fileName, format: fmt, options, limits: { maxNodes: lim.maxNodes, maxDepth: lim.maxDepth, maxFlags: lim.maxFlags } }, lim, 'flags');
+}
+
+/**
+ * Parses one JSON or YAML document a customer keeps in a repo (a release plan, pdi contract 0.4.0) in the same
+ * isolated thread and limits as a flags file, and returns it whole: such a file holds plans, not credentials.
+ *
+ * @param {{ text: string, fileName: string, format?: 'json'|'yaml', limits?: Partial<typeof LIMITS> }} input
+ * @returns {Promise<unknown>}
+ * @throws {FlagFileError} with a message that names the file and at most a line number
+ */
+async function parseDocumentFile({ text, fileName, format, limits = {} }) {
+    const lim = { ...LIMITS, ...limits };
+    const fmt = format || formatFromName(fileName);
+    if (fmt !== 'json' && fmt !== 'yaml') throw new FlagFileError(`${fileName}: not a JSON or YAML file`);
+    if (typeof text !== 'string') throw new FlagFileError(`${fileName}: not a text file`);
+    if (Buffer.byteLength(text, 'utf8') > lim.maxBytes) throw new FlagFileError(`${fileName}: larger than ${Math.round(lim.maxBytes / 1024)} KB`);
+    return inThread({ text, fileName, format: fmt, document: true, limits: { maxNodes: lim.maxNodes, maxDepth: lim.maxDepth } }, lim, 'doc');
+}
+
+/** Runs flag-file-worker.js on `workerData` with the limits; resolves with the answer's `field`. */
+function inThread(workerData, lim, field) {
+    const { fileName } = workerData;
     return new Promise((resolve, reject) => {
         const worker = new Worker(WORKER, {
-            workerData: { text, fileName, format: fmt, options, limits: { maxNodes: lim.maxNodes, maxDepth: lim.maxDepth, maxFlags: lim.maxFlags } },
+            workerData,
             resourceLimits: { maxOldGenerationSizeMb: lim.memoryMb, maxYoungGenerationSizeMb: Math.max(4, Math.floor(lim.memoryMb / 4)), stackSizeMb: 4 },
             env: {}, // nothing of the service's environment (DATABASE_URL, keys) inside the parser's thread
             stdout: true,
@@ -74,7 +97,7 @@ async function parseFlagFile({ text, fileName, format, options = {}, limits = {}
             fn(value);
         };
         const timer = setTimeout(() => finish(reject, new FlagFileError(`${fileName}: took too long to read`)), lim.timeoutMs);
-        worker.once('message', (msg) => (msg.ok ? finish(resolve, msg.flags) : finish(reject, new FlagFileError(msg.error))));
+        worker.once('message', (msg) => (msg.ok ? finish(resolve, msg[field]) : finish(reject, new FlagFileError(msg.error))));
         worker.once('error', (err) => finish(reject, new FlagFileError(
             err && err.code === 'ERR_WORKER_OUT_OF_MEMORY' ? `${fileName}: too large to read` : `${fileName}: could not be read`
         )));
@@ -82,4 +105,4 @@ async function parseFlagFile({ text, fileName, format, options = {}, limits = {}
     });
 }
 
-module.exports = { LIMITS, FlagFileError, formatFromName, parseFlagFile };
+module.exports = { LIMITS, FlagFileError, formatFromName, parseFlagFile, parseDocumentFile };

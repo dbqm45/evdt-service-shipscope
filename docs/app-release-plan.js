@@ -54,6 +54,7 @@ function renderReleasePlan(){
         groupKey: g.key,
         outcome: g.outcome,
         mvpReleased: g.mvpReleased,
+        problems: g.problems,
         lines: g.lines.map(l => ReleaseLineCard({
             id: l.id,
             name: l.name,

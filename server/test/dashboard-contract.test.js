@@ -89,10 +89,14 @@ test('the frontend reads what the syncs stored: release status by sub-task and b
         commits: { [sha(1)]: 'feat: ABC-7 first part', [sha(2)]: 'feat: ABC-7 second part\n\nChange: TSK-57' },
         tags: [{ name: 'v1.0.0', commit: { sha: sha(1) } }, { name: 'v1.1.0', commit: { sha: sha(2) } }],
         compare: () => ({ ahead_by: 1, behind_by: 0 }),
-        trees: { [`tree-${sha(1)}`]: tree({ 'src/a.js': '1' }), [`tree-${sha(2)}`]: tree({ 'src/a.js': '2' }), [sha(2)]: tree({ 'docs/project/changes/CHG-12/plan.md': 'p' }) },
+        trees: { [`tree-${sha(1)}`]: tree({ 'src/a.js': '1' }), [`tree-${sha(2)}`]: tree({ 'src/a.js': '2' }), [sha(2)]: tree({ 'docs/project/changes/CHG-12/plan.md': 'p', 'docs/project/changes/CHG-12/release.yaml': 'r' }) },
         // F1: a change kept in the repo, its task named by the test deployment's commit.
         fileCommits: { 'docs/project/changes': [sha(2)] },
-        files: { [sha(2)]: { 'docs/project/changes/CHG-12/plan.md': '---\nartifact: plan\nchange: CHG-12\ntasks: [TSK-57]\n---\n\n- TSK-57: Retry endpoint (in_progress)\n' } },
+        files: { [sha(2)]: {
+            'docs/project/changes/CHG-12/plan.md': '---\nartifact: plan\nchange: CHG-12\ntasks: [TSK-57]\n---\n\n- TSK-57: Retry endpoint (in_progress)\n',
+            // G1.3 repo mode: the change's release plan, read with it and validated by the contract's schema.
+            'docs/project/changes/CHG-12/release.yaml': 'change: CHG-12\nmvp: { release: R1 }\nreleases:\n  - { id: R1, name: MVP, tasks: [TSK-57] }\nflags:\n  - { key: payment-retry, tasks: [TSK-57], remove_by: 2026-12-31, rollout: [{ stage: internal, min_days: 3 }, { stage: "100%" }] }\n',
+        } },
     };
     const { app: githubApp, publicKey } = testGitHubApp();
     const github = fakeGitHub(USERS, { publicKey, installations: { [ACME]: { account: { login: 'acme', type: 'Organization' }, repos: [] } }, repos: { 'acme/web': web } });
@@ -144,8 +148,11 @@ test('the frontend reads what the syncs stored: release status by sub-task and b
     assert.strictEqual(level('CHG-12', 'prod'), 'none');
     assert.match(ev('jiraIssueUrl("TSK-57")'), /^https:\/\/github\.com\/acme\/web\/blob\/[0-9a-f]{40}\/docs\/project\/changes\/CHG-12\/plan\.md$/);
     await run(`(async () => { state.jiraIssues = await loadJiraIssuesForPi(state.selectedPi); })()`);
+    const plan = ev('releasePlanModel().groups.find(g => g.key === "CHG-12")');
+    assert.deepStrictEqual([plan.mvp, plan.lines.map((l) => [l.id, l.items.map((i) => [i.key, i.title, i.prodLevel])]), plan.flags.map((f) => [f.key, f.status, f.removeBy]), plan.problems],
+        ['R1', [['R1', [['TSK-57', 'Retry endpoint', 'none']]]], [['payment-retry', 'not_started', '2026-12-31']], []]);
     // releasePlan (G1.3): the release:R1 label is a line; the Release plan tab reads it with the item's PROD status.
-    assert.deepStrictEqual(ev('releasePlanModel().groups.map(g => g.lines.map(l => [l.id, l.items.map(i => [i.key, i.prodLevel, i.subtaskKeys])]))'),
+    assert.deepStrictEqual(ev('releasePlanModel().groups.filter(g => g.key !== "CHG-12").map(g => g.lines.map(l => [l.id, l.items.map(i => [i.key, i.prodLevel, i.subtaskKeys])]))'),
         [[['R1', [['ABC-1', 'none', ['ABC-7']]]]]]);
 
     // version / resolvedRef and driftBehind on each environment's latest record, read by the matrix.

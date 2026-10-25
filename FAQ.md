@@ -364,6 +364,11 @@ Plan against reality, per Epic (lines from Jira) or per change (a plan from a re
     count from the flag's last change on PROD, against the stage's `min_days`: "3 of 7 days" while waiting, "Ready
     for 100%" after that. A flag past its `remove_by` date is outlined in red, with the days since.
   - Without a plan (Jira mode) only the rollout shows, marked "No plan".
+- **Plans from a repo.** A change's `docs/project/changes/<CHG>/release.yaml` (the pdi contract's release plan) is read
+  with its work items and checked against the contract's schema. A file that breaks it shows as a problem of the
+  changes folder in Settings → GitHub, and that plan is not shown, rather than an empty one. A plan that is valid but
+  inconsistent (its MVP line missing, a task in two lines, a flag task in no line) is shown with those problems
+  above its lines; tf checks this when the plan is written.
 
 Lines are read from every synced issue, not one PI, so the PI selector is hidden on this tab.
 (`releasePlanModel()`, `flagPlanStatus()` in `docs/app-model.js`; `docs/app-release-plan.js`.)

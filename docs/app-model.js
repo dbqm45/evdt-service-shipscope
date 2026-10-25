@@ -765,6 +765,36 @@ function flagPlanStatus(planFlag, flagKey){
         status,
     };
 }
+/**
+ * What breaks a repo plan's consistency, as sentences to show (tf checks it on the author's side,
+ * `decision_record.py check`; the dashboard never fixes a plan): the MVP line not among the lines, a task in more than
+ * one line, a flag naming a task that is in no line.
+ *
+ * @param {{ mvp?: { release: string }, releases?: Array<{ id: string, tasks: string[] }>, flags?: Array<{ key: string, tasks?: string[] }> }} plan
+ * @returns {string[]}
+ */
+function releasePlanProblems(plan){
+    const problems = [];
+    const releases = plan.releases || [];
+
+    if (plan.mvp && plan.mvp.release && !releases.some(r => r.id === plan.mvp.release)) {
+        problems.push(`The MVP line ${plan.mvp.release} is not among the lines`);
+    }
+
+    const linesOf = new Map();
+
+    releases.forEach(r => (r.tasks || []).forEach(k => linesOf.set(k, [...(linesOf.get(k) || []), r.id])));
+    linesOf.forEach((ids, key) => {
+        if (ids.length > 1) {
+            problems.push(`${key} is in more than one line (${ids.join(', ')})`);
+        }
+    });
+    (plan.flags || []).forEach(f => (f.tasks || []).filter(k => !linesOf.has(k)).forEach(k => {
+        problems.push(`Flag ${f.key} names ${k}, which is in no line`);
+    }));
+
+    return problems;
+}
 /** One work item of a line with its PROD status (issueStatusForEnv()); `onProd` = with users (issueIsReleasedToProd()). */
 function releasePlanItem(item){
     const issue = { subtaskKeys: [], blockedByKeys: [], dependencyBlocked: false, ...item, title: item.title || item.key };
@@ -803,6 +833,7 @@ function releasePlanModel(){
             key: p.change, title: p.change, mvp, outcome: p.mvp && p.mvp.outcome ? p.mvp.outcome : null, lines,
             mvpReleased: !!lines.find(l => l.id === mvp && l.released),
             flags: (p.flags || []).map(f => flagPlanStatus(f, f.key)),
+            problems: releasePlanProblems(p),
         });
     });
 
@@ -834,6 +865,7 @@ function releasePlanModel(){
                 key, title: g.title, mvp: 'R1', outcome: null, lines,
                 mvpReleased: !!lines.find(l => l.id === 'R1' && l.released),
                 flags: flagKeys.map(k => flagPlanStatus(null, k)),
+                problems: [],
             });
         });
     }

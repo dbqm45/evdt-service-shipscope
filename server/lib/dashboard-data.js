@@ -1,5 +1,5 @@
 const { withScope } = require('./scope');
-const { readWorkItems } = require('./work-items');
+const { readWorkItems, readReleasePlans } = require('./work-items');
 const { CHANGES_KEY, CHANGES_LABEL, workItemIssues } = require('./work-items-model');
 const { roleOf, TenantNotFoundError } = require('./tenants');
 const { readDashboardFlags } = require('./flags');
@@ -48,18 +48,18 @@ function toLegacyRecord(row, component) {
     };
 }
 
-/** A commit sha shortened for display; a tag/release name as is. */
 /**
  * The release plan (G1.3): every work item with a release line, in the shape the Release plan tab reads, its fields
  * from the newest synced copy of the issue (whatever increment it is in); a line whose issue is no longer synced (a
- * board deselected, another site) is left out. `plans` holds plans read from a repo's
- * changes/CHG-n/release.yaml (pdi contract 0.4.0); none yet, so Jira mode only.
+ * board deselected, another site) is left out. `plans` holds the plans read from the repos' changes/CHG-n/release.yaml
+ * (pdi contract 0.4.0, lib/work-items.js); their tasks are lines too, titled from the work items (`mode: 'repo'`).
  *
  * @param {import('pg').PoolClient} client inside withScope()
  * @param {string} tenantId
- * @returns {Promise<{ mode: 'jira', lines: Array<{ key: string, release: string, title: string, type: string|null, epicKey: string|null, epicTitle: string|null, subtaskKeys: string[], blockedByKeys: string[], dependencyBlocked: boolean, featureFlags: string[] }>, plans: object[] }>}
+ * @param {Array<{ key: string, title: string }>} [workItems] readWorkItems()
+ * @returns {Promise<{ mode: 'jira'|'repo', lines: Array<{ key: string, release: string, title: string, type: string|null, epicKey: string|null, epicTitle: string|null, subtaskKeys: string[], blockedByKeys: string[], dependencyBlocked: boolean, featureFlags: string[] }>, plans: object[] }>}
  */
-async function readReleasePlan(client, tenantId) {
+async function readReleasePlan(client, tenantId, workItems = []) {
     const { rows } = await client.query(
         `SELECT DISTINCT ON (l.item_key) l.item_key, l.release, i.data
          FROM release_lines l
@@ -86,9 +86,29 @@ async function readReleasePlan(client, tenantId) {
     // Line order (R1, R2, … R10), then key.
     const n = (release) => Number(release.slice(1));
     lines.sort((a, b) => n(a.release) - n(b.release) || a.key.localeCompare(b.key, 'en', { numeric: true }));
-    return { mode: 'jira', lines, plans: [] };
+    // Plans kept in a repo (release.yaml): their tasks are lines too, titled from plan.md (work_items).
+    const plans = await readReleasePlans(client, tenantId);
+    const itemOf = new Map(workItems.map((w) => [w.key, w]));
+    const planned = new Set();
+    const planLines = [];
+    for (const plan of plans) {
+        const changeTitle = itemOf.get(plan.change)?.title || plan.change;
+        for (const release of plan.releases) {
+            for (const key of release.tasks) {
+                if (planned.has(key)) continue;
+                planned.add(key);
+                planLines.push({
+                    key, release: release.id, title: itemOf.get(key)?.title || key, type: 'Story', epicKey: plan.change, epicTitle: changeTitle,
+                    subtaskKeys: [], blockedByKeys: [], dependencyBlocked: false, featureFlags: [],
+                });
+            }
+        }
+    }
+    // A task a repo plan places wins over a Jira line of the same key.
+    return { mode: plans.length ? 'repo' : 'jira', lines: [...lines.filter((l) => !planned.has(l.key)), ...planLines], plans };
 }
 
+/** A commit sha shortened for display; a tag/release name as is. */
 function shortRef(ref) {
     return /^[0-9a-f]+$/.test(ref) ? ref.slice(0, 12) : ref;
 }
@@ -142,9 +162,9 @@ async function buildDashboardData(pool, { tenantId, actorUserId }) {
         });
 
         const { jiraIndex, issueStatusIndex } = await readDashboardJira(client, { tenantId });
-        const releasePlan = await readReleasePlan(client, tenantId);
         // Work items from the repos (F1): their own increment, their keys in the status index, links to their files.
         const workItems = await readWorkItems(client, tenantId);
+        const releasePlan = await readReleasePlan(client, tenantId, workItems);
         const workItemUrls = {};
         if (workItems.length) {
             jiraIndex.pis.push({ pi: CHANGES_KEY, kind: 'change', label: CHANGES_LABEL, file: 'changes.json', sprints: [] });
