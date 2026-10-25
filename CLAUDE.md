@@ -54,7 +54,8 @@ localhost.
   `TEST_DATABASE_URL`, see `server/README.md`).
 - **Module boundaries** (`scripts/lib/module-boundaries.js`, `node scripts/check-module-boundaries.js`, tested in
   `test/module-boundaries.test.js`): `scripts/` never requires from `server/` and vice versa; `adapters/` requires
-  from neither; `docs/app-*.js` never calls `require()`.
+  from neither; `server/` may require only the adapter's readers (`adapters/flags/lib.js`); `docs/app-*.js` never
+  calls `require()`.
 - Workflow actions are pinned to a full commit SHA with `# vX.Y.Z` (`test/workflows.test.js`); Dependabot
   (`.github/dependabot.yml`) bumps them monthly in one PR. Why: `design-docs/SECURITY.md`.
 - Workflows: `test.yml` (PR title check + root tests + actionlint in one job; a title edit re-checks only the title, a
@@ -183,7 +184,11 @@ success for 3 × `SYNC_INTERVAL_MINUTES` + 5 minutes, or an undrained webhook qu
   (`lib/flags.js`, pinned by `server/test/flags-ingest-characterization.test.js`); a complete message stamps
   `flag_source_envs.last_observed_at` for each environment it covers, and `freshnessOf()` (`lib/flags-logic.js`)
   gives `fresh`/`stale`/`error`/`unknown` per source and environment against the source's `stale_after_minutes`
-  (default `STALE_AFTER_MINUTES`: runtime a day, build never) and its last refusal.
+  (default `STALE_AFTER_MINUTES`: runtime a day, build never) and its last refusal. A customer's flags file is read
+  only through `parseFlagFile()` (`lib/flag-file-parser.js`): the adapter's readers in a `worker_threads` thread
+  (`lib/flag-file-worker.js`, no env, 64 MB, 2 s) behind size/nesting/node/flag limits (`LIMITS`), `.env` and
+  `.properties` only with a prefix or a key list, and errors that never carry a value from the file
+  (`server/test/flag-file-parser.test.js`). `render.yaml` redeploys both services on `adapters/flags/*.js`.
   Sources of one kind fold into the dashboard's `build`/`runtime-be` slot by priority. Flags link to Jira issues
   from three origins merged in `readDashboardFlags()`: the sender's `jira_keys`, hand-set
   `manual_jira_keys`/`manual_description` (`PUT /tenants/:tenantId/flags/:key`, never overwritten by a sender), and

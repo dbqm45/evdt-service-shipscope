@@ -17,6 +17,8 @@ services:
     buildFilter:
       paths:
         - server/**
+        # The flags adapter's readers, which the server runs on customers' flags files (lib/flag-file-parser.js).
+        - adapters/flags/*.js
         - docs/*.html
         - docs/*.css
         - docs/*.js
@@ -70,6 +72,7 @@ services:
     buildFilter:
       paths:
         - server/**
+        - adapters/flags/*.js
     envVars:
       - key: NODE_VERSION
         value: "22"

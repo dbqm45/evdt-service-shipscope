@@ -37,6 +37,7 @@ test('render.yaml: both services build and start from the repo root, so docs/ (t
         const script = /^node (\S+)$/.exec(service.startCommand)[1];
         assert.ok(fs.existsSync(path.join(REPO, script)), `${service.name}: ${script} exists`);
         assert.ok(service.buildPaths.includes('server/**'), `${service.name}: a server change deploys it`);
+        assert.ok(service.buildPaths.includes('adapters/flags/*.js'), `${service.name}: a change to the adapter's readers (lib/flag-file-parser.js) deploys it`);
     }
     assert.strictEqual(byName['shipscope-web'].startCommand, 'node server/web.js');
     assert.strictEqual(byName['shipscope-worker'].startCommand, 'node server/worker.js');

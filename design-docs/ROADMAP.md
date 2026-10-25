@@ -42,12 +42,12 @@ Każdy punkt to osobny PR, wdrażalny sam; `[ ]` = do zrobienia, `[x]` = zrobion
 
 - [ ] Odczyt pliku flag przy `resolved_ref` ostatniego udanego wdrożenia per środowisko (po `refreshDrift`),
   `changedAt` = czas wdrożenia; brak pliku = błąd, nie usunięcie.
-- [ ] Parsery z `adapters/flags/lib.js` w izolowanym wątku (`worker_threads`, limity pamięci, timeout), limity
+- [x] Parsery z `adapters/flags/lib.js` w izolowanym wątku (`worker_threads`, limity pamięci, timeout), limity
   rozmiaru, aliasów i głębokości; komunikaty błędów bez wartości; wymagany prefiks albo lista kluczy.
 - [ ] Automatyczne wykrywanie plików flag w repozytorium i propozycja do potwierdzenia.
 - [ ] Jawna mapa nazw środowisk per repozytorium (zamiast samego `mapEnvironment()`).
 - [ ] Kreator setupu: karta per repozytorium (środowiska, flagi, mapowanie) z podglądem przed zapisem.
-- [ ] Reguła w `scripts/lib/module-boundaries.js`: serwer może wymagać tylko parserów adaptera.
+- [x] Reguła w `scripts/lib/module-boundaries.js`: serwer może wymagać tylko parserów adaptera.
 
 ### 4. Endpoint z flagami
 
