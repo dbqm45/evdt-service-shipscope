@@ -7,6 +7,12 @@ dashboard, not a published package), so entries are grouped by date instead. See
 ShipScope is, `CLAUDE.md` for the technical reference, and `FAQ.md` for how specific numbers/badges are
 calculated.
 
+## [0.2.33] - 2026-10-25
+
+### Added
+
+- **SHP:** warn when a frontend's flag is on and the backend's is off (#90)
+
 ## [0.2.32] - 2026-10-25
 
 ### Added
