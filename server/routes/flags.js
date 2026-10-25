@@ -72,15 +72,31 @@ function registerFlagRoutes(app, ctx) {
             repoId: { anyOf: [{ type: 'null' }, { type: 'integer', minimum: 1 }] },
             // Minutes a confirmation of the full state stays fresh; null = the kind's default.
             staleAfterMinutes: { anyOf: [{ type: 'null' }, { type: 'integer', minimum: 5, maximum: 43200 }] },
+            // A source ShipScope reads itself from a file in one repository (lib/code-flags.js); checked further by
+            // checkCodeConfig().
+            code: CODE_CONFIG,
             ...extra,
         },
     });
+    const shortText = { type: 'string', minLength: 1, maxLength: 100 };
+    const CODE_CONFIG = {
+        type: 'object',
+        required: ['file'],
+        additionalProperties: false,
+        properties: {
+            file: { type: 'string', minLength: 1, maxLength: 200 },
+            format: { type: 'string', enum: ['json', 'yaml', 'properties', 'env', 'ts', 'js'] },
+            path: shortText, valuePath: shortText, keyField: shortText, rolloutPath: shortText, prefix: shortText,
+            keys: { type: 'array', minItems: 1, maxItems: 500, uniqueItems: true, items: FLAG_KEY },
+            envNames: { type: 'object', additionalProperties: false, properties: { test: shortText, qa: shortText, prod: shortText } },
+        },
+    };
     const ONE_SCOPE = { not: { required: ['repoIds', 'repoId'] } };
     const sourceParams = { type: 'object', required: ['tenantId', 'sourceId'], properties: { tenantId: UUID_PARAM, sourceId: UUID_PARAM } };
 
     app.post('/tenants/:tenantId/flag-sources', {
         preHandler: requireUser,
-        schema: { params: tenantOnlyParams, body: { ...sourceBody(['name', 'kind'], { tokenExpiresInDays: EXPIRES_IN_DAYS, tokenEnvironments: TOKEN_ENVIRONMENTS }), ...ONE_SCOPE } },
+        schema: { params: tenantOnlyParams, body: { ...sourceBody(['name', 'kind'], { tokenExpiresInDays: EXPIRES_IN_DAYS, tokenEnvironments: TOKEN_ENVIRONMENTS, origin: { type: 'string', enum: ['push', 'code'] } }), ...ONE_SCOPE } },
     }, async (request, reply) => reply.code(201).send(await createFlagSource(pool, {
         tenantId: request.params.tenantId, actorUserId: request.user.id, ...request.body,
     })));

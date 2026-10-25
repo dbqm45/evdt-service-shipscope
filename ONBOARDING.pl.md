@@ -38,12 +38,32 @@ zaczyna się listą kontrolną **Getting started**, która pokazuje, na jakim et
 
 W sekcji Workspace admin ustawia też, ile dni historii deploymentów przechowywać (7–730), i może usunąć workspace.
 
+## Feature flagi w kodzie (najprostszy sposób)
+
+Gdy serwis trzyma flagi w pliku w swoim repozytorium (JSON, YAML, `.properties`, `.env`, TypeScript albo
+JavaScript), ShipScope sam czyta ten plik w commicie, który każde środowisko ostatnio wdrożyło z sukcesem. Nie
+potrzeba tokenu, workflow ani minut GitHub Actions (`design-docs/ADR-003-flag-sources.md`).
+
+1. W Settings → Sources, w części **Read flags from code**, nadaj źródłu nazwę, wybierz repozytorium i podaj plik,
+   np. `src/flags.ts` albo `config/flags.{env}.json`. `{env}` oznacza `test`, `qa` albo `prod`; inną nazwę
+   środowiska, np. `production`, można ustawić przez API (`envNames`).
+2. Opcjonalnie podaj obiekt z flagami (`features` dla `{ "features": { ... } }`). Plik `.env` albo `.properties`
+   zawiera też inne ustawienia, więc dla nich podaj prefiks kluczy flag (`FF_`): żadna inna linia nigdy nie zostanie
+   odczytana jako flaga.
+3. To wszystko. Przy każdym nowym wdrożeniu najbliższa synchronizacja czyta plik: w ciągu minuty z webhookiem
+   GitHuba, inaczej w ciągu 15 minut. Każda wartość liczy się od czasu wdrożenia.
+
+Brak pliku we wdrożonym commicie albo plik, który przestał dać się odczytać jako flagi, nigdy nie usuwa flag.
+Środowisko pokazuje błąd w Settings i „?” na dashboardzie, z powodem. Komunikaty błędów nigdy nie cytują wartości
+z pliku. Wartości są czytane bez uruchamiania kodu: wartość liczona przy budowaniu, np. `process.env.X`, jest
+zgłaszana jako nieczytelna. Flagi przełączane w runtime (endpoint backendu, serwis flag) wymagają źródła, które je
+wysyła, jak niżej.
+
 ## Wysyłanie feature flag
 
-ShipScope nigdy nie czyta twoich flag: to, co je przechowuje, wysyła ich stan do ShipScope
-(`design-docs/ADR-001-flags-pushed-from-outside.md`). Dzięki temu nie ma znaczenia, gdzie flagi są — w pliku
-w repozytorium, pod adresem aplikacji, w AWS AppConfig czy w serwisie flag. Każde takie miejsce to jedno
-**źródło flag** (flag source):
+Dla flag trzymanych poza repozytorium to, co je przechowuje, wysyła ich stan do ShipScope. Dzięki temu nie ma
+znaczenia, gdzie te flagi są: pod adresem aplikacji, w AWS AppConfig czy w serwisie flag. Każde takie miejsce to
+jedno **źródło flag** (flag source):
 
 1. W Settings → Sources dodaj źródło: nazwę, rodzaj — **build** (wartość wbudowana przy budowaniu, np. plik
    w repozytorium) albo **runtime** (przełączana na żywo, np. AppConfig albo serwis flag) — priorytet (gdy kilka źródeł

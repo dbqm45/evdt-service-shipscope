@@ -36,11 +36,32 @@ Sign in with GitHub and create a workspace at `/start`. Its Settings page (`/t/<
 Under Workspace an admin also sets how many days of deployment history to keep (7–730) and can delete the
 workspace.
 
+## Feature flags in your code (the simplest way)
+
+When a service keeps its flags in a file in its repository (JSON, YAML, `.properties`, `.env`, TypeScript or
+JavaScript), ShipScope reads that file itself, at the commit each environment last deployed successfully. No token,
+no workflow, no GitHub Actions minutes (`design-docs/ADR-003-flag-sources.md`).
+
+1. In Settings → Sources, under **Read flags from code**, give the source a name, pick the repository and name the
+   file, e.g. `src/flags.ts` or `config/flags.{env}.json`. `{env}` stands for `test`, `qa` or `prod`; another name
+   for an environment, such as `production`, can be set through the API (`envNames`).
+2. Optionally name the object that holds the flags (`features` for `{ "features": { ... } }`). A `.env` or
+   `.properties` file holds other settings too, so for those name the flags' key prefix (`FF_`): no other line is
+   ever read as a flag.
+3. That's it. At every new deployment the next sync reads the file: within a minute with the GitHub webhook,
+   otherwise within 15 minutes. Each value counts from the deployment's time.
+
+A file that is missing at a deployed commit, or that no longer reads as flags, never removes flags. The
+environment shows an error in Settings and a "?" on the dashboard, with the reason. Error messages never quote a
+value from the file. Values are read without running any code: a value computed at build time, such as
+`process.env.X`, is reported as unreadable. Flags switched at runtime (a backend endpoint, a flag service) need a
+source that sends them, as below.
+
 ## Sending feature flags
 
-ShipScope never reads your flags: whatever holds them sends their state to ShipScope (`design-docs/ADR-001-flags-pushed-from-outside.md`). That
-keeps it independent of where flags live — a file in the repository, an endpoint of the application, AWS AppConfig,
-a flag service. Each such place is one **flag source**:
+For flags that live outside the repository, whatever holds them sends their state to ShipScope. That keeps it
+independent of where those flags live: an endpoint of the application, AWS AppConfig, a flag service. Each such
+place is one **flag source**:
 
 1. In Settings → Sources, add a source: a name, the kind — **build** (the value is baked into the build, e.g. a
    file in the repository) or **runtime** (switched live, e.g. AppConfig or a flag service) — a priority (when several

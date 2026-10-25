@@ -93,8 +93,9 @@ them, when webhooks are on. (`server/lib/retention.js`, `server/worker.js`.)
 
 ### Where do flags come from, and how is on/off determined?
 
-ShipScope never reads flags itself (`design-docs/ADR-001-flags-pushed-from-outside.md`). An admin adds flag sources
-in Settings; each source sends the full state of its flags (`off` / `on` / `partial` with a rollout percentage) with
+Flags kept in a file in the repository are read by ShipScope itself, at the commit each environment last deployed
+successfully; each value counts from that deployment's time (ONBOARDING.md, "Feature flags in your code"). For
+flags kept elsewhere an admin adds flag sources in Settings; each source sends the full state of its flags (`off` / `on` / `partial` with a rollout percentage) with
 its own token to `POST /api/flags/ingest`. A flag the source stops sending disappears; an older message never
 overwrites a newer one.
 

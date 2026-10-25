@@ -246,6 +246,66 @@ function historyRecords(history, sources) {
     }));
 }
 
+class FlagSourceConfigError extends Error {}
+
+const CODE_FILE = /^(?!\/)(?!(.*\/)?\.\.(\/|$))[A-Za-z0-9._/{}-]{1,200}$/;
+const ENV_NAME = /^[A-Za-z0-9._-]{1,50}$/;
+const CODE_FORMATS = ['json', 'yaml', 'properties', 'env', 'ts', 'js'];
+
+/** The format of a flags file from its name (the adapter's rule), or null when the name says nothing. */
+function codeFileFormat(fileName) {
+    const base = fileName.split('/').pop().toLowerCase();
+    if (base.endsWith('.json')) return 'json';
+    if (base.endsWith('.yaml') || base.endsWith('.yml')) return 'yaml';
+    if (base.endsWith('.properties')) return 'properties';
+    if (/\.[mc]?[tj]s$/.test(base)) return 'ts';
+    if (base === '.env' || base.startsWith('.env.') || base.endsWith('.env')) return 'env';
+    return null;
+}
+
+/**
+ * Checks a source read from code (ADR-003, `flag_sources.code_config`) and returns it with only the fields it uses:
+ * a build source over exactly one repository; a repo-relative `file`, optionally with one `{env}` (replaced by the
+ * environment's name, `envNames[env]` or test/qa/prod); a known format; for .env/.properties a `prefix` or `keys`.
+ *
+ * @param {{ file: string, format?: string, path?: string, valuePath?: string, keyField?: string, rolloutPath?: string, prefix?: string, keys?: string[], envNames?: Partial<Record<'test'|'qa'|'prod', string>> }} code
+ * @param {{ kind: string, repoIds: number[] }} source
+ * @returns {object}
+ * @throws {FlagSourceConfigError}
+ */
+function checkCodeConfig(code, { kind, repoIds }) {
+    if (kind !== 'build') throw new FlagSourceConfigError('A source read from code is a build source');
+    if (repoIds.length !== 1) throw new FlagSourceConfigError('A source read from code reads one repository: pick exactly one');
+    if (!code || typeof code.file !== 'string' || !CODE_FILE.test(code.file) || (code.file.match(/\{env\}/g) || []).length > 1
+        || /\{(?!env\})|(?<!\{env)\}/.test(code.file)) {
+        throw new FlagSourceConfigError('The file is a path inside the repository (no leading / or ..), with at most one {env}');
+    }
+    const format = code.format || codeFileFormat(code.file.replace('{env}', 'prod'));
+    if (!CODE_FORMATS.includes(format)) throw new FlagSourceConfigError(`Name the file's format (${CODE_FORMATS.join(', ')})`);
+    const keys = Array.isArray(code.keys) ? code.keys : [];
+    if ((format === 'env' || format === 'properties') && !code.prefix && !keys.length) {
+        throw new FlagSourceConfigError('A .env or .properties file holds other settings too: name the flags\' prefix or their keys');
+    }
+    const envNames = {};
+    for (const [env, name] of Object.entries(code.envNames || {})) {
+        if (!['test', 'qa', 'prod'].includes(env) || typeof name !== 'string' || !ENV_NAME.test(name)) {
+            throw new FlagSourceConfigError('Environment names map test, qa or prod to a name of letters, digits and . _ -');
+        }
+        envNames[env] = name;
+    }
+    const out = { file: code.file };
+    if (code.format) out.format = code.format;
+    for (const field of ['path', 'valuePath', 'keyField', 'rolloutPath', 'prefix']) if (code[field]) out[field] = code[field];
+    if (keys.length) out.keys = keys;
+    if (Object.keys(envNames).length) out.envNames = envNames;
+    return out;
+}
+
+/** The file a code source reads for one environment: `{env}` replaced by its name there. */
+function codeFileFor(code, env) {
+    return code.file.replace('{env}', (code.envNames && code.envNames[env]) || env);
+}
+
 /** Minutes a confirmation stays fresh when the source sets no threshold: a runtime value can change any time, a
  *  build value only with a deployment (null = never stale). */
 const STALE_AFTER_MINUTES = { runtime: 24 * 60, build: null };
@@ -290,6 +350,10 @@ function freshnessByComponent(sources) {
 }
 
 module.exports = {
+    FlagSourceConfigError,
+    checkCodeConfig,
+    codeFileFor,
+    codeFileFormat,
     STALE_AFTER_MINUTES,
     freshnessOf,
     freshnessByComponent,

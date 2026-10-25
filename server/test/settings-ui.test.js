@@ -277,6 +277,16 @@ test('settings page: the flags section -- each flag with its state and Jira link
     assert.match(fresh, /name="staleAfterMinutes" type="number" min="5" max="43200" placeholder="default" value="90"/);
     assert.match(sourcesPage([{ ...sources[0], effectiveStaleAfterMinutes: 1440, environments: [] }]), /No environment confirmed yet[\s\S]*stale after 24 h/);
     assert.match(sourcesPage([{ ...sources[1], effectiveStaleAfterMinutes: null, environments: [] }]), /never stale/);
+
+    // A source read from code: its file and repository instead of tokens; a form to add one.
+    const fromCode = sourcesPage([{ id: 's3', name: 'Web code', kind: 'build', priority: 0, origin: 'code', repoIds: [101], code: { file: 'config/flags.{env}.json', path: 'features' }, tokens: [], environments: [], effectiveStaleAfterMinutes: null }]);
+    assert.match(fromCode, /data-action="save-source" data-source-id="s3" data-origin="code"/);
+    assert.match(fromCode, /name="file" required maxlength="200" placeholder="config\/flags.\{env\}.json" value="config\/flags.\{env\}.json"/);
+    assert.match(fromCode, /name="path" maxlength="100" placeholder="features" value="features"/);
+    assert.match(fromCode, /ShipScope reads <code>config\/flags.\{env\}.json<\/code> in acme\/web at each environment's latest successful deployment/);
+    assert.doesNotMatch(fromCode, /data-source-id="s3"[\s\S]*data-action="new-token" data-source-id="s3"/, 'no token for it');
+    assert.match(fromCode, /data-action="create-code-source"/);
+    assert.match(str(ui.renderSourcesPage({ sources: [], repos: [], admin: true, once: {}, origin: 'https://s' })), /Track a repository first/);
 });
 
 test('settings page: the Jira section offers the flag convention -- none, prefixed labels, or a field', () => {
@@ -327,6 +337,14 @@ test('getting started: each step read off the loaded sections -- todo, waiting, 
     assert.deepStrictEqual(states({ ...empty, github: null, jira: null, sources: null, workspace: null }),
         { 'github-app': 'loading', repos: 'loading', deployments: 'loading', jira: 'loading', boards: 'loading', flags: 'loading', team: 'loading' });
     assert.deepStrictEqual(states({ ...empty, features: { githubApp: false, jira: false } }), { 'github-app': 'unavailable', repos: 'unavailable', deployments: 'unavailable', jira: 'unavailable', boards: 'unavailable', flags: 'todo', team: 'todo' });
+
+    // A source read from code: waiting for its first read, or a file it could not read.
+    const code = (environments) => ({ name: 'Web code', origin: 'code', tokens: [], environments, lastError: null });
+    assert.deepStrictEqual([byId({ ...empty, sources: [code([])] }).flags.state, byId({ ...empty, sources: [code([])] }).flags.hint],
+        ['waiting', 'Waiting for a deployment: Web code is read at the next sync of its repository.']);
+    assert.deepStrictEqual([byId({ ...empty, sources: [code([{ env: 'prod', state: 'error' }])] }).flags.state, byId({ ...empty, sources: [code([{ env: 'prod', state: 'error' }])] }).flags.hint],
+        ['problem', 'Could not read the flags file of Web code: see the source for why.']);
+    assert.match(byId(empty).flags.hint, /flags file in your code/);
 
     const repo = (extra) => ({ fullName: 'acme/web', deployments: 0, lastSyncedAt: null, lastSyncError: null, rateLimitedUntil: null, ...extra });
     const gh = (...repos) => ({ installations: [{ accountLogin: 'acme' }], repos });
@@ -527,6 +545,15 @@ test('settings page: actions send what the API expects, then reload their sectio
     calls.length = 0;
     await ui.runAction('save-source', form([['name', 'LD'], ['kind', 'build'], ['priority', '5'], ['repoIds', '101', true], ['repoIds', '102', true], ['repoIds', '103', false], ['staleAfterMinutes', '30']], { sourceId: 's9' }, 'flags'));
     assert.deepStrictEqual(calls[0], { method: 'PUT', url: `${base}/flag-sources/s9`, body: { name: 'LD', kind: 'build', priority: 5, repoIds: [101, 102], staleAfterMinutes: 30 } });
+
+    // A source read from code: added with its file; saved keeping what the API set besides the form's fields.
+    calls.length = 0;
+    await ui.runAction('create-code-source', form([['name', ' Web code '], ['repoId', '101'], ['file', ' config/flags.json '], ['path', ''], ['prefix', '']], {}, 'flags'));
+    assert.deepStrictEqual(calls[0], { method: 'POST', url: `${base}/flag-sources`, body: { name: 'Web code', kind: 'build', origin: 'code', repoIds: [101], code: { file: 'config/flags.json' } } });
+    ui.settingsState.flags = [{ id: 's7', code: { file: 'old.json', keys: ['a'], envNames: { prod: 'production' }, path: 'old' } }];
+    calls.length = 0;
+    await ui.runAction('save-source', form([['name', 'Web code'], ['priority', '0'], ['repoId', '101'], ['file', 'new.yaml'], ['path', ''], ['prefix', 'ff_']], { sourceId: 's7', origin: 'code' }, 'flags'));
+    assert.deepStrictEqual(calls[0].body, { name: 'Web code', kind: 'build', priority: 0, repoIds: [101], code: { file: 'new.yaml', keys: ['a'], envNames: { prod: 'production' }, prefix: 'ff_' } });
 
     // Deleting the workspace: asks first, sends the typed name, then leaves for / (another workspace, or /start).
     global.location = { pathname: `/t/${TENANT}/settings`, assign: (url) => { global.location.assigned = url; } };

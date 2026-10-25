@@ -96,8 +96,9 @@ To, czy zadanie kiedykolwiek trafiło na środowisko, jest zapamiętywane osobno
 
 ### Skąd pochodzą flagi i jak ustalany jest ich stan?
 
-ShipScope sam nigdy nie czyta flag (`design-docs/ADR-001-flags-pushed-from-outside.md`). Admin dodaje źródła flag w
-Settings; każde źródło wysyła pełny stan swoich flag (`off` / `on` / `partial` z procentem rolloutu) własnym tokenem
+Flagi trzymane w pliku w repozytorium ShipScope czyta sam, w commicie, który każde środowisko ostatnio wdrożyło
+z sukcesem; każda wartość liczy się od czasu tego wdrożenia (ONBOARDING.pl.md, „Feature flagi w kodzie”). Dla flag
+trzymanych gdzie indziej admin dodaje źródła flag w Settings; każde źródło wysyła pełny stan swoich flag (`off` / `on` / `partial` z procentem rolloutu) własnym tokenem
 do `POST /api/flags/ingest`. Flaga, której źródło przestaje wysyłać, znika; starsza wiadomość nigdy nie nadpisuje
 nowszej.
 

@@ -40,7 +40,7 @@ Każdy punkt to osobny PR, wdrażalny sam; `[ ]` = do zrobienia, `[x]` = zrobion
 
 ### 3. Flagi w kodzie i kreator setupu
 
-- [ ] Odczyt pliku flag przy `resolved_ref` ostatniego udanego wdrożenia per środowisko (po `refreshDrift`),
+- [x] Odczyt pliku flag przy `resolved_ref` ostatniego udanego wdrożenia per środowisko (po `refreshDrift`),
   `changedAt` = czas wdrożenia; brak pliku = błąd, nie usunięcie.
 - [x] Parsery z `adapters/flags/lib.js` w izolowanym wątku (`worker_threads`, limity pamięci, timeout), limity
   rozmiaru, aliasów i głębokości; komunikaty błędów bez wartości; wymagany prefiks albo lista kluczy.
