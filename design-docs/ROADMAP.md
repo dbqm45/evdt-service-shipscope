@@ -98,8 +98,9 @@ korporacyjnych.
   kolejkę i trzyma go do wygaśnięcia; `TOKEN_ENCRYPTION_KEY` w web służy już tylko sekretowi podpisu i tym tokenom. (#96)
 - [x] Log audytowy zmian pozostałych ustawień (członkowie, zaproszenia, repozytoria, źródła flag i tokeny, Jira,
   retencja), nie tylko sekretów: `audit_events`, Settings → General „Settings activity”. (#98)
-- [ ] Webhook Jiry: sprawdzić, czy Atlassian zawsze wysyła `exp`, i jeśli tak — wymagać go (dziś token bez `exp`
-  jest przyjmowany, `server/lib/webhooks.js`).
+- [x] Webhook Jiry bez `exp`: dokumentacja Atlassiana nie wymienia claimów tokenu, więc taka dostawa jest logowana
+  (`jira webhook token without exp`), a `JIRA_WEBHOOK_REQUIRE_EXP=1` ją odrzuca; odmowy webhooków logują powód. (#99)
+- [ ] Włączyć `JIRA_WEBHOOK_REQUIRE_EXP=1` na produkcji, gdy przez kilka tygodni w logach nie będzie tokenu bez `exp`.
 - [ ] Tożsamość nadawcy push z GitHub OIDC zamiast trwałego tokenu (dla klientów, którzy zostają przy adapterze).
 
 ## Dla klientów korporacyjnych (gdy się pojawią)

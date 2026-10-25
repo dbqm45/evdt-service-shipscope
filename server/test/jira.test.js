@@ -35,6 +35,11 @@ test('loadAtlassianConfig: off when unset, all three or nothing, a 32-byte base6
     assert.strictEqual(loadAtlassianConfig({ ...good, PUBLIC_BASE_URL: 'http://localhost:3000' }).webhookUrl, null);
     assert.strictEqual(loadAtlassianConfig({ ...good, PUBLIC_BASE_URL: 'https://shipscope.example.com/' }).webhookUrl, 'https://shipscope.example.com/webhooks/jira');
     assert.strictEqual(loadAtlassianConfig({ ...good, PUBLIC_BASE_URL: 'https://shipscope.example.com/app' }).webhookUrl, null);
+    // Jira webhook tokens without exp: accepted unless JIRA_WEBHOOK_REQUIRE_EXP=1.
+    assert.strictEqual(loadAtlassianConfig(good).requireWebhookExp, false);
+    assert.strictEqual(loadAtlassianConfig({ ...good, JIRA_WEBHOOK_REQUIRE_EXP: '0' }).requireWebhookExp, false);
+    assert.strictEqual(loadAtlassianConfig({ ...good, JIRA_WEBHOOK_REQUIRE_EXP: '1' }).requireWebhookExp, true);
+    assert.throws(() => loadAtlassianConfig({ ...good, JIRA_WEBHOOK_REQUIRE_EXP: 'yes' }), /JIRA_WEBHOOK_REQUIRE_EXP must be 1 or 0/);
 });
 
 test('atlassian client: authorize URL asks for read scopes, its own webhooks and offline access; responses are checked', async () => {
