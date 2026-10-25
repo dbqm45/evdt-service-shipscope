@@ -96,7 +96,7 @@ changelog entry by hand outside a `chore(release)` PR.
 
 Deployed to Render per `context/foundation/infrastructure.md`: `render.yaml` builds both the Web Service and the
 Background Worker from the repo root (`npm ci --prefix server`, `node server/web.js`), not `rootDir: server`, which
-would hide `docs/` from the Web Service. Migrations (`server/migrations/001`–`024`, applied by the hand-rolled
+would hide `docs/` from the Web Service. Migrations (`server/migrations/001`–`025`, applied by the hand-rolled
 `lib/migrate.js`) run as each service's `preDeployCommand` under an advisory lock (`test/render-blueprint.test.js`).
 Dependencies, all in `server/package.json`: `pg`, `fastify`, `@fastify/cookie`. Fastify runs with
 `removeAdditional: false, coerceTypes: false`: unknown fields and wrong types are a 400, never silently fixed.
@@ -315,7 +315,11 @@ reading it through `loadData()` in a `vm`; `server-test.yml` also runs on `docs/
   (every gate on) / `partial` / `deployed_code_only` (no gate), plus `uncertain`: reached services with
   `flagCoverage: 'unknown'` and gate services whose `flagFreshness` is not `fresh`, each
   `{ component, reason: 'untracked'|'stale'|'error'|'unknown', observedAt }`, shown as a "?" on the pill with
-  `doubtText()` in the tooltip and the open row.
+  `doubtText()` in the tooltip and the open row; and `mismatch` ("FE on, BE off"): a gate of a service whose
+  `componentsOrder[].serviceType` is `FE` on or partial while one typed `BE` is off or `absent`, each
+  `{ frontend, backend, backendGate }`, shown as a red outline and `ICONS.warn` on the pill (`StatusPill({ alert })`)
+  with `mismatchText()` in the tooltip and the open row. `serviceType` comes from `tracked_repos.service_role`
+  (migration `025`, `PUT …/github/repos/:repoId/role`, Settings → GitHub pencil → Role; null = no warning).
 
 ## Frontend (`docs/`)
 
@@ -379,7 +383,8 @@ tooltips (`statusLabelTooltip()`, also in the `.table-legend` row). `#filterHide
 ordinary filter reset by "Clear" and on PI switch. The `FALLBACK` dataset (`EBO-99001`, `legacyMigrationEnabled`,
 deploy `d21` under `EVP-4288`) exercises the ghost-flag and open-bug badges in the `file://` preview, and its BFF
 (`flagCoverage: 'unknown'`) and its charger service's stale prod source (`flagFreshness`) the "?" on the issues
-whose code reached them.
+whose code reached them; `ocppDeviationBadgeUiEnabled` (on in the back-office frontend on QA) the red "frontend on,
+backend off" warning on EBO-16702.
 
 **Technical view.** Summary cards, the component × env matrix (`app-technical-matrix.js`), Deployment history
 (`app-technical-timeline.js`) and the flags list (`app-technical-flags.js`). Matrix rows have `min-height: 70px`

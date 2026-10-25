@@ -358,6 +358,10 @@ html[data-theme="light"] .theme-toggle-icon.icon-sun { display:inline-flex; }
 .st-deployed::before { background:var(--nd-code); border-color:var(--nd-code); }
 .st-partial { color:var(--nd-warn-text); background:var(--st-partial-bg); border-color:var(--st-partial-border); }
 .st-partial::before { background:var(--nd-warn); border-color:var(--nd-warn); }
+/* "FE on, BE off" (ADR-003): the status stays, outlined in red with a warning icon. */
+.status-pill-alert { border-color:var(--blocked); box-shadow:0 0 0 1px var(--blocked); }
+.status-pill-alert svg { color:var(--blocked); flex:none; }
+.breakdown-alert, .breakdown-alert span { color:var(--blocked); }
 .st-dependency { color:var(--nd-dependency-text); background:var(--st-dependency-bg); border-color:var(--st-dependency-border); }
 .st-dependency::before { background:var(--nd-dependency); border-color:var(--nd-dependency); }
 .st-none { color:var(--nd-st-none-fg); background:transparent; border-color:var(--nd-st-none-border); }

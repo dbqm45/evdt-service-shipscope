@@ -4,7 +4,7 @@ const { discoverFlagFiles, previewCodeSource } = require('../lib/flag-discovery'
 const { checkCodeConfig } = require('../lib/flags-logic');
 const { CODE_CONFIG } = require('../schemas/flag-code-config');
 const {
-    listConnections, trackedRepoIdsForAdmin, trackRepo, untrackRepo, updateRepoSettings, setRepoFlagStance, setRepoEnvironments, unlinkInstallation,
+    listConnections, trackedRepoIdsForAdmin, trackRepo, untrackRepo, updateRepoSettings, setRepoFlagStance, setRepoServiceRole, setRepoEnvironments, unlinkInstallation,
 } = require('../lib/github-connections');
 
 const INSTALL_COOKIE = 'gh_install';
@@ -164,6 +164,22 @@ function registerGitHubRoutes(app, ctx) {
     }, async (request, reply) => {
         const updated = await setRepoFlagStance(pool, {
             tenantId: request.params.tenantId, actorUserId: request.user.id, repoId: Number(request.params.repoId), flagStance: request.body.flagStance,
+        });
+        if (!updated) return reply.code(404).send({ error: 'That repository is not tracked' });
+        return updated;
+    });
+
+    // Whether the repo is a frontend or a backend (ADR-003): the dashboard warns when a frontend's flag is on while
+    // the backend it needs has it off. null = not said.
+    app.put('/tenants/:tenantId/github/repos/:repoId/role', {
+        preHandler: requireUser,
+        schema: {
+            params: repoParams,
+            body: { type: 'object', required: ['serviceRole'], additionalProperties: false, properties: { serviceRole: { anyOf: [{ type: 'null' }, { type: 'string', enum: ['frontend', 'backend'] }] } } },
+        },
+    }, async (request, reply) => {
+        const updated = await setRepoServiceRole(pool, {
+            tenantId: request.params.tenantId, actorUserId: request.user.id, repoId: Number(request.params.repoId), serviceRole: request.body.serviceRole,
         });
         if (!updated) return reply.code(404).send({ error: 'That repository is not tracked' });
         return updated;

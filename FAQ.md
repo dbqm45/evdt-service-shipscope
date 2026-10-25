@@ -135,6 +135,10 @@ Only from the services the issue's code reached on that environment
   - it has never sent a full state.
 
   Settings → Flag sources shows each source's state per environment and lets an admin set the threshold.
+- **Red outline and ⚠ on the pill ("frontend on, backend off").** A service marked as a frontend (Settings → GitHub,
+  pencil → Role) has the issue's flag on, or partly on, while a service marked as a backend has its own flag for the
+  same issue off, or not the issue's code yet. Users may see a feature whose backend is not there. The status itself
+  does not change; the tooltip and the open row name both services. Services without a role never warn.
 
 ### Which Jira issues does a flag belong to?
 

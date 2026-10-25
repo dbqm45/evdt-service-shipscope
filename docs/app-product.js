@@ -103,6 +103,7 @@ function issueBreakdownHtml(issue){
         noFlagReason: anyCodeDeployed ? 'code found in deployment history, but no flag tracks it yet' : 'check flags-meta.json (jiraKeys)',
         dependency: issue.dependencyBlocked ? { note: issue.dependencyNote || 'unresolved' } : null,
         uncertain: [...new Set(ENVIRONMENTS.flatMap(env => issueStatusForEnv(issue, env).uncertain.map(doubtText)))],
+        mismatch: ENVIRONMENTS.flatMap(env => issueStatusForEnv(issue, env).mismatch.map(m => `${env.toUpperCase()}: ${mismatchText(m)}`)),
     });
 }
 
@@ -120,9 +121,12 @@ function issueRowHtml(issue, indent, showSprintBadge){
         pill: StatusPill({
             cls: statusClass(status.level),
             label: status.uncertain.length ? `${statusLabel(status.level)}?` : statusLabel(status.level),
-            title: status.uncertain.length
-                ? `${statusLabelTooltip(status.level)}. Not sure — ${status.uncertain.map(doubtText).join('; ')}`
-                : statusLabelTooltip(status.level),
+            title: [
+                statusLabelTooltip(status.level),
+                status.mismatch.length ? `Warning — frontend on, backend off: ${status.mismatch.map(mismatchText).join('; ')}` : '',
+                status.uncertain.length ? `Not sure — ${status.uncertain.map(doubtText).join('; ')}` : '',
+            ].filter(Boolean).join('. '),
+            alert: status.mismatch.length > 0,
         }),
         dateText: date ? relTime(date.toISOString()) : '—',
     });
