@@ -140,7 +140,7 @@ test('webhook routes exist only when configured: no GitHub secret, no /webhooks/
     assert.strictEqual((await post(app, '/webhooks/jira', '{}', {})).statusCode, 404);
 });
 
-test('worker: queued requests become a targeted sync under the regular locks; a newer request survives the round', async (t) => {
+test('worker: queued requests become a targeted sync; a newer request survives the round, a busy tenant keeps them', async (t) => {
     const { pool } = await setup(t);
     await requestSync(pool, { source: 'github', keys: ['70104', '70105'] });
     await requestSync(pool, { source: 'jira', keys: ['webhook:1001'] });
@@ -148,7 +148,7 @@ test('worker: queued requests become a targeted sync under the regular locks; a 
     const deps = {
         syncAll: async ({ repoIds, options }) => {
             seen.push(['github', repoIds]);
-            assert.deepStrictEqual(options, { tenantBudgetMs: 120_000 }, 'webhook syncs share tenants\' time fairly too');
+            assert.deepStrictEqual(options, { tenantBudgetMs: 120_000, concurrency: 1 }, 'webhook syncs share tenants\' time fairly too');
             // A delivery arriving while the sync runs must not be swallowed by it.
             await pool.query("UPDATE sync_requests SET requested_at = now() + interval '1 second' WHERE external_key = '70105'");
             return { repos: 2, inserted: 0, failed: 0 };
@@ -164,14 +164,8 @@ test('worker: queued requests become a targeted sync under the regular locks; a 
     assert.deepStrictEqual(seen, [['github', [70104, 70105]], ['jira', ['webhook:1001']]]);
     assert.deepStrictEqual((await pool.query('SELECT external_key FROM sync_requests')).rows.map((r) => r.external_key), ['70105']);
 
-    // The periodic sync holds the lock: nothing is taken, the request waits.
-    const holder = await pool.connect();
-    await holder.query('SELECT pg_advisory_lock(727001)');
-    seen.length = 0;
-    await webhookTick(pool, { app: {}, atlassian: null }, memoryLogger().logger, deps);
-    await holder.query('SELECT pg_advisory_unlock(727001)');
-    holder.release();
-    assert.deepStrictEqual(seen, []);
+    // Another instance was syncing one of the tenants (lib/tenant-claim.js): the requests wait for the next tick.
+    await webhookTick(pool, { app: {}, atlassian: null }, memoryLogger().logger, { syncAll: async () => ({ repos: 0, inserted: 0, failed: 0, busy: 1 }) });
     assert.strictEqual((await pool.query('SELECT count(*)::int AS n FROM sync_requests')).rows[0].n, 1);
 
     // A sync that throws as a whole keeps its requests and is logged.

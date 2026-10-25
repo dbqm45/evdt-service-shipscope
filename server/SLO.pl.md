@@ -12,8 +12,9 @@ Co ShipScope obiecuje swoim użytkownikom, jak to mierzymy i co robimy, gdy cel 
 | **Synchronizacja GitHuba i Jiry** | odsetek minut bez awarii składników „GitHub deployments” i „Jira issues” | 99% | ok. 7 h 12 min |
 | **Przyjęcie flag** | `accepted / (accepted + busy + error)` z `shipscope_flag_ingest_messages_total` (odmowy 400/401/403/429 to błędy nadawcy, nie nasze) | 99,9% | 1 na 1000 wiadomości |
 
-Cele są celowo skromne: jedna instancja web, jeden worker i jedna baza na Renderze. Wyższe wymagałyby kilku
-instancji (ROADMAP, „Skalowanie workera”). Nie obiecujemy czasu reakcji poza godzinami pracy.
+Cele są celowo skromne: jedna instancja web, jeden worker i jedna baza na Renderze. Worker można już powielić
+(kilka instancji dzieli się workspace'ami, README „Scaling the worker”), ale wyższe cele wymagałyby też kilku instancji
+web i bazy z repliką. Nie obiecujemy czasu reakcji poza godzinami pracy.
 
 ## Strona statusu
 

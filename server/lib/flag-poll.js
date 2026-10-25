@@ -9,6 +9,11 @@
 const { withScope } = require('./scope');
 const { refreshEndpointSource } = require('./endpoint-flags');
 const { POLL, nextPollAt } = require('./flags-logic');
+const { safeFetch } = require('./safe-fetch');
+const { withTenantClaim, eachLimited, limitPerHost } = require('./tenant-claim');
+
+// At most this many requests to one customer host at a time from one worker (tenants polled side by side may share it).
+const PER_HOST = 2;
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -46,23 +51,35 @@ async function schedule(pool, { tenantId, sourceId, now, failures, intervalMinut
  * read; its errors are already recorded on its environments (Settings, the dashboard's "?"). Never throws for one
  * source: an unexpected error is logged and backs that source off like any other failure.
  *
- * @param {{ pool: import('pg').Pool, encryptionKey: Buffer, sealingKeys?: object|null, tenantIds?: string[]|null, onDemand?: boolean, now?: Date, fetchImpl?: Function, log?: Function, random?: () => number }} input
+ * Several worker instances share the work (lib/tenant-claim.js): a tenant's due sources are read and polled under its
+ * claim, so two instances never poll one source at once; `concurrency` tenants run side by side in this instance, with
+ * at most PER_HOST requests to one host at a time.
+ *
+ * @param {{ pool: import('pg').Pool, encryptionKey: Buffer, sealingKeys?: object|null, tenantIds?: string[]|null, onDemand?: boolean, now?: Date, fetchImpl?: Function, log?: Function, random?: () => number, concurrency?: number }} input
  *   `tenantIds` limits the pass (a dashboard's request); `onDemand` reads what a viewer would want fresh instead of what is due
- * @returns {Promise<{ tenants: number, sources: number, failed: number }>}
+ * @returns {Promise<{ tenants: number, sources: number, failed: number, busy?: number }>} busy (when any): tenants another instance was polling
  */
-async function pollEndpoints({ pool, encryptionKey, sealingKeys = null, tenantIds = null, onDemand = false, now = new Date(), fetchImpl, log = () => {}, random = Math.random }) {
+async function pollEndpoints({ pool, encryptionKey, sealingKeys = null, tenantIds = null, onDemand = false, now = new Date(), fetchImpl = safeFetch, log = () => {}, random = Math.random, concurrency = 1 }) {
     const ids = tenantIds
         ? tenantIds.filter((id) => UUID.test(id))
         : (await pool.query('SELECT id FROM tenants ORDER BY created_at')).rows.map((r) => r.id);
     const totals = { tenants: 0, sources: 0, failed: 0 };
-    for (const tenantId of ids) {
+    const limitedFetch = limitPerHost(fetchImpl, PER_HOST);
+    let busy = 0;
+    await eachLimited(ids, concurrency, async (tenantId) => {
+        const claim = await withTenantClaim(pool, { job: 'flags', tenantId }, () => pollTenant(tenantId));
+        if (!claim.claimed) busy += 1;
+    });
+    return busy ? { ...totals, busy } : totals;
+
+    async function pollTenant(tenantId) {
         const sources = await dueSources(pool, { tenantId, now, onDemand });
-        if (!sources.length) continue;
+        if (!sources.length) return;
         totals.tenants += 1;
         for (const source of sources) {
             let failed;
             try {
-                const result = await refreshEndpointSource(pool, { tenantId, sourceId: source.id, encryptionKey, sealingKeys, fetchImpl, now, log });
+                const result = await refreshEndpointSource(pool, { tenantId, sourceId: source.id, encryptionKey, sealingKeys, fetchImpl: limitedFetch, now, log });
                 if (!result) continue;
                 failed = result.read === 0 && result.failed > 0;
             } catch (err) {
@@ -76,7 +93,6 @@ async function pollEndpoints({ pool, encryptionKey, sealingKeys = null, tenantId
             });
         }
     }
-    return totals;
 }
 
 module.exports = { pollEndpoints };

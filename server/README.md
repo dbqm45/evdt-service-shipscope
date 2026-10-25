@@ -223,7 +223,8 @@ not stripped or coerced).
   of its own tenant (a composite foreign key). The App authenticates with a JWT signed by its private key
   (RS256, `node:crypto`); installation tokens are minted per request and never stored.
 - **Deployment sync** (worker): one pass every `SYNC_INTERVAL_MINUTES` (default 15) and one retention cleanup a
-  day, each behind a Postgres advisory lock so two worker instances (or a slow pass) never overlap. Each
+  day. The cleanup runs behind a Postgres advisory lock; the deployment, Jira and endpoint-flag passes are shared
+  between worker instances instead (see "Scaling the worker" below). Each
   tenant is read under its own RLS scope -- the worker has no cross-tenant view either. All GitHub calls for a
   repo happen before its database transaction (30 s timeout each), and a repo's records, issue facts and
   cursor are written together. A failing repo stores its error on `tracked_repos.last_sync_error` and the
@@ -242,13 +243,24 @@ not stripped or coerced).
   from `Retry-After`, else 5 minutes) -- capped at an hour; it is shown in settings as a pause, not an error.
   Atlassian requests have a 30 s timeout like GitHub's. A webhook-requested sync that hits a pause is dropped
   from the queue; the periodic sync covers it.
+- **Scaling the worker** (`lib/tenant-claim.js`): the deployment, Jira and endpoint-flag passes take no global lock.
+  Each tenant is claimed for its job with a session advisory lock (`pg_try_advisory_lock(class, hashtext(tenant))`,
+  classes 727101-727103), so any number of worker instances run side by side and never on the same tenant at once:
+  a tenant another instance holds is skipped for this pass and counted as `busy` in the log line. Under the claim
+  the pass reads again what is due, and a periodic pass leaves out repos and Jira connections attempted after it
+  began, so a tenant just finished elsewhere is not synced twice. Within one instance `WORKER_CONCURRENCY` (1-8,
+  default 1) tenants run at a time per job, and a tick that comes while the previous pass of that job still runs is
+  skipped. Requests to customers' endpoints are limited to 2 at a time per host from one instance. A webhook or
+  dashboard request whose tenant was busy stays queued for the next tick. Scale by adding worker instances on
+  Render (each opens up to `WORKER_CONCURRENCY` extra database connections per job) or raising
+  `WORKER_CONCURRENCY`; GitHub's and Atlassian's rate limits stay per installation and connection.
 - **Webhooks**: verified before anything else -- GitHub's HMAC-SHA256 over the exact raw body (the JSON parser is
   bypassed on these routes), Atlassian's JWT pinned to HS256 with `exp`/`iat` checked (5 minutes of skew) -- and
   both compared in constant time. A delivery only ever queues a key (`sync_requests`: a repo id, a Jira webhook id
   or site), never data: the worker then reads the real state through the API, so a replayed or reordered delivery
   can at most cause one extra sync. `sync_requests` holds no tenant data and is the one table outside RLS: the web
   service can't know which tenants a repo belongs to; the worker matches them while walking tenants under their
-  own scope, under the same advisory locks as the periodic syncs. Jira webhooks are registered by the worker per
+  own scope, under the same per-tenant claims as the periodic syncs. Jira webhooks are registered by the worker per
   tenant with the `manage:jira-webhook` scope (filtered to the selected boards' projects, refreshed before
   Atlassian's 30-day expiry); a failure is shown in settings and never fails the sync.
 - **Calls to customers' addresses** (`lib/safe-fetch.js`, for flags endpoints): https on port 443 only, no user
@@ -263,7 +275,7 @@ not stripped or coerced).
   route returns it. Each request is signed per workspace (HMAC-SHA256 with a secret derived from the key). The answer
   is read like a flags file (isolated parser, value-free errors); "Test" returns only the parsed flags, and is limited
   per workspace because it calls out.
-- **Polling endpoints** (worker, `lib/flag-poll.js`): a `flags` tick every minute under its own advisory lock reads the
+- **Polling endpoints** (worker, `lib/flag-poll.js`): a `flags` tick every minute (tenants claimed one by one, as above) reads the
   sources whose `next_poll_at` is due, at most 10 per workspace per tick, tenant by tenant under its own scope. Each
   source is read every `pollIntervalMinutes` (default 5, at least 2) with ±10% jitter; consecutive failures double the
   wait up to an hour, and a success resets it. A workspace has at most 20 endpoint sources. Opening a dashboard queues a

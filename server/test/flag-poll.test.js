@@ -133,3 +133,15 @@ test('GET /health/worker watches the flags tick when endpoint sources are on (TO
     assert.strictEqual(judge([{ job: 'flags', last_run_at: now, last_ok_at: at('2026-10-25T09:59:00Z'), details: { failed: 0 } }]).status, 'ok');
     assert.strictEqual(judge([], false).checks.flags, undefined);
 });
+
+test('two workers polling at once read a source once: the tenant is claimed, what is due is read under the claim', async (t) => {
+    const { add, poll, answers, calls } = await setup(t);
+    await add('a');
+    await add('b');
+    answers['https://flags.acme.io/a'] = '{"newCheckout": true}';
+    answers['https://flags.acme.io/b'] = '{"darkMode": false}';
+    const now = at('2026-10-25T10:00:00Z');
+    const results = await Promise.all([poll(now, { concurrency: 2 }), poll(now, { concurrency: 2 })]);
+    assert.deepStrictEqual(calls.sort(), ['https://flags.acme.io/a', 'https://flags.acme.io/b'], 'each source once');
+    assert.strictEqual(results.reduce((n, r) => n + r.sources, 0), 2);
+});

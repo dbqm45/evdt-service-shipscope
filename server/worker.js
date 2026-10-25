@@ -12,6 +12,7 @@ const { pendingSyncRequests, finishSyncRequests } = require('./lib/webhooks');
 const { recordRun } = require('./lib/worker-status');
 const { createLogger, logLevel, logProcessFailures } = require('./lib/log');
 const { APP_VERSION } = require('./lib/version');
+const { workerConcurrency } = require('./lib/tenant-claim');
 
 const HEARTBEAT_INTERVAL_MS = 30_000;
 const WEBHOOK_INTERVAL_MS = 30_000; // how often webhook-requested syncs are picked up
@@ -19,11 +20,10 @@ const CLEANUP_INTERVAL_MS = 24 * 3600_000;
 const FLAGS_INTERVAL_MS = 60_000; // how often due endpoint sources are looked for (each has its own interval)
 const DEFAULT_SYNC_INTERVAL_MINUTES = 15;
 const DEFAULT_TENANT_BUDGET_SECONDS = 120;
-// Postgres advisory lock keys: one sync and one cleanup at a time, even with more than one worker instance.
-const SYNC_LOCK = 727_001;
+// Postgres advisory lock keys: one cleanup (and the other housekeeping jobs) at a time, even with more than one worker
+// instance. The deployment, Jira and flag passes (formerly 727_001, 727_003, 727_004) claim each tenant instead
+// (lib/tenant-claim.js), so several instances share them.
 const CLEANUP_LOCK = 727_002;
-const JIRA_LOCK = 727_003;
-const FLAGS_LOCK = 727_004;
 const SECRETS_LOCK = 727_005;
 const ENDPOINT_TEST_LOCK = 727_006;
 const SOURCES_LOCK = 727_007;
@@ -108,15 +108,26 @@ function tenantBudgetSeconds(env) {
     return value;
 }
 
+// Jobs running in this process without a global lock (their tenants are claimed one by one, lib/tenant-claim.js):
+// a tick that comes while the previous pass still runs is skipped, so passes never pile up in one instance.
+const running = new Set();
+
 /**
- * Runs one job under its lock: logs the outcome with its duration and records it. Errors are logged, never thrown.
- * A pass in which some tenants failed still succeeded as a job; their count goes into the record (`failed`).
+ * Runs one job: under its lock when it has one (`lock`), else at most once at a time in this process, its tenants
+ * shared with other instances through their claims. Logs the outcome with its duration and records it. Errors are
+ * logged, never thrown. A pass in which some tenants failed still succeeded as a job; their count goes into the
+ * record (`failed`).
  */
 async function runJob(pool, { job, lock, logger, deps, run, summary }) {
     const started = Date.now();
     const log = logger.child({ job });
+    if (!lock && running.has(job)) {
+        log.info(`${job} skipped: the previous pass is still running`);
+        return;
+    }
+    if (!lock) running.add(job);
     try {
-        const outcome = await runExclusive(pool, lock, run);
+        const outcome = lock ? await runExclusive(pool, lock, run) : { skipped: false, result: await run() };
         if (outcome.skipped) {
             log.info(`${job} skipped: another run holds the lock`);
             return;
@@ -128,33 +139,39 @@ async function runJob(pool, { job, lock, logger, deps, run, summary }) {
         const durationMs = Date.now() - started;
         log.error(`${job} failed`, { durationMs, err });
         await noteRun(pool, log, deps, { job, ok: false, error: err.message, durationMs });
+    } finally {
+        if (!lock) running.delete(job);
     }
 }
 
-/** One deployment sync pass (FR-005), never overlapping another. */
-async function syncTick(pool, app, logger = defaultLogger, deps = { syncAll }, tenantBudgetMs = DEFAULT_TENANT_BUDGET_SECONDS * 1000) {
+/** The tenants another instance was syncing, when there were any (lib/tenant-claim.js). */
+const busyNote = (r) => (r.busy ? `, ${r.busy} tenant(s) busy in another instance` : '');
+
+/** One deployment sync pass (FR-005), never overlapping another in this process. */
+
+async function syncTick(pool, app, logger = defaultLogger, deps = { syncAll }, tenantBudgetMs = DEFAULT_TENANT_BUDGET_SECONDS * 1000, concurrency = 1) {
     await runJob(pool, {
-        job: 'deployments', lock: SYNC_LOCK, logger, deps,
-        run: () => deps.syncAll({ pool, app, log: syncLogger(logger.child({ job: 'deployments' })), options: { tenantBudgetMs } }),
-        summary: (r) => `deployment sync done: ${r.repos} repos, +${r.inserted} deployments, ${r.failed} failed, ${r.deferred} left for the next pass`,
+        job: 'deployments', lock: null, logger, deps,
+        run: () => deps.syncAll({ pool, app, log: syncLogger(logger.child({ job: 'deployments' })), options: { tenantBudgetMs, concurrency } }),
+        summary: (r) => `deployment sync done: ${r.repos} repos, +${r.inserted} deployments, ${r.failed} failed, ${r.deferred} left for the next pass${busyNote(r)}`,
     });
 }
 
-/** One Jira issue sync pass (FR-009), never overlapping another. */
-async function jiraTick(pool, atlassian, logger = defaultLogger, deps = { syncAllJira }, tenantBudgetMs = DEFAULT_TENANT_BUDGET_SECONDS * 1000) {
+/** One Jira issue sync pass (FR-009), never overlapping another in this process. */
+async function jiraTick(pool, atlassian, logger = defaultLogger, deps = { syncAllJira }, tenantBudgetMs = DEFAULT_TENANT_BUDGET_SECONDS * 1000, concurrency = 1) {
     await runJob(pool, {
-        job: 'jira', lock: JIRA_LOCK, logger, deps,
-        run: () => deps.syncAllJira({ pool, atlassian, log: syncLogger(logger.child({ job: 'jira' })), tenantBudgetMs }),
-        summary: (r) => `jira sync done: ${r.tenants} tenants, ${r.issues} issues, ${r.failed} failed, ${r.deferred} left for the next pass`,
+        job: 'jira', lock: null, logger, deps,
+        run: () => deps.syncAllJira({ pool, atlassian, log: syncLogger(logger.child({ job: 'jira' })), tenantBudgetMs, concurrency }),
+        summary: (r) => `jira sync done: ${r.tenants} tenants, ${r.issues} issues, ${r.failed} failed, ${r.deferred} left for the next pass${busyNote(r)}`,
     });
 }
 
 /** One pass over the endpoint sources that are due (lib/flag-poll.js), never overlapping another or a dashboard's request. */
-async function flagsTick(pool, encryptionKey, logger = defaultLogger, deps = { pollEndpoints }, sealingKeys = null) {
+async function flagsTick(pool, encryptionKey, logger = defaultLogger, deps = { pollEndpoints }, sealingKeys = null, concurrency = 1) {
     await runJob(pool, {
-        job: 'flags', lock: FLAGS_LOCK, logger, deps,
-        run: () => deps.pollEndpoints({ pool, encryptionKey, sealingKeys, log: syncLogger(logger.child({ job: 'flags' })) }),
-        summary: (r) => `flags poll done: ${r.sources} endpoint source(s) in ${r.tenants} tenant(s), ${r.failed} failed`,
+        job: 'flags', lock: null, logger, deps,
+        run: () => deps.pollEndpoints({ pool, encryptionKey, sealingKeys, concurrency, log: syncLogger(logger.child({ job: 'flags' })) }),
+        summary: (r) => `flags poll done: ${r.sources} endpoint source(s) in ${r.tenants} tenant(s), ${r.failed} failed${busyNote(r)}`,
     });
 }
 
@@ -202,35 +219,49 @@ async function jiraTokenTick(pool, atlassian, logger = defaultLogger, deps = { h
  * (lock held, or the sync failed as a whole) stays queued for the next tick. Errors are logged, never thrown; the
  * tick is recorded as one job (`webhooks`), failed when any source failed.
  */
-async function webhookTick(pool, { app, atlassian, encryptionKey = null, sealingKeys = null, tenantBudgetMs = DEFAULT_TENANT_BUDGET_SECONDS * 1000 }, logger = defaultLogger, deps = { syncAll, syncAllJira, pollEndpoints }) {
+async function webhookTick(pool, { app, atlassian, encryptionKey = null, sealingKeys = null, tenantBudgetMs = DEFAULT_TENANT_BUDGET_SECONDS * 1000, concurrency = 1 }, logger = defaultLogger, deps = { syncAll, syncAllJira, pollEndpoints }) {
     const log = logger.child({ job: 'webhooks' });
-    const sources = [
-        app && ['github', SYNC_LOCK, (requests) => deps.syncAll({
-            pool, app, log: syncLogger(log), options: { tenantBudgetMs }, repoIds: requests.map((r) => Number(r.key)).filter(Number.isSafeInteger),
-        })],
-        atlassian && ['jira', JIRA_LOCK, (requests) => deps.syncAllJira({ pool, atlassian, log: syncLogger(log), tenantBudgetMs, keys: requests.map((r) => r.key) })],
-        // A dashboard was opened: its tenant's endpoint sources, unless just read (lib/flag-poll.js onDemand).
-        encryptionKey && ['flags', FLAGS_LOCK, (requests) => deps.pollEndpoints({ pool, encryptionKey, sealingKeys, log: syncLogger(log), tenantIds: requests.map((r) => r.key), onDemand: true })],
-    ].filter(Boolean);
-    const errors = [];
-    const handled = {};
-    const tickStarted = Date.now();
-    for (const [source, lock, sync] of sources) {
-        const started = Date.now();
-        try {
-            const requests = await pendingSyncRequests(pool, source);
-            if (!requests.length) continue;
-            const run = await runExclusive(pool, lock, () => sync(requests));
-            if (run.skipped) continue;
-            await finishSyncRequests(pool, source, requests);
-            handled[source] = requests.length;
-            log.info(`${source} webhook sync done: ${requests.length} request(s)`, { source, requests: requests.length, durationMs: Date.now() - started });
-        } catch (err) {
-            errors.push(`${source}: ${err.message}`);
-            log.error(`${source} webhook sync failed`, { source, durationMs: Date.now() - started, err });
-        }
+    if (running.has('webhooks')) return;
+    running.add('webhooks');
+    try {
+        await drainWebhooks();
+    } finally {
+        running.delete('webhooks');
     }
-    await noteRun(pool, log, deps, { job: 'webhooks', ok: !errors.length, error: errors.join('; ') || null, details: handled, durationMs: Date.now() - tickStarted });
+
+    async function drainWebhooks() {
+        const sources = [
+            app && ['github', (requests) => deps.syncAll({
+                pool, app, log: syncLogger(log), options: { tenantBudgetMs, concurrency }, repoIds: requests.map((r) => Number(r.key)).filter(Number.isSafeInteger),
+            })],
+            atlassian && ['jira', (requests) => deps.syncAllJira({ pool, atlassian, log: syncLogger(log), tenantBudgetMs, concurrency, keys: requests.map((r) => r.key) })],
+            // A dashboard was opened: its tenant's endpoint sources, unless just read (lib/flag-poll.js onDemand).
+            encryptionKey && ['flags', (requests) => deps.pollEndpoints({ pool, encryptionKey, sealingKeys, concurrency, log: syncLogger(log), tenantIds: requests.map((r) => r.key), onDemand: true })],
+        ].filter(Boolean);
+        const errors = [];
+        const handled = {};
+        const tickStarted = Date.now();
+        for (const [source, sync] of sources) {
+            const started = Date.now();
+            try {
+                const requests = await pendingSyncRequests(pool, source);
+                if (!requests.length) continue;
+                const result = await sync(requests);
+                // A tenant another instance was syncing: keep the requests for the next tick rather than lose its part.
+                if (result && result.busy) {
+                    log.info(`${source} webhook sync postponed: ${result.busy} tenant(s) busy elsewhere`, { source, busy: result.busy });
+                    continue;
+                }
+                await finishSyncRequests(pool, source, requests);
+                handled[source] = requests.length;
+                log.info(`${source} webhook sync done: ${requests.length} request(s)`, { source, requests: requests.length, durationMs: Date.now() - started });
+            } catch (err) {
+                errors.push(`${source}: ${err.message}`);
+                log.error(`${source} webhook sync failed`, { source, durationMs: Date.now() - started, err });
+            }
+        }
+        await noteRun(pool, log, deps, { job: 'webhooks', ok: !errors.length, error: errors.join('; ') || null, details: handled, durationMs: Date.now() - tickStarted });
+    }
 }
 
 /** Seals every stored secret with the current TOKEN_ENCRYPTION_KEY (lib/secret-rotation.js), at start and daily. */
@@ -264,16 +295,17 @@ if (require.main === module) {
     const app = loadGitHubAppConfig(process.env);
     const syncMinutes = syncIntervalMinutes(process.env);
     const budgetMs = tenantBudgetSeconds(process.env) * 1000;
+    const concurrency = workerConcurrency(process.env);
     const pool = createPool();
     logProcessFailures(defaultLogger);
     pool.on('error', (err) => defaultLogger.error('idle database connection failed', { err }));
-    defaultLogger.info('worker started', { syncIntervalMinutes: syncMinutes, tenantBudgetSeconds: budgetMs / 1000, github: !!app, jira: !!loadAtlassianConfig(process.env) });
+    defaultLogger.info('worker started', { syncIntervalMinutes: syncMinutes, tenantBudgetSeconds: budgetMs / 1000, concurrency, github: !!app, jira: !!loadAtlassianConfig(process.env) });
     const timers = [setInterval(() => heartbeatTick(pool), HEARTBEAT_INTERVAL_MS)];
     heartbeatTick(pool);
 
     if (app) {
-        timers.push(setInterval(() => syncTick(pool, app, undefined, undefined, budgetMs), syncMinutes * 60_000));
-        syncTick(pool, app, undefined, undefined, budgetMs);
+        timers.push(setInterval(() => syncTick(pool, app, undefined, undefined, budgetMs, concurrency), syncMinutes * 60_000));
+        syncTick(pool, app, undefined, undefined, budgetMs, concurrency);
     } else {
         defaultLogger.warn('GITHUB_APP_* not set: deployment sync is off');
     }
@@ -283,22 +315,22 @@ if (require.main === module) {
     if (atlassian) {
         atlassian.sealingKeys = sealingKeys;
         if (sealingKeys) timers.push(setInterval(() => jiraTokenTick(pool, atlassian), JIRA_TOKEN_INTERVAL_MS));
-        timers.push(setInterval(() => jiraTick(pool, atlassian, undefined, undefined, budgetMs), syncMinutes * 60_000));
-        jiraTick(pool, atlassian, undefined, undefined, budgetMs);
+        timers.push(setInterval(() => jiraTick(pool, atlassian, undefined, undefined, budgetMs, concurrency), syncMinutes * 60_000));
+        jiraTick(pool, atlassian, undefined, undefined, budgetMs, concurrency);
     } else {
         defaultLogger.warn('ATLASSIAN_* not set: Jira sync is off');
     }
     const encryptionKey = loadEncryptionKey(process.env);
     if (encryptionKey) {
-        timers.push(setInterval(() => flagsTick(pool, encryptionKey, undefined, undefined, sealingKeys), FLAGS_INTERVAL_MS));
-        flagsTick(pool, encryptionKey, undefined, undefined, sealingKeys);
+        timers.push(setInterval(() => flagsTick(pool, encryptionKey, undefined, undefined, sealingKeys, concurrency), FLAGS_INTERVAL_MS));
+        flagsTick(pool, encryptionKey, undefined, undefined, sealingKeys, concurrency);
         timers.push(setInterval(() => secretsTick(pool, encryptionKey, undefined, undefined, sealingKeys), CLEANUP_INTERVAL_MS));
         secretsTick(pool, encryptionKey, undefined, undefined, sealingKeys);
         if (sealingKeys) timers.push(setInterval(() => endpointTestTick(pool, { encryptionKey, sealingKeys }), ENDPOINT_TEST_INTERVAL_MS));
     } else {
         defaultLogger.warn('TOKEN_ENCRYPTION_KEY not set: flags from endpoints are off');
     }
-    if (app || atlassian || encryptionKey) timers.push(setInterval(() => webhookTick(pool, { app, atlassian, encryptionKey, sealingKeys, tenantBudgetMs: budgetMs }), WEBHOOK_INTERVAL_MS));
+    if (app || atlassian || encryptionKey) timers.push(setInterval(() => webhookTick(pool, { app, atlassian, encryptionKey, sealingKeys, tenantBudgetMs: budgetMs, concurrency }), WEBHOOK_INTERVAL_MS));
     timers.push(setInterval(() => cleanupTick(pool), CLEANUP_INTERVAL_MS));
     cleanupTick(pool);
     timers.push(setInterval(() => sourcesTick(pool), SOURCES_INTERVAL_MS));

@@ -1,4 +1,5 @@
 const { withScope } = require('./scope');
+const { withTenantClaim, eachLimited } = require('./tenant-claim');
 const { createInstallationToken, githubGet, GitHubApiError, GitHubRateLimitError } = require('./github-app');
 const { buildDeploymentPlan, computeNextCursor, issuesFromMessages, mergeSeenEnvironments } = require('./deployment-logic');
 const { fetchRefIndex, resolveVersionFile, resolveVersion } = require('./version-resolution');
@@ -276,37 +277,58 @@ async function syncRepo({ pool, token, tenantId, repo, fetch: fetchFn = fetch, n
  *
  * `repoIds` limits the pass to those repos (in every tenant that tracks them): a webhook's targeted sync.
  *
- * @param {{ pool: import('pg').Pool, app: { appId: string, privateKey: import('crypto').KeyObject }, fetch?: typeof fetch, now?: number, clock?: () => number, log?: (msg: string, fields?: { level?: string } & object) => void, options?: object, repoIds?: number[] }} input
- * @returns {Promise<{ repos: number, inserted: number, failed: number, deferred: number }>} deferred: repos left for a later pass (rate limit or time budget)
+ * Several worker instances share the work (lib/tenant-claim.js): each tenant runs under its own claim, a tenant
+ * another instance holds is skipped (`busy`), and a periodic pass leaves out repos attempted after it began.
+ * `options.concurrency` tenants run side by side in this instance (WORKER_CONCURRENCY).
+ *
+ * @param {{ pool: import('pg').Pool, app: { appId: string, privateKey: import('crypto').KeyObject }, fetch?: typeof fetch, now?: number, clock?: () => number, log?: (msg: string, fields?: { level?: string } & object) => void, options?: { tenantBudgetMs?: number, concurrency?: number }, repoIds?: number[] }} input
+ * @returns {Promise<{ repos: number, inserted: number, failed: number, deferred: number, busy?: number }>} deferred: repos left for a later pass (rate limit or time budget); busy (when any): tenants another instance was syncing
  */
 async function syncAll({ pool, app, fetch: fetchFn = fetch, now = Date.now(), clock = Date.now, log = () => {}, options = {}, repoIds = null }) {
     const tenantBudgetMs = options.tenantBudgetMs ?? DEFAULT_TENANT_BUDGET_MS;
+    const concurrency = options.concurrency ?? 1;
     const tokens = new Map(); // installationId -> Promise<token>, for this pass only
     const tokenFor = (installationId) => {
         if (!tokens.has(installationId)) tokens.set(installationId, createInstallationToken({ app, installationId, fetch: fetchFn }));
         return tokens.get(installationId);
     };
+    // A periodic pass skips repos another instance attempted after it began (lib/tenant-claim.js); a webhook's pass
+    // (repoIds) syncs what it was asked for regardless.
+    const { rows: [{ started }] } = await pool.query('SELECT clock_timestamp() AS started');
+    const tenantRepos = (tenantId) => withScope(pool, { tenantId }, async (client) => (await client.query(
+        `SELECT r.repo_id, r.full_name, r.installation_id, r.deployments_cursor, r.version_file, r.drift_ignore_paths, r.drift, r.env_map, r.seen_environments,
+                r.last_attempt_at, i.rate_limited_until
+         FROM tracked_repos r
+         LEFT JOIN github_installations i ON i.tenant_id = r.tenant_id AND i.installation_id = r.installation_id
+         WHERE r.tenant_id = $1 AND ($2::bigint[] IS NULL OR r.repo_id = ANY($2))
+           AND ($3::timestamptz IS NULL OR r.last_attempt_at IS NULL OR r.last_attempt_at < $3)
+         ORDER BY r.last_attempt_at NULLS FIRST, r.full_name`,
+        [tenantId, repoIds, repoIds ? null : started]
+    )).rows);
 
     const { rows: tenantRows } = await pool.query('SELECT id FROM tenants ORDER BY created_at');
     const work = [];
     for (const { id: tenantId } of tenantRows) {
-        const repos = await withScope(pool, { tenantId }, async (client) => (await client.query(
-            `SELECT r.repo_id, r.full_name, r.installation_id, r.deployments_cursor, r.version_file, r.drift_ignore_paths, r.drift, r.env_map, r.seen_environments,
-                    r.last_attempt_at, i.rate_limited_until
-             FROM tracked_repos r
-             LEFT JOIN github_installations i ON i.tenant_id = r.tenant_id AND i.installation_id = r.installation_id
-             WHERE r.tenant_id = $1 AND ($2::bigint[] IS NULL OR r.repo_id = ANY($2))
-             ORDER BY r.last_attempt_at NULLS FIRST, r.full_name`,
-            [tenantId, repoIds]
-        )).rows);
-        if (repos.length) work.push({ tenantId, repos, waitingSince: repos[0].last_attempt_at });
+        const repos = await tenantRepos(tenantId);
+        if (repos.length) work.push({ tenantId, waitingSince: repos[0].last_attempt_at });
     }
     // Stable sort: equally-waiting tenants keep their creation order.
     work.sort((a, b) => waitKey(a.waitingSince) - waitKey(b.waitingSince));
 
     const totals = { repos: 0, inserted: 0, failed: 0, deferred: 0 };
+    let busy = 0;
     const limitedUntil = new Map(); // installationId -> Date, learned this pass
-    for (const { tenantId, repos } of work) {
+    await eachLimited(work, concurrency, async ({ tenantId }) => {
+        const claim = await withTenantClaim(pool, { job: 'deployments', tenantId }, async () => {
+            // Read again under the claim: another instance may have just synced some of them.
+            const repos = await tenantRepos(tenantId);
+            await syncTenantRepos(tenantId, repos);
+        });
+        if (!claim.claimed) busy += 1;
+    });
+    return busy ? { ...totals, busy } : totals;
+
+    async function syncTenantRepos(tenantId, repos) {
         const caches = createCaches(); // per tenant: one tenant's lookups never answer another's
         const deadline = clock() + tenantBudgetMs;
         for (const [i, row] of repos.entries()) {
@@ -365,7 +387,6 @@ async function syncAll({ pool, app, fetch: fetchFn = fetch, now = Date.now(), cl
             }
         }
     }
-    return totals;
 }
 
 /** Never tried sorts first, then the oldest attempt. */

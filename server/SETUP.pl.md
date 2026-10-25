@@ -87,6 +87,7 @@ serwisów (`render.yaml` ustawia `DATABASE_URL` sam; sekrety mają `sync: false`
 | `SYNC_INTERVAL_MINUTES` | — | opcjonalnie | Co ile minut synchronizacja (1–1440, domyślnie 15) |
 | `METRICS_TOKEN` | opcjonalnie | — | Włącza `GET /metrics` (format Prometheusa) dla `Authorization: Bearer <token>`; min. 32 znaki, `openssl rand -hex 32`. Bez niego trasy nie ma. Lista metryk: [README.md](README.md), „Metrics” |
 | `SYNC_TENANT_BUDGET_SECONDS` | — | opcjonalnie | Ile sekund jednego przebiegu synchronizacji dostaje jeden workspace (10–3600, domyślnie 120); resztę dokończy w następnym, żeby duży workspace nie blokował pozostałych |
+| `WORKER_CONCURRENCY` | — | opcjonalnie | Ile workspace'ów jedna instancja workera synchronizuje naraz w każdym zadaniu (1–8, domyślnie 1). Kilka instancji workera dzieli się pracą i bez tego: każdy workspace bierze tylko jedna |
 | `DASHBOARD_DIR` | opcjonalnie | — | Gdzie są pliki dashboardu (`docs/`); bez nich strona `/t/<id>/` odpowiada 503 |
 | `ATLASSIAN_CLIENT_ID`, `ATLASSIAN_CLIENT_SECRET` | tak | tak | Aplikacja OAuth w Atlassian (sekcja 5); bez nich połączenie z Jirą jest wyłączone |
 | `JIRA_WEBHOOK_REQUIRE_EXP` | opcjonalnie | — | `1` odrzuca webhook Jiry, którego token nie ma daty ważności (`exp`). Domyślnie wyłączone: taki webhook jest przyjmowany, a w logu serwisu web pojawia się `jira webhook token without exp`. Włącz, gdy przez kilka tygodni nie ma takich linii |
