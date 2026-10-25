@@ -7,6 +7,12 @@ dashboard, not a published package), so entries are grouped by date instead. See
 ShipScope is, `CLAUDE.md` for the technical reference, and `FAQ.md` for how specific numbers/badges are
 calculated.
 
+## [0.2.26] - 2026-10-25
+
+### Added
+
+- **SHP:** map each repo's GitHub environments to test, qa and prod (#83)
+
 ## [0.2.25] - 2026-10-25
 
 ### Added
