@@ -7,6 +7,7 @@ const { pollEndpoints } = require('./lib/flag-poll');
 const { resealSecrets } = require('./lib/secret-rotation');
 const { runQueuedEndpointTest } = require('./lib/endpoint-flags');
 const { handOverAccessToken } = require('./lib/jira-connections');
+const { flagSourceHealth } = require('./lib/flags');
 const { pendingSyncRequests, finishSyncRequests } = require('./lib/webhooks');
 const { recordRun } = require('./lib/worker-status');
 const { createLogger, logLevel, logProcessFailures } = require('./lib/log');
@@ -25,6 +26,8 @@ const JIRA_LOCK = 727_003;
 const FLAGS_LOCK = 727_004;
 const SECRETS_LOCK = 727_005;
 const ENDPOINT_TEST_LOCK = 727_006;
+const SOURCES_LOCK = 727_007;
+const SOURCES_INTERVAL_MS = 5 * 60_000; // the flag sources' totals for GET /metrics
 const ENDPOINT_TEST_INTERVAL_MS = 2_000; // an admin waits on these in Settings
 const JIRA_TOKEN_INTERVAL_MS = 1_000; // the web service waits on these, a page in Settings with it
 
@@ -120,10 +123,11 @@ async function runJob(pool, { job, lock, logger, deps, run, summary }) {
         }
         const fields = { durationMs: Date.now() - started, ...outcome.result };
         (outcome.result?.failed ? log.warn : log.info)(summary(outcome.result), fields);
-        await noteRun(pool, log, deps, { job, ok: true, details: outcome.result });
+        await noteRun(pool, log, deps, { job, ok: true, details: outcome.result, durationMs: fields.durationMs });
     } catch (err) {
-        log.error(`${job} failed`, { durationMs: Date.now() - started, err });
-        await noteRun(pool, log, deps, { job, ok: false, error: err.message });
+        const durationMs = Date.now() - started;
+        log.error(`${job} failed`, { durationMs, err });
+        await noteRun(pool, log, deps, { job, ok: false, error: err.message, durationMs });
     }
 }
 
@@ -210,6 +214,7 @@ async function webhookTick(pool, { app, atlassian, encryptionKey = null, sealing
     ].filter(Boolean);
     const errors = [];
     const handled = {};
+    const tickStarted = Date.now();
     for (const [source, lock, sync] of sources) {
         const started = Date.now();
         try {
@@ -225,7 +230,7 @@ async function webhookTick(pool, { app, atlassian, encryptionKey = null, sealing
             log.error(`${source} webhook sync failed`, { source, durationMs: Date.now() - started, err });
         }
     }
-    await noteRun(pool, log, deps, { job: 'webhooks', ok: !errors.length, error: errors.join('; ') || null, details: handled });
+    await noteRun(pool, log, deps, { job: 'webhooks', ok: !errors.length, error: errors.join('; ') || null, details: handled, durationMs: Date.now() - tickStarted });
 }
 
 /** Seals every stored secret with the current TOKEN_ENCRYPTION_KEY (lib/secret-rotation.js), at start and daily. */
@@ -234,6 +239,15 @@ async function secretsTick(pool, encryptionKey, logger = defaultLogger, deps = {
         job: 'secrets', lock: SECRETS_LOCK, logger, deps,
         run: () => deps.resealSecrets({ pool, encryptionKey, sealingKeys, log: syncLogger(logger.child({ job: 'secrets' })) }),
         summary: (r) => `secrets re-sealed: ${r.resealed} in ${r.tenants} tenant(s), ${r.stale} still on an older key (${r.unreadable} unreadable)`,
+    });
+}
+
+/** Counts every tenant's flag sources by origin and freshness (lib/flags.js) for GET /metrics, every 5 minutes. */
+async function sourcesTick(pool, logger = defaultLogger, deps = { flagSourceHealth }) {
+    await runJob(pool, {
+        job: 'sources', lock: SOURCES_LOCK, logger, deps,
+        run: () => deps.flagSourceHealth(pool),
+        summary: (r) => `flag sources counted: ${r.sources.push + r.sources.code + r.sources.endpoint} in ${r.tenants} tenant(s), ${r.environments.error} environment(s) failing, ${r.environments.stale} stale`,
     });
 }
 
@@ -287,6 +301,8 @@ if (require.main === module) {
     if (app || atlassian || encryptionKey) timers.push(setInterval(() => webhookTick(pool, { app, atlassian, encryptionKey, sealingKeys, tenantBudgetMs: budgetMs }), WEBHOOK_INTERVAL_MS));
     timers.push(setInterval(() => cleanupTick(pool), CLEANUP_INTERVAL_MS));
     cleanupTick(pool);
+    timers.push(setInterval(() => sourcesTick(pool), SOURCES_INTERVAL_MS));
+    sourcesTick(pool);
 
     process.on('SIGTERM', () => {
         defaultLogger.info('worker stopping (SIGTERM)');
@@ -295,4 +311,4 @@ if (require.main === module) {
     });
 }
 
-module.exports = { heartbeatTick, runExclusive, syncIntervalMinutes, tenantBudgetSeconds, syncTick, jiraTick, flagsTick, secretsTick, endpointTestTick, jiraTokenTick, webhookTick, cleanupTick };
+module.exports = { heartbeatTick, runExclusive, syncIntervalMinutes, tenantBudgetSeconds, syncTick, jiraTick, flagsTick, secretsTick, endpointTestTick, jiraTokenTick, webhookTick, sourcesTick, cleanupTick };

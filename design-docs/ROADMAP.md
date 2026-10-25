@@ -40,8 +40,9 @@ korporacyjnych.
 - [x] UI: „niepotwierdzone od X", „Released?" z powodem; stan każdego źródła per środowisko w Settings. (#79)
 - [x] Strukturalne logi (JSON, `tenantId`/`requestId`/`job`, bez sekretów) i `GET /health/worker` dla monitora
   dostępności (heartbeat, ostatnia udana synchronizacja, wiek kolejki `sync_requests`). (#80)
-- [ ] Metryki (Prometheus `/metrics`: czasy passów, błędy źródeł, odrzucenia ingestu), gdy będzie dla kogo je
-  oglądać.
+- [x] Metryki: `GET /metrics` w formacie Prometheusa za `METRICS_TOKEN` (czasy i liczniki zadań workera, kolejka,
+  źródła flag wg świeżości, odpowiedzi ingestu i webhooków); przy okazji worker zapisuje wreszcie stan zadań `flags`
+  i `secrets` (ograniczenie z migracji 020 je odrzucało). (#101)
 
 ### 3. Flagi w kodzie i kreator setupu
 

@@ -98,7 +98,7 @@ changelog entry by hand outside a `chore(release)` PR.
 
 Deployed to Render per `context/foundation/infrastructure.md`: `render.yaml` builds both the Web Service and the
 Background Worker from the repo root (`npm ci --prefix server`, `node server/web.js`), not `rootDir: server`, which
-would hide `docs/` from the Web Service. Migrations (`server/migrations/001`–`032`, applied by the hand-rolled
+would hide `docs/` from the Web Service. Migrations (`server/migrations/001`–`033`, applied by the hand-rolled
 `lib/migrate.js`) run as each service's `preDeployCommand` under an advisory lock (`test/render-blueprint.test.js`).
 Dependencies, all in `server/package.json`: `pg`, `fastify`, `@fastify/cookie`. Fastify runs with
 `removeAdditional: false, coerceTypes: false`: unknown fields and wrong types are a 400, never silently fixed.
@@ -130,7 +130,12 @@ credential (`redact()`, credential-named fields masked) or a flag value. Web req
 `durationMs`, `recordRun()` into `worker_status`); the sync modules call `log(msg, { level, tenantId, repo, err })`.
 `GET /health/worker` (`lib/worker-status.js`, `judgeWorker()`) answers 503 for a missing heartbeat, a sync without
 success for 3 × `SYNC_INTERVAL_MINUTES` + 5 minutes, or an undrained webhook queue; an uptime monitor alerts on it
-(`server/README.md`, "Monitoring and logs"). Tested in `server/test/observability.test.js`.
+(`server/README.md`, "Monitoring and logs"). Tested in `server/test/observability.test.js`. `GET /metrics`
+(`lib/metrics.js`, only with `METRICS_TOKEN`, bearer, Prometheus text): the web process's in-memory counters (an
+`onResponse` hook: ingest outcomes by status, webhook deliveries, status classes) plus `worker_status` (migration
+`033`: any job name, `last_duration_ms`, `runs_total`, `failures_total`; `runJob()` passes `durationMs`) and the
+worker's `sources` job (`sourcesTick()`, every 5 minutes, `flagSourceHealth()` in `lib/flags.js`: sources by origin,
+environments by freshness, refused in the last hour, counts only) (`server/test/metrics.test.js`).
 
 **Features, by PRD requirement:**
 
