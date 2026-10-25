@@ -400,23 +400,28 @@ A value no key opens (the old key was dropped too early) is counted as `unreadab
 connection or the endpoint token then has to be entered again. A workspace's signing secret does not change with the
 key: it is stored the first time it is needed, from the value earlier versions derived from the oldest key.
 
-## Endpoint tokens only the worker can read
+## Customer tokens only the worker can read
 
-With a sealing key pair configured, a customer's endpoint token is sealed with a public key the Web Service holds and
-opened only with the private key the worker alone holds (`lib/sealed-box.js`, X25519 + AES-256-GCM). A leak of the Web
-Service (its environment, its memory, a request it makes) then exposes no stored token.
+With a sealing key pair configured, a customer's endpoint token and the Jira refresh token are sealed with a public key
+the Web Service holds and opened only with the private key the worker alone holds (`lib/sealed-box.js`, X25519 +
+AES-256-GCM). A leak of the Web Service (its environment, its memory, a request it makes) then exposes no stored token;
+at most a Jira access token that expires within the hour.
 
 1. `npm run sealing-keys --prefix server` prints a pair.
 2. Set `SECRETS_PUBLIC_KEY` on **both** services and `SECRETS_PRIVATE_KEY` on the **worker only** (`render.yaml`
    declares the private key nowhere else). Deploy. The worker refuses to start with a private key that does not match.
-3. The worker's `secrets` job moves every endpoint token sealed with `TOKEN_ENCRYPTION_KEY` to the pair.
+3. The worker's `secrets` job moves every endpoint and Jira token sealed with `TOKEN_ENCRYPTION_KEY` to the pair.
 
 "Test" with a stored token then runs on the worker: Settings queues it (`202`, `endpoint_tests`, `sync_requests`
 `endpoint-test`), the worker runs queued tests every 2 seconds and Settings shows the result. A typed token is still
 tested at once. To rotate the pair, put the new pair in place and the old private key in
 `SECRETS_PRIVATE_KEY_PREVIOUS` on the worker; remove it once the `secrets` job reports nothing left on an older key.
-Without the pair, tokens are sealed with `TOKEN_ENCRYPTION_KEY` as before. Jira refresh tokens and signing secrets still
-use `TOKEN_ENCRYPTION_KEY` on both services (the Web Service calls Jira for Settings and signs "Test" requests).
+When Settings needs Jira (boards, fields, "Sync now", disconnecting), the Web Service asks the worker for an access
+token (`sync_requests` `jira-token`); the worker refreshes the grant and leaves a short-lived access token in
+`jira_access_grants`, sealed with `TOKEN_ENCRYPTION_KEY`, which the Web Service reuses until it expires. The worker
+answers within a second; without an answer in 15 seconds the request fails with 503. Without the pair, tokens are
+sealed with `TOKEN_ENCRYPTION_KEY` as before. Signing secrets stay on `TOKEN_ENCRYPTION_KEY` (the Web Service shows
+them and signs "Test" requests).
 
 ## Monitoring and logs
 

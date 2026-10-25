@@ -69,7 +69,7 @@ function registerJiraRoutes(app, ctx) {
         const sites = await fetchJiraSites({ accessToken: tokens.accessToken, fetch: fetchFn });
         if (!sites.length) return reply.code(400).send({ error: 'This Atlassian account has no Jira site ShipScope can read' });
         await saveConnection(pool, {
-            tenantId, actorUserId: request.user.id, refreshToken: tokens.refreshToken, scopes: tokens.scopes, sites, encryptionKey: atlassian.encryptionKey,
+            tenantId, actorUserId: request.user.id, refreshToken: tokens.refreshToken, scopes: tokens.scopes, sites, encryptionKey: atlassian.encryptionKey, sealingKeys: atlassian.sealingKeys || null,
         });
         return reply.redirect(`/t/${tenantId}/settings#jira`);
     });

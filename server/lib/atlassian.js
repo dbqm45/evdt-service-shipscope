@@ -98,6 +98,7 @@ async function tokenRequest(body, fetchFn) {
         accessToken: json.access_token,
         refreshToken: typeof json.refresh_token === 'string' && json.refresh_token ? json.refresh_token : null,
         scopes: typeof json.scope === 'string' ? json.scope.split(' ').filter(Boolean) : [],
+        expiresIn: Number.isInteger(json.expires_in) && json.expires_in > 0 ? json.expires_in : 3600,
     };
 }
 

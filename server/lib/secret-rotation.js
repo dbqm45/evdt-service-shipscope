@@ -26,10 +26,10 @@ function reseal(keys, sealed, aad) {
 }
 
 /**
- * Seals an endpoint token again for where it belongs now: for the worker's current public key when a sealing key pair is
+ * Seals a worker-readable secret (an endpoint token, a Jira refresh token) again for where it belongs now: for the worker's current public key when a sealing key pair is
  * configured (moving tokens sealed with TOKEN_ENCRYPTION_KEY there too), else with the current symmetric key.
  */
-function resealEndpointToken(keys, sealingKeys, sealed, aad) {
+function resealForWorker(keys, sealingKeys, sealed, aad) {
     if (!sealingKeys || !sealingKeys.publicKey) return isSealedFor(sealed) ? false : reseal(keys, sealed, aad);
     if (isSealedFor(sealed) && sealed.split('.')[1] === sealingKeyId(sealingKeys.publicKey)) return false;
     try {
@@ -63,9 +63,11 @@ async function resealSecrets({ pool, encryptionKey, sealingKeys = null, log = ()
     };
     for (const { id: tenantId } of tenants) {
         await withScope(pool, { tenantId }, async (client) => {
+            // Access tokens handed to the web service (lib/jira-connections.js) are of no use once expired.
+            await client.query('DELETE FROM jira_access_grants WHERE tenant_id = $1 AND (expires_at IS NULL OR expires_at < now())', [tenantId]);
             const { rows: [jira] } = await client.query('SELECT refresh_token_enc FROM jira_connections WHERE tenant_id = $1 FOR UPDATE', [tenantId]);
             if (jira) {
-                const next = reseal(encryptionKey, jira.refresh_token_enc, tenantId);
+                const next = resealForWorker(encryptionKey, sealingKeys, jira.refresh_token_enc, tenantId);
                 if (next) await client.query('UPDATE jira_connections SET refresh_token_enc = $2 WHERE tenant_id = $1', [tenantId, next]);
                 count(tenantId, 'Jira token', next);
             }
@@ -74,7 +76,7 @@ async function resealSecrets({ pool, encryptionKey, sealingKeys = null, log = ()
                 [tenantId]
             );
             for (const source of sources.filter((s) => s.endpoint_token_enc)) {
-                const next = resealEndpointToken(encryptionKey, sealingKeys, source.endpoint_token_enc, endpointTokenAad(tenantId, source.id));
+                const next = resealForWorker(encryptionKey, sealingKeys, source.endpoint_token_enc, endpointTokenAad(tenantId, source.id));
                 if (next) await client.query('UPDATE flag_sources SET endpoint_token_enc = $3 WHERE tenant_id = $1 AND id = $2', [tenantId, source.id, next]);
                 count(tenantId, 'endpoint token', next);
             }

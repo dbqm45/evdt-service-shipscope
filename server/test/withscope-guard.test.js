@@ -20,10 +20,10 @@ function write(name, content) {
     fs.writeFileSync(path.join(DIR, name), content);
 }
 
-test('RLS_TABLES: the 19 RLS tables named in CLAUDE.md, in one place', () => {
+test('RLS_TABLES: the 20 RLS tables named in CLAUDE.md, in one place', () => {
     assert.deepEqual([...RLS_TABLES].sort(), [
         'deployments', 'endpoint_tests', 'flag_source_envs', 'flag_source_repos', 'flag_sources', 'flag_value_history', 'flag_values', 'flags', 'github_installations',
-        'ingest_tokens', 'invitations', 'issue_deployments', 'jira_boards', 'jira_connections', 'jira_issues',
+        'ingest_tokens', 'invitations', 'issue_deployments', 'jira_access_grants', 'jira_boards', 'jira_connections', 'jira_issues',
         'jira_pis', 'memberships', 'secret_events', 'tracked_repos',
     ].sort());
 });
