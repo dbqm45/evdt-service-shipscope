@@ -7,6 +7,12 @@ dashboard, not a published package), so entries are grouped by date instead. See
 ShipScope is, `CLAUDE.md` for the technical reference, and `FAQ.md` for how specific numbers/badges are
 calculated.
 
+## [0.2.32] - 2026-10-25
+
+### Added
+
+- **SHP:** set up endpoint flag sources in Settings (#89)
+
 ## [0.2.31] - 2026-10-25
 
 ### Added
