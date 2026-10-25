@@ -276,6 +276,7 @@ kluczy także `SECRETS_PRIVATE_KEY` (tylko on), zob. [SEKRETY.pl.md](SEKRETY.pl.
 Wszystko jest opisane w `render.yaml` (Blueprint): serwis web `shipscope-web`, worker `shipscope-worker` i baza
 `shipscope-db`. Oba serwisy budują się z katalogu głównego repozytorium (tak, żeby serwis web miał dostęp do
 `docs/`, czyli dashboardu i strony ustawień), a migracje bazy uruchamiają się same przed każdym wdrożeniem.
+Kopie zapasowe bazy, odtworzenie i kwartalny test odtwarzania: [KOPIE.pl.md](KOPIE.pl.md).
 
 ### Przed pierwszym wdrożeniem
 

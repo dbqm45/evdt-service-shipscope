@@ -84,7 +84,10 @@ korporacyjnych.
 
 - [ ] Skalowanie workera: podział pracy między instancje (dziś cały pass jest pod jedną blokadą) i równoległe
   odczyty z limitem per host.
-- [ ] Kopie zapasowe bazy z okresowym testem odtwarzania.
+- [x] Kopie zapasowe bazy z okresowym testem odtwarzania: procedura w `server/KOPIE.pl.md` (PITR Rendera, eksporty,
+  kopia poza Renderem, odtworzenie, test raz na kwartał) i `npm run verify-restore`, który sprawdza odtworzoną kopię. (#103)
+- [ ] Ustawić kopię poza Renderem (eksport co tydzień albo cron job „PostgreSQL S3 Backups”) i wpisać pierwszy test
+  odtwarzania do kalendarza.
 - [ ] Cel dostępności (SLO), strona statusu.
 - [x] Retencja `flag_value_history`: ta sama co wdrożeń (`deployment_retention_days`), zawsze z ostatnią zmianą każdej
   flagi na źródle i środowisku; dashboard czyta najwyżej 5000 najnowszych zmian. (#102)
