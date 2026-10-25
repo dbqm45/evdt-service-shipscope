@@ -12,9 +12,8 @@ const { withScope } = require('./scope');
 const { githubGet, GitHubApiError, GitHubRateLimitError } = require('./github-app');
 const { parseFlagFile, FlagFileError } = require('./flag-file-parser');
 const { codeFileFor } = require('./flags-logic');
-const { lockTenantFlags, applyObservations } = require('./flags');
+const { lockTenantFlags, applyObservations, recordSourceEnvError } = require('./flags');
 
-const MAX_ERROR_LENGTH = 500;
 // GitHub's contents API sends a file's content inline up to 1 MB; the parser's own limit is far below that.
 const MAX_FILE_BYTES = 256 * 1024;
 
@@ -40,15 +39,6 @@ async function readPlan(pool, { tenantId, repoId }) {
         );
         return { sources, latest, envRows };
     });
-}
-
-/** Notes a failed read on the environment (Settings and the dashboard's "?" show it); last_ref stays, so it is retried. */
-async function recordReadError(pool, { tenantId, sourceId, env, message, now }) {
-    await withScope(pool, { tenantId }, (client) => client.query(
-        `INSERT INTO flag_source_envs (tenant_id, source_id, environment, last_error, last_error_at) VALUES ($1, $2, $3, $4, $5)
-         ON CONFLICT (tenant_id, source_id, environment) DO UPDATE SET last_error = EXCLUDED.last_error, last_error_at = EXCLUDED.last_error_at`,
-        [tenantId, sourceId, env, String(message).slice(0, MAX_ERROR_LENGTH), now]
-    ));
 }
 
 /**
@@ -119,7 +109,7 @@ async function refreshCodeFlags({ pool, token, tenantId, repo, fetch: fetchFn = 
                 // A file error is ours and value-free; a GitHub error says only the status.
                 const message = err instanceof FlagFileError ? err.message
                     : err instanceof GitHubApiError ? `${file}: GitHub answered ${err.status || 'with an error'}` : `${file}: could not be read`;
-                await recordReadError(pool, { tenantId, sourceId: source.id, env, message, now });
+                await recordSourceEnvError(pool, { tenantId, sourceId: source.id, env, message, now });
                 log(`${repo.fullName}: flags not read from ${file} (${env}): ${message}`, { level: 'warn', ...fields, reason: message });
             }
         }

@@ -14,6 +14,13 @@ Brakuje:
 - sprawdzania układu w prawdziwej przeglądarce w CI (atrapa DOM nie parsuje HTML, więc wyrównywanie wysokości
   wierszy i synchronizacja przewijania nie są sprawdzane; Playwright był dotąd uruchamiany tylko ręcznie).
 
+## Rotacja klucza `TOKEN_ENCRYPTION_KEY` i sekretu podpisu endpointów
+
+ADR-003 (punkt 5) wymaga rotacji kluczy dla sekretów klientów. Dziś `lib/secret-box.js` ma format `v1` z jednym
+kluczem, a sekret podpisu żądań do endpointów jest wyprowadzany z tego klucza per tenant (`signingSecret()`), więc nie
+da się go zmienić jednemu tenantowi. Do zrobienia: drugi klucz (`v2`) z odczytem obu i przeszyfrowaniem, wersja
+sekretu podpisu per tenant oraz log audytowy dostępu do sekretów.
+
 ## Tryb jasny nie pokrywa wszystkich kolorów
 
 Przy ostatnim przeglądzie tryb jasny obejmował ok. 36 z ~91 zahardkodowanych kolorów w `docs/style.css`.

@@ -57,3 +57,11 @@ test('loadGitHubAppConfig: a partial or malformed set fails fast, naming each pr
     const ec = crypto.generateKeyPairSync('ec', { namedCurve: 'P-256' }).privateKey.export({ type: 'pkcs8', format: 'pem' });
     assert.throws(() => loadGitHubAppConfig({ GITHUB_APP_ID: '1', GITHUB_APP_SLUG: 'x', GITHUB_APP_PRIVATE_KEY: ec }), /RSA private key/);
 });
+
+test('loadEncryptionKey: optional, but when set it is 32 base64-encoded bytes', () => {
+    const { loadEncryptionKey } = require('../lib/config');
+    assert.strictEqual(loadEncryptionKey({}), null);
+    const key = crypto.randomBytes(32);
+    assert.deepStrictEqual(loadEncryptionKey({ TOKEN_ENCRYPTION_KEY: key.toString('base64') }), key);
+    for (const bad of ['short', Buffer.alloc(16).toString('base64')]) assert.throws(() => loadEncryptionKey({ TOKEN_ENCRYPTION_KEY: bad }), /32 bytes, base64/);
+});

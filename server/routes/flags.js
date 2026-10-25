@@ -4,16 +4,19 @@ const {
     recordIngestError, listFlags, setFlagDetails,
 } = require('../lib/flags');
 const { createLimiter } = require('../lib/request-limiter');
-const { CODE_CONFIG } = require('../schemas/flag-code-config');
+const { testEndpoint, endpointSigning } = require('../lib/endpoint-flags');
+const { CODE_CONFIG, ENDPOINT_CONFIG, ENDPOINT_TOKEN } = require('../schemas/flag-code-config');
 
 // Per token: a burst of 60 messages, then one a second. A sender posts once per environment per deployment or
 // polling round, far below this; the limit only stops a runaway sender from crowding out everyone else.
 const INGEST_RATE_LIMIT = { capacity: 60, refillPerSecond: 1 };
+// Per workspace: "Test" calls the customer's endpoints, so a burst of 10, then one every 6 s.
+const ENDPOINT_TEST_LIMIT = { capacity: 10, refillPerSecond: 1 / 6 };
 
 /** Too many messages from one token; the sender waits `retryAfterSeconds` (sent as Retry-After). */
 class IngestRateLimitError extends Error {
-    constructor(retryAfterSeconds) {
-        super('Too many flag messages from this token; slow down');
+    constructor(retryAfterSeconds, message = 'Too many flag messages from this token; slow down') {
+        super(message);
         this.retryAfterSeconds = retryAfterSeconds;
     }
 }
@@ -29,8 +32,10 @@ const INGEST_SCHEMA = require('../schemas/flags-ingest.v2.schema.json');
  * @param {object} ctx see web.js's buildApp() for the full shape
  */
 function registerFlagRoutes(app, ctx) {
-    const { pool, requireUser, UUID_PARAM } = ctx;
+    const { pool, requireUser, UUID_PARAM, encryptionKey } = ctx;
     const limiter = createLimiter(ctx.ingestRateLimit || INGEST_RATE_LIMIT);
+    const testLimiter = createLimiter(ENDPOINT_TEST_LIMIT);
+    const fetchImpl = ctx.safeFetch || undefined;
     const tenantOnlyParams = { type: 'object', required: ['tenantId'], properties: { tenantId: UUID_PARAM } };
     const { flagKey: FLAG_KEY, jiraKey: JIRA_KEY } = INGEST_SCHEMA.definitions;
 
@@ -76,6 +81,9 @@ function registerFlagRoutes(app, ctx) {
             // A source ShipScope reads itself from a file in one repository (lib/code-flags.js); checked further by
             // checkCodeConfig().
             code: CODE_CONFIG,
+            // A runtime source ShipScope polls (lib/endpoint-flags.js); checked further by checkEndpointConfig().
+            endpoint: ENDPOINT_CONFIG,
+            endpointToken: ENDPOINT_TOKEN,
             ...extra,
         },
     });
@@ -84,9 +92,9 @@ function registerFlagRoutes(app, ctx) {
 
     app.post('/tenants/:tenantId/flag-sources', {
         preHandler: requireUser,
-        schema: { params: tenantOnlyParams, body: { ...sourceBody(['name', 'kind'], { tokenExpiresInDays: EXPIRES_IN_DAYS, tokenEnvironments: TOKEN_ENVIRONMENTS, origin: { type: 'string', enum: ['push', 'code'] } }), ...ONE_SCOPE } },
+        schema: { params: tenantOnlyParams, body: { ...sourceBody(['name', 'kind'], { tokenExpiresInDays: EXPIRES_IN_DAYS, tokenEnvironments: TOKEN_ENVIRONMENTS, origin: { type: 'string', enum: ['push', 'code', 'endpoint'] } }), ...ONE_SCOPE } },
     }, async (request, reply) => reply.code(201).send(await createFlagSource(pool, {
-        tenantId: request.params.tenantId, actorUserId: request.user.id, ...request.body,
+        tenantId: request.params.tenantId, actorUserId: request.user.id, ...request.body, encryptionKey,
     })));
 
     // The flags themselves, for the settings page: descriptions and Jira links by origin, state per environment.
@@ -124,8 +132,27 @@ function registerFlagRoutes(app, ctx) {
         preHandler: requireUser,
         schema: { params: sourceParams, body: { ...sourceBody(['name', 'kind', 'priority']), anyOf: [{ required: ['repoIds'] }, { required: ['repoId'] }], ...ONE_SCOPE } },
     }, async (request) => updateFlagSource(pool, {
-        tenantId: request.params.tenantId, actorUserId: request.user.id, sourceId: request.params.sourceId, ...request.body,
+        tenantId: request.params.tenantId, actorUserId: request.user.id, sourceId: request.params.sourceId, ...request.body, encryptionKey,
     }));
+
+    // "Test" for an endpoint source, saved or not: only the parsed flags per environment come back, never the answer.
+    app.post('/tenants/:tenantId/flag-endpoint-test', {
+        preHandler: requireUser,
+        schema: {
+            params: tenantOnlyParams,
+            body: { type: 'object', required: ['endpoint'], additionalProperties: false, properties: { endpoint: ENDPOINT_CONFIG, endpointToken: ENDPOINT_TOKEN, sourceId: UUID_PARAM } },
+        },
+    }, async (request) => {
+        const { ok, retryAfterSeconds } = testLimiter.take(request.params.tenantId);
+        if (!ok) throw new IngestRateLimitError(retryAfterSeconds, 'Too many endpoint tests; wait a moment');
+        return { envs: await testEndpoint(pool, { tenantId: request.params.tenantId, actorUserId: request.user.id, ...request.body, encryptionKey, fetchImpl }) };
+    });
+
+    // How the customer's endpoint checks a request came from ShipScope for this workspace (admins only).
+    app.get('/tenants/:tenantId/flag-endpoint-signing', {
+        preHandler: requireUser,
+        schema: { params: tenantOnlyParams },
+    }, async (request) => endpointSigning(pool, { tenantId: request.params.tenantId, actorUserId: request.user.id, encryptionKey }));
 
     app.delete('/tenants/:tenantId/flag-sources/:sourceId', {
         preHandler: requireUser,

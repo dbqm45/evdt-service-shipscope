@@ -6,6 +6,8 @@
  * calls withScope, runs the SQL, and hands the raw rows to these functions.
  */
 
+const { checkUrl, SafeFetchError } = require('./safe-fetch');
+
 class IngestPayloadError extends Error {}
 
 // A sender's own change time is trusted within these bounds; outside them the payload is rejected.
@@ -306,6 +308,48 @@ function codeFileFor(code, env) {
     return code.file.replace('{env}', (code.envNames && code.envNames[env]) || env);
 }
 
+// What an endpoint may answer: a document of flags, read like a file of that format.
+const ENDPOINT_FORMATS = ['json', 'yaml'];
+// A token goes in Authorization as a bearer token, or as is in a header of the customer's own (x-...), never in one
+// of ShipScope's signature headers.
+const TOKEN_HEADER = /^x-(?!shipscope-)[a-z0-9-]{1,60}$/;
+
+/**
+ * Checks a source ShipScope polls (ADR-003, `flag_sources.endpoint_config`) and returns it with only the fields it
+ * uses: a runtime source; an https address per environment (at least one, each passing safe-fetch's checkUrl(), which
+ * does no I/O); json or yaml (else told by the answer's content type); the reading fields of a file; where the token goes.
+ *
+ * @param {{ urls: Partial<Record<'test'|'qa'|'prod', string>>, format?: 'json'|'yaml', path?: string, valuePath?: string, keyField?: string, rolloutPath?: string, prefix?: string, keys?: string[], tokenHeader?: string }} endpoint
+ * @param {{ kind: string }} source
+ * @returns {object}
+ * @throws {FlagSourceConfigError}
+ */
+function checkEndpointConfig(endpoint, { kind }) {
+    if (kind !== 'runtime') throw new FlagSourceConfigError('A source read from an endpoint is a runtime source');
+    const urls = {};
+    for (const [env, url] of Object.entries((endpoint && endpoint.urls) || {})) {
+        if (!['test', 'qa', 'prod'].includes(env)) throw new FlagSourceConfigError('Addresses are given for test, qa or prod');
+        try {
+            urls[env] = checkUrl(url).href;
+        } catch (err) {
+            if (err instanceof SafeFetchError) throw new FlagSourceConfigError(`${env}: ${err.message}`);
+            throw err;
+        }
+    }
+    if (!Object.keys(urls).length) throw new FlagSourceConfigError('Give the address of at least one environment');
+    if (endpoint.format && !ENDPOINT_FORMATS.includes(endpoint.format)) throw new FlagSourceConfigError(`An endpoint answers ${ENDPOINT_FORMATS.join(' or ')}`);
+    const tokenHeader = endpoint.tokenHeader ? endpoint.tokenHeader.toLowerCase() : 'authorization';
+    if (tokenHeader !== 'authorization' && !TOKEN_HEADER.test(tokenHeader)) {
+        throw new FlagSourceConfigError('The token goes in Authorization or in a header of your own named x-...');
+    }
+    const out = { urls };
+    if (endpoint.format) out.format = endpoint.format;
+    for (const field of ['path', 'valuePath', 'keyField', 'rolloutPath', 'prefix']) if (endpoint[field]) out[field] = endpoint[field];
+    if (Array.isArray(endpoint.keys) && endpoint.keys.length) out.keys = endpoint.keys;
+    if (tokenHeader !== 'authorization') out.tokenHeader = tokenHeader;
+    return out;
+}
+
 /** Minutes a confirmation stays fresh when the source sets no threshold: a runtime value can change any time, a
  *  build value only with a deployment (null = never stale). */
 const STALE_AFTER_MINUTES = { runtime: 24 * 60, build: null };
@@ -354,6 +398,7 @@ module.exports = {
     checkCodeConfig,
     codeFileFor,
     codeFileFormat,
+    checkEndpointConfig,
     STALE_AFTER_MINUTES,
     freshnessOf,
     freshnessByComponent,
