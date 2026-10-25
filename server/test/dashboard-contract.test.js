@@ -72,7 +72,7 @@ test('the frontend reads what the syncs stored: release status by sub-task and b
             sprints: { 10: [{ id: 103, name: 'Sparks 27.3.2', state: 'active', startDate: '2026-08-15', endDate: '2026-09-01' }] },
             fields: [{ id: 'customfield_10020', name: 'Sprint', schema: { custom: 'com.pyxis.greenhopper.jira:gh-sprint' } }],
             issues: [
-                issue('ABC-1', 'Story', { subtasks: [{ key: 'ABC-7', fields: { status: { statusCategory: { key: 'done' } } } }] }),
+                issue('ABC-1', 'Story', { labels: ['release:R1'], subtasks: [{ key: 'ABC-7', fields: { status: { statusCategory: { key: 'done' } } } }] }),
                 issue('ABC-8', 'Story'),
                 issue('ABC-9', 'Bug', { issuelinks: [{ type: { inward: 'is blocked by' }, inwardIssue: { key: 'ABC-1', fields: { status: { statusCategory: { key: 'indeterminate' } } } } }] }),
             ],
@@ -133,6 +133,9 @@ test('the frontend reads what the syncs stored: release status by sub-task and b
     // blockedByKeys: the Bug shipped in the Story that blocks it.
     assert.strictEqual(level('ABC-9', 'test'), 'deployed_code_only');
     assert.strictEqual(level('ABC-8', 'test'), 'none');
+    // releasePlan (G1.3): the release:R1 label is a line; the Release plan tab reads it with the item's PROD status.
+    assert.deepStrictEqual(ev('releasePlanModel().groups.map(g => g.lines.map(l => [l.id, l.items.map(i => [i.key, i.prodLevel, i.subtaskKeys])]))'),
+        [[['R1', [['ABC-1', 'none', ['ABC-7']]]]]]);
 
     // version / resolvedRef and driftBehind on each environment's latest record, read by the matrix.
     assert.strictEqual(ev(`currentVersion(${JSON.stringify(component)}, 'qa').version`), 'v1.0.0');

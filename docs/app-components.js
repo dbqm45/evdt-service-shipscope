@@ -618,3 +618,55 @@ function ColumnChartColumn({ label, bars }){
 function ColumnChart({ columns }){
     return html`<div class="col-chart">${columns}</div>`;
 }
+
+/* ---------- Release plan (G1.3) ---------- */
+
+/** One work item of a release line: key (linked when Jira is), title, type and its PROD pill. */
+function ReleasePlanItem({ itemKey, href, title, type, pill }){
+    return html`<li class="rp-item">
+        ${ExternalLink({ href, cls: 'rp-key mono', children: itemKey })}
+        <span class="rp-title">${title}</span>
+        ${type ? Tag({ text: type, cls: 'tag-type' }) : ''}
+        <span class="rp-pill">${pill}</span>
+    </li>`;
+}
+
+/** A line R1…Rn: its name, "N/M on PROD", "R1 released" once every item is with users, then its items. */
+function ReleaseLineCard({ id, name, isMvp, released, onProdCount, total, items }){
+    return html`<section class="${classNames('rp-line', released && 'rp-line-released')}">
+        <div class="rp-line-head">
+            <span class="rp-line-id">${id}</span>
+            ${name ? html`<span class="rp-line-name">${name}</span>` : ''}
+            ${isMvp && !/^mvp$/i.test(name || '') ? Tag({ text: 'MVP', cls: 'tag-mvp', title: 'The first line: the smallest release that reaches the outcome' }) : ''}
+            <span class="rp-line-count">${onProdCount}/${total} on PROD</span>
+            ${released ? Tag({ text: `${id} released`, cls: 'tag-released', title: 'Every item of this line is with users on PROD' }) : ''}
+        </div>
+        <ul class="rp-items">${items}</ul>
+    </section>`;
+}
+
+/** One flag against its plan: PROD rollout, stage and days in it, what comes next, and the remove-by date. */
+function ReleasePlanFlag({ flagKey, rolloutText, stageText, progressText, owner, removeByText, overdue }){
+    return html`<li class="${classNames('rp-flag', overdue && 'flag-overdue')}">
+        <span class="rp-flag-key mono">${flagKey}</span>
+        <span class="rp-flag-rollout">${rolloutText}</span>
+        <span class="rp-flag-stage">${stageText}</span>
+        ${progressText ? html`<span class="rp-flag-progress">${progressText}</span>` : ''}
+        ${owner ? html`<span class="rp-flag-owner">${owner}</span>` : ''}
+        ${removeByText ? html`<span class="${classNames('rp-flag-remove', overdue && 'rp-flag-remove-overdue')}">${overdue ? ICONS.warn : ''}${removeByText}</span>` : ''}
+    </li>`;
+}
+
+/** A group of lines (an Epic in Jira mode, a change in repo mode) with its flags. */
+function ReleasePlanGroup({ title, groupKey, outcome, mvpReleased, lines, flags }){
+    return html`<section class="panel rp-group">
+        <div class="rp-group-head">
+            <h2>${title}</h2>
+            ${groupKey && groupKey !== title ? html`<span class="mono rp-group-key">${groupKey}</span>` : ''}
+            ${mvpReleased ? Tag({ text: 'MVP with users', cls: 'tag-released' }) : ''}
+        </div>
+        ${outcome ? html`<p class="rp-outcome">${outcome}</p>` : ''}
+        <div class="rp-lines">${lines}</div>
+        ${flags.length ? html`<div class="rp-flags"><h3>Flags</h3><ul>${flags}</ul></div>` : ''}
+    </section>`;
+}

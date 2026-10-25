@@ -4,7 +4,7 @@ const {
 } = require('../lib/atlassian');
 const { saveConnection, getConnection, selectSite, disconnect, listProjects } = require('../lib/jira-connections');
 const {
-    listBoards, setBoards, configureBoard, syncTenant: syncJiraTenant, removeJiraWebhooks, listFlagFields, setFlagLink,
+    listBoards, setBoards, configureBoard, syncTenant: syncJiraTenant, removeJiraWebhooks, listFlagFields, setFlagLink, setReleaseLink,
 } = require('../lib/jira-sync');
 
 const JIRA_CONNECT_COOKIE = 'jira_connect';
@@ -132,6 +132,35 @@ function registerJiraRoutes(app, ctx) {
     }, async (request) => ({
         flagLink: await setFlagLink(pool, {
             tenantId: request.params.tenantId, actorUserId: request.user.id, atlassian, flagLink: request.body, fetch: fetchFn,
+        }),
+    }));
+
+    // How Jira issues name their release line R1…Rn (G1.3): labels with a prefix (default release:), a fixVersion, a field.
+    app.put('/tenants/:tenantId/jira/release-link', {
+        preHandler: requireUser,
+        schema: {
+            params: tenantParams,
+            body: {
+                oneOf: [
+                    { type: 'object', required: ['type'], additionalProperties: false, properties: { type: { const: 'none' } } },
+                    {
+                        type: 'object', required: ['type', 'prefix'], additionalProperties: false,
+                        properties: { type: { const: 'label' }, prefix: { type: 'string', minLength: 1, maxLength: 30 } },
+                    },
+                    {
+                        type: 'object', required: ['type'], additionalProperties: false,
+                        properties: { type: { const: 'fixVersion' }, prefix: { type: 'string', maxLength: 30 } },
+                    },
+                    {
+                        type: 'object', required: ['type', 'id'], additionalProperties: false,
+                        properties: { type: { const: 'field' }, id: { type: 'string', pattern: '^customfield_[0-9]{1,10}$' } },
+                    },
+                ],
+            },
+        },
+    }, async (request) => ({
+        releaseLink: await setReleaseLink(pool, {
+            tenantId: request.params.tenantId, actorUserId: request.user.id, atlassian, releaseLink: request.body, fetch: fetchFn,
         }),
     }));
 

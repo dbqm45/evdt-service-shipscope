@@ -301,10 +301,41 @@ function issueType(issuetype) {
     return null;
 }
 
-/** The fields an issue search asks for (the custom ones by the ids fetchFieldIds() found, and the flag field if any). */
-function issueFields({ sprintFieldId, epicLinkFieldId, flaggedFieldId, flagLink = null }) {
-    return ['summary', 'issuetype', 'status', 'priority', 'created', 'resolutiondate', 'project', 'parent', 'subtasks', 'issuelinks', 'labels',
-        sprintFieldId, epicLinkFieldId, flaggedFieldId, flagLink && flagLink.type === 'field' ? flagLink.id : null].filter(Boolean);
+/** The fields an issue search asks for (the custom ones by the ids fetchFieldIds() found, and the flag and release-line fields if any). */
+function issueFields({ sprintFieldId, epicLinkFieldId, flaggedFieldId, flagLink = null, releaseLink = null }) {
+    return [...new Set(['summary', 'issuetype', 'status', 'priority', 'created', 'resolutiondate', 'project', 'parent', 'subtasks', 'issuelinks', 'labels', 'fixVersions',
+        sprintFieldId, epicLinkFieldId, flaggedFieldId, flagLink && flagLink.type === 'field' ? flagLink.id : null,
+        releaseLink && releaseLink.type === 'field' ? releaseLink.id : null].filter(Boolean))];
+}
+
+// A release line of a release plan (pdi contract 0.4.0): R1 = the MVP, then R2…
+const RELEASE_LINE = /^R([0-9]{1,4})$/i;
+
+/**
+ * The release line an issue belongs to, by the tenant's convention (jira_connections.release_link, migration 036):
+ * a label after a prefix (`release:R1`, prefix matched without case), a fixVersion's name after an optional prefix,
+ * or a text or select field. Only `R<n>` counts; with several, the lowest (the earliest line) wins.
+ *
+ * @param {object} fields a raw issue's `fields`
+ * @param {{ type: 'label', prefix: string }|{ type: 'fixVersion', prefix?: string }|{ type: 'field', id: string }|{ type: 'none' }|null} releaseLink
+ * @returns {string|null} `R<n>`
+ */
+function extractReleaseLine(fields, releaseLink) {
+    if (!releaseLink || !fields) return null;
+    const afterPrefix = (values, prefix) => values
+        .filter((v) => typeof v === 'string' && v.toLowerCase().startsWith(prefix.toLowerCase()))
+        .map((v) => v.slice(prefix.length));
+    let candidates = [];
+    if (releaseLink.type === 'label') {
+        candidates = afterPrefix(Array.isArray(fields.labels) ? fields.labels : [], releaseLink.prefix);
+    } else if (releaseLink.type === 'fixVersion') {
+        candidates = afterPrefix((Array.isArray(fields.fixVersions) ? fields.fixVersions : []).map((v) => v?.name), releaseLink.prefix || '');
+    } else if (releaseLink.type === 'field') {
+        const value = fields[releaseLink.id];
+        candidates = (Array.isArray(value) ? value : [value]).map((v) => (typeof v === 'string' ? v : typeof v?.value === 'string' ? v.value : null));
+    }
+    const numbers = candidates.map((c) => RELEASE_LINE.exec(typeof c === 'string' ? c.trim() : '')).filter(Boolean).map((m) => Number(m[1]));
+    return numbers.length ? `R${Math.min(...numbers)}` : null;
 }
 
 // The same key rule as the flag ingest API (web.js FLAG_KEY): what a sender can report is what Jira can link to.
@@ -349,7 +380,7 @@ const str = (v, max = 500) => (typeof v === 'string' ? v.slice(0, max) : null);
  * One raw issue in the dashboard's shape, or null for something to skip (unknown type, malformed).
  *
  * @param {object} raw a /search/jql issue
- * @param {{ sprintFieldId: string|null, epicLinkFieldId: string|null, flaggedFieldId: string|null, flagLink?: object|null }} fieldIds
+ * @param {{ sprintFieldId: string|null, epicLinkFieldId: string|null, flaggedFieldId: string|null, flagLink?: object|null, releaseLink?: object|null }} fieldIds
  * @param {{ pi: string, sprintsInScope: Map<number, { name: string, state: string }>, sprint?: string|null }} scope the PI being synced and
  *   its board's sprints in it; `sprint`: the name to use when none of those is the issue's (a release or flow month is its own "sprint")
  * @returns {object|null}
@@ -412,6 +443,7 @@ function mapIssue(raw, fieldIds, { pi, sprintsInScope, sprint: fallbackSprint = 
         created: str(f.created, 40),
         resolvedAt: str(f.resolutiondate, 40),
         featureFlags: extractFlagKeys(f, fieldIds.flagLink || null),
+        releaseLine: extractReleaseLine(f, fieldIds.releaseLink || null),
         ...(blockers.length ? { dependencyNote: str(`Blocked by ${blockers[0].inwardIssue.key}: ${blockers[0].inwardIssue.fields?.summary || ''}`) } : {}),
     };
 }
@@ -419,6 +451,6 @@ function mapIssue(raw, fieldIds, { pi, sprintsInScope, sprint: fallbackSprint = 
 module.exports = {
     NOW_KEY,
     RhythmTemplateError, extractPiFromSprintName, compileTemplate, rhythmOf, piOfSprint, comparePiDesc, currentPiOf, previousPiOf,
-    releaseName, currentReleaseOf, previousReleaseOf, flowMonth, releaseJql, flowJql, issueType, issueFields, extractFlagKeys, mapIssue,
+    releaseName, currentReleaseOf, previousReleaseOf, flowMonth, releaseJql, flowJql, issueType, issueFields, extractFlagKeys, extractReleaseLine, mapIssue,
     planBoardIncrements, buildJiraIndex,
 };

@@ -661,3 +661,182 @@ function piWorkItemCounts(){
     return { counts, total: items.length };
 }
 
+
+/* ---------- Release plan (G1.3) ---------- */
+const DAY_MS = 86400000;
+
+/** The line order R1 < R2 < … < R10. */
+function releaseLineRank(id){
+    return Number(String(id).slice(1)) || 0;
+}
+/** A rollout stage's percentage ("10%" -> 10), or null for a named stage ("internal"). */
+function stagePercent(stage){
+    const m = /^\s*([0-9]{1,3})\s*%\s*$/.exec(String(stage));
+
+    return m ? Math.min(100, Number(m[1])) : null;
+}
+/** How far a flag is out on PROD across the services that report it: the widest exposure (on = 100%, a partial
+ *  rollout its percentage, off = 0) and when that value last changed. Null when PROD reports nothing. */
+function flagProdExposure(flagKey){
+    const byComponent = state.flagStatesByComponent ? state.flagStatesByComponent[flagKey]?.[ENVIRONMENT.PROD] || {} : null;
+    const values = byComponent ? Object.values(byComponent) : [flagStateFor(flagKey, null, ENVIRONMENT.PROD)].filter(Boolean);
+
+    if (!values.length) {
+        return null;
+    }
+
+    const percentOf = v => (v.state === 'on' ? 100 : v.state === 'partial' ? (typeof v.rollout === 'number' ? v.rollout : null) : 0);
+    const widest = values.reduce((best, v) => {
+        const p = percentOf(v) ?? 0;
+
+        return !best || p > best.p ? { v, p } : best;
+    }, null);
+
+    return { state: widest.v.state, percent: percentOf(widest.v), changedAt: widest.v.changedAt || null };
+}
+/**
+ * One flag against its plan (a `flags[]` entry of a release.yaml, pdi contract 0.4.0), on PROD:
+ * - its stage is the last planned one it reached: a % stage once the rollout is at least that, a named stage
+ *   ("internal") once the flag is on for anyone; `not_started` while it is off;
+ * - days in the stage count from the value's last change, against the stage's `min_days`: `waiting` below them,
+ *   `ready` (for the next stage) from then on, `final` at the last stage;
+ * - past `remove_by` it is `overdue`, with the days since.
+ * Without a plan (Jira mode) only the rollout is known: `no_plan`.
+ *
+ * @param {{ key: string, owner?: string, remove_by?: string, rollout?: Array<{ stage: string, min_days?: number, exit?: string }> }|null} planFlag
+ * @param {string} flagKey
+ * @returns {{ key: string, hasPlan: boolean, state: string|null, percent: number|null, stage: string|null, stageIndex: number, nextStage: string|null, daysInStage: number|null, minDays: number|null, exit: string|null, status: 'no_plan'|'not_started'|'waiting'|'ready'|'final', owner: string|null, removeBy: string|null, daysPastRemoveBy: number, overdue: boolean }}
+ */
+function flagPlanStatus(planFlag, flagKey){
+    const exposure = flagProdExposure(flagKey);
+    const now = Date.now();
+    const removeBy = planFlag && planFlag.remove_by ? planFlag.remove_by : null;
+    const pastRemoveBy = removeBy ? Math.floor((now - Date.parse(`${removeBy}T00:00:00Z`)) / DAY_MS) : 0;
+    const base = {
+        key: flagKey,
+        hasPlan: !!(planFlag && (planFlag.rollout || []).length),
+        state: exposure ? exposure.state : null,
+        percent: exposure ? exposure.percent : null,
+        owner: planFlag && planFlag.owner ? planFlag.owner : null,
+        removeBy,
+        daysPastRemoveBy: Math.max(0, pastRemoveBy),
+        overdue: pastRemoveBy > 0,
+        stage: null, stageIndex: -1, nextStage: null, daysInStage: null, minDays: null, exit: null,
+    };
+    const stages = planFlag ? planFlag.rollout || [] : [];
+
+    if (!stages.length) {
+        return { ...base, status: 'no_plan' };
+    }
+
+    const live = exposure && exposure.state !== 'off';
+    const percent = exposure ? exposure.percent ?? 0 : 0;
+    let stageIndex = -1;
+
+    stages.forEach((s, i) => {
+        const p = stagePercent(s.stage);
+
+        if (live && (p === null || percent >= p)) {
+            stageIndex = i;
+        }
+    });
+
+    const current = stages[stageIndex] || null;
+    const daysInStage = current && exposure.changedAt ? Math.floor((now - Date.parse(exposure.changedAt)) / DAY_MS) : null;
+    const minDays = current && typeof current.min_days === 'number' ? current.min_days : null;
+    let status;
+
+    if (stageIndex < 0) {
+        status = 'not_started';
+    } else if (stageIndex === stages.length - 1) {
+        status = 'final';
+    } else {
+        status = minDays !== null && (daysInStage === null || daysInStage < minDays) ? 'waiting' : 'ready';
+    }
+
+    return {
+        ...base,
+        stage: current ? current.stage : null,
+        stageIndex,
+        nextStage: stages[stageIndex + 1] ? stages[stageIndex + 1].stage : null,
+        daysInStage,
+        minDays,
+        exit: current && current.exit ? current.exit : null,
+        status,
+    };
+}
+/** One work item of a line with its PROD status (issueStatusForEnv()); `onProd` = with users (issueIsReleasedToProd()). */
+function releasePlanItem(item){
+    const issue = { subtaskKeys: [], blockedByKeys: [], dependencyBlocked: false, ...item, title: item.title || item.key };
+    const prod = issueStatusForEnv(issue, ENVIRONMENT.PROD);
+
+    return { ...issue, prod, prodLevel: prod.level, onProd: issueIsReleasedToProd(issue) };
+}
+/** Lines R1…Rn from items; a line is `released` once every item in it is with users on PROD. */
+function releasePlanLines(entries){
+    return entries
+        .sort((a, b) => releaseLineRank(a.id) - releaseLineRank(b.id))
+        .map(({ id, name = null, items }) => {
+            const resolved = items.map(releasePlanItem);
+
+            return { id, name, items: resolved, onProdCount: resolved.filter(i => i.onProd).length, released: resolved.length > 0 && resolved.every(i => i.onProd) };
+        });
+}
+/**
+ * The Release plan tab's model (G1.3). Jira mode (`state.releasePlan.lines`): items grouped by Epic, lines from each
+ * item's release line, R1 = MVP, and the flags linked to the group's items with their PROD rollout only (no plan).
+ * Repo mode (`state.releasePlan.plans`, release.yaml in the pdi contract's shape): one group per change, lines from
+ * `releases`, flags with their planned stages and remove-by date. `mvpReleased`: every item of the MVP line on PROD.
+ *
+ * @returns {{ mode: string, groups: Array<{ key: string, title: string, mvp: string, outcome: string|null, mvpReleased: boolean, lines: object[], flags: object[] }> }}
+ */
+function releasePlanModel(){
+    const plan = state.releasePlan || { mode: 'jira', lines: [], plans: [] };
+    const groups = [];
+
+    (plan.plans || []).forEach(p => {
+        const known = new Map((plan.lines || []).map(l => [l.key, l]));
+        const lines = releasePlanLines((p.releases || []).map(r => ({ id: r.id, name: r.name || null, items: (r.tasks || []).map(k => known.get(k) || { key: k }) })));
+        const mvp = p.mvp && p.mvp.release ? p.mvp.release : 'R1';
+
+        groups.push({
+            key: p.change, title: p.change, mvp, outcome: p.mvp && p.mvp.outcome ? p.mvp.outcome : null, lines,
+            mvpReleased: !!lines.find(l => l.id === mvp && l.released),
+            flags: (p.flags || []).map(f => flagPlanStatus(f, f.key)),
+        });
+    });
+
+    // Jira lines of items no repo plan lists: grouped by Epic.
+    const planned = new Set((plan.plans || []).flatMap(p => (p.releases || []).flatMap(r => r.tasks || [])));
+
+    {
+        const byEpic = new Map();
+
+        (plan.lines || []).filter(l => !planned.has(l.key)).forEach(l => {
+            const key = l.epicKey || '';
+
+            if (!byEpic.has(key)) {
+                byEpic.set(key, { title: l.epicTitle || l.epicKey || 'No epic', byLine: new Map() });
+            }
+
+            const group = byEpic.get(key);
+
+            if (!group.byLine.has(l.release)) {
+                group.byLine.set(l.release, []);
+            }
+            group.byLine.get(l.release).push(l);
+        });
+        byEpic.forEach((g, key) => {
+            const lines = releasePlanLines([...g.byLine].map(([id, items]) => ({ id, items })));
+            const flagKeys = [...new Set(lines.flatMap(l => l.items).flatMap(i => [...flagsForIssue(i.key).map(f => f.key), ...(i.featureFlags || [])]))].sort();
+
+            groups.push({
+                key, title: g.title, mvp: 'R1', outcome: null, lines,
+                mvpReleased: !!lines.find(l => l.id === 'R1' && l.released),
+                flags: flagKeys.map(k => flagPlanStatus(null, k)),
+            });
+        });
+    }
+
+    return { mode: plan.plans && plan.plans.length ? 'repo' : plan.mode || 'jira', groups };
+}

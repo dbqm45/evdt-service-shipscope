@@ -83,7 +83,7 @@ async function getConnection(pool, { tenantId, actorUserId }) {
         if (!(await roleOf(client, { tenantId, userId: actorUserId }))) throw new TenantNotFoundError('Tenant not found');
         const { rows: [row] } = await client.query(
             `SELECT available_sites, cloud_id, site_url, site_name, connected_at, last_error, current_pi, last_synced_at,
-                    webhook_ids, webhook_expires_at, webhook_error, flag_link,
+                    webhook_ids, webhook_expires_at, webhook_error, flag_link, release_link,
                     CASE WHEN rate_limited_until > now() THEN rate_limited_until END AS rate_limited_until
              FROM jira_connections WHERE tenant_id = $1`,
             [tenantId]
@@ -99,6 +99,7 @@ async function getConnection(pool, { tenantId, actorUserId }) {
                 error: row.webhook_error,
             },
             flagLink: row.flag_link,
+            releaseLink: row.release_link,
         };
     });
 }

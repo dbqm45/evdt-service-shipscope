@@ -662,6 +662,39 @@ async function jiraLinks(client, tenantId) {
     return links;
 }
 
+/**
+ * Flag -> work items linked by `Flag:` trailers in deployed commits (flag_commit_links, migration 036): a strong link,
+ * shown like the others without an admin's answer, except the keys an admin dismissed for that flag.
+ *
+ * @param {import('pg').PoolClient} client inside withScope()
+ * @param {string} tenantId
+ * @returns {Promise<Map<string, string[]>>} flag key -> item keys, sorted
+ */
+async function commitLinks(client, tenantId) {
+    const { rows } = await client.query(
+        `SELECT l.flag_key, l.item_key FROM flag_commit_links l
+         LEFT JOIN flags f ON f.tenant_id = l.tenant_id AND f.key = l.flag_key
+         WHERE l.tenant_id = $1 AND NOT (l.item_key = ANY(COALESCE(f.dismissed_jira_keys, '{}')))
+         ORDER BY l.item_key`,
+        [tenantId]
+    );
+    const links = new Map();
+    for (const r of rows) {
+        if (!links.has(r.flag_key)) links.set(r.flag_key, []);
+        links.get(r.flag_key).push(r.item_key);
+    }
+    return links;
+}
+
+/** Jira's own links and the commits' (both only add, never take away a sender's or a hand-set one). */
+async function readLinks(client, tenantId) {
+    const fromJira = await jiraLinks(client, tenantId);
+    const fromCommits = await commitLinks(client, tenantId);
+    const merged = new Map(fromJira);
+    for (const [flag, keys] of fromCommits) merged.set(flag, [...(merged.get(flag) || []), ...keys]);
+    return { fromJira, fromCommits, merged };
+}
+
 class FlagNotFoundError extends Error {}
 
 /**
@@ -684,15 +717,15 @@ async function listFlags(pool, { tenantId, actorUserId }) {
             'SELECT key, description, jira_keys, manual_description, manual_jira_keys, suggested_jira_keys FROM flags WHERE tenant_id = $1 ORDER BY key',
             [tenantId]
         );
-        const fromJira = await jiraLinks(client, tenantId);
+        const { fromJira, fromCommits } = await readLinks(client, tenantId);
         return rows.filter((r) => flagsMeta[r.key]).map((r) => ({
             key: r.key,
             description: flagsMeta[r.key].description,
             senderDescription: r.description,
             manualDescription: r.manual_description,
-            links: { sender: r.jira_keys, manual: r.manual_jira_keys, jira: fromJira.get(r.key) || [] },
+            links: { sender: r.jira_keys, manual: r.manual_jira_keys, jira: fromJira.get(r.key) || [], commit: fromCommits.get(r.key) || [] },
             // Issues whose commits changed this flag in a flags file (lib/flag-link-suggestions.js), not linked yet.
-            suggestions: r.suggested_jira_keys.filter((k) => ![...r.jira_keys, ...r.manual_jira_keys, ...(fromJira.get(r.key) || [])].includes(k)),
+            suggestions: r.suggested_jira_keys.filter((k) => ![...r.jira_keys, ...r.manual_jira_keys, ...(fromJira.get(r.key) || []), ...(fromCommits.get(r.key) || [])].includes(k)),
             states: flagStates[r.key] || {},
             components: flagsMeta[r.key].components,
         }));
@@ -745,7 +778,7 @@ async function readDashboardFlags(client, { tenantId, componentOf, now = new Dat
         'SELECT key, description, jira_keys, manual_description, manual_jira_keys, created_at FROM flags WHERE tenant_id = $1',
         [tenantId]
     );
-    const fromJira = await jiraLinks(client, tenantId);
+    const { merged: linked } = await readLinks(client, tenantId);
     const { rows: values } = await client.query(
         'SELECT source_id, key, environment, state, rollout, changed_at, changed_by FROM flag_values WHERE tenant_id = $1 AND removed_at IS NULL',
         [tenantId]
@@ -760,7 +793,7 @@ async function readDashboardFlags(client, { tenantId, componentOf, now = new Dat
     );
 
     const { flagStates, byComponent, slotsOf, componentsOf } = pickWinningValues(values, sources);
-    const flagsMeta = visibleFlagsMeta(flags, { slotsOf, componentsOf }, fromJira);
+    const flagsMeta = visibleFlagsMeta(flags, { slotsOf, componentsOf }, linked);
     const coveredComponents = new Set([...sources.values()].flatMap((s) => s.components));
     const envs = await sourceEnvironments(client, tenantId, sourceRows, now);
     const flagFreshness = freshnessByComponent([...sources].map(([id, s]) => ({ name: s.name, components: s.components, envs: envs.get(id) })));

@@ -4,6 +4,7 @@
  * their reasons are described in CLAUDE.md's "Deployments" section. Differences: nothing logs (skips are
  * returned), and there is no file trimming here (retention lives in lib/retention.js).
  */
+const { isReservedKey } = require('./flags-logic');
 
 /** Only test/qa/prod are tracked. Pre-production is checked first so "preprod" never counts as prod. */
 function mapEnvironment(rawEnv) {
@@ -176,7 +177,37 @@ function issuesFromMessages(messages) {
     return { keys: [...keys], typesByKey };
 }
 
+// The flag ingest API's key rule (routes/flags.js FLAG_KEY): what a commit can name is what a source can report.
+const FLAG_KEY = /^[A-Za-z_][A-Za-z0-9_.:-]{0,127}$/;
+// A trailer line: `Flag:` then one or more keys separated by commas, nothing else on the line.
+const FLAG_TRAILER = /^flag:[ \t]*([A-Za-z_][A-Za-z0-9_.:-]*(?:[ \t]*,[ \t]*[A-Za-z_][A-Za-z0-9_.:-]*)*)[ \t]*$/i;
+
+/**
+ * `Flag: <key>` trailers (tf talos-story-run writes them next to `Change: TSK-n`): each pairs the flag with the work
+ * item keys of its own commit (lib/flags.js treats it as a strong link). Only a body line holding nothing but keys
+ * separated by commas counts; a reserved key, the subject line and a commit naming no work item give nothing.
+ *
+ * @param {string[]} messages
+ * @returns {Array<{ flag: string, keys: string[] }>} in commit order
+ */
+function flagLinksFromMessages(messages) {
+    const out = [];
+    for (const message of messages) {
+        const keys = extractIssueKeys(message);
+        if (!keys.length) continue;
+        // Trailers live below the subject line.
+        const flags = String(message || '').split('\n').slice(1)
+            .map((line) => FLAG_TRAILER.exec(line.trim()))
+            .filter(Boolean)
+            .flatMap((m) => m[1].split(/[\s,]+/))
+            .filter((k) => FLAG_KEY.test(k) && !isReservedKey(k));
+        for (const flag of [...new Set(flags)]) out.push({ flag, keys });
+    }
+    return out;
+}
+
 module.exports = {
+    flagLinksFromMessages,
     mapEnvironment,
     environmentFor,
     mergeSeenEnvironments,

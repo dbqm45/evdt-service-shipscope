@@ -1,7 +1,7 @@
 const { withScope } = require('./scope');
 const { withTenantClaim, eachLimited } = require('./tenant-claim');
 const { createInstallationToken, githubGet, GitHubApiError, GitHubRateLimitError } = require('./github-app');
-const { buildDeploymentPlan, computeNextCursor, issuesFromMessages, mergeSeenEnvironments } = require('./deployment-logic');
+const { buildDeploymentPlan, computeNextCursor, issuesFromMessages, flagLinksFromMessages, mergeSeenEnvironments } = require('./deployment-logic');
 const { fetchRefIndex, resolveVersionFile, resolveVersion } = require('./version-resolution');
 const { ENV_ORDER, computeEnvDrift } = require('./env-drift');
 const { MAX_RUN_LOOKUPS, createCaches, resolveManual, resolveDisplayName } = require('./deployment-people');
@@ -66,7 +66,8 @@ async function describeRange({ token, fullName, previous, current, fetch }) {
     if (previous && previous.ref === current.ref) {
         // A redeploy of the same ref: comparing it with itself would yield an empty range, so it inherits
         // what the previous record shipped (the same lesson as lastResolvedRangeByEnv in the file-based sync).
-        return { keys: previous.relatedIssues, typesByKey: previous.issueCommitTypes, commitUrl: previous.commitUrl, rollbackTo: null };
+        // Its Flag: trailers were stored with the previous record.
+        return { keys: previous.relatedIssues, typesByKey: previous.issueCommitTypes, commitUrl: previous.commitUrl, rollbackTo: null, flagLinks: [] };
     }
     if (!previous) {
         // With a version file the deployed commit is only a trigger; the issues are on the commit it names.
@@ -74,7 +75,7 @@ async function describeRange({ token, fullName, previous, current, fetch }) {
             ? (await githubGet({ token, path: `/repos/${fullName}/commits/${encodeURIComponent(current.ref)}`, fetch }))?.commit?.message
             : current.message;
         const { keys, typesByKey } = issuesFromMessages([message || '']);
-        return { keys, typesByKey, commitUrl: `https://github.com/${fullName}/commit/${current.sha}`, rollbackTo: null };
+        return { keys, typesByKey, commitUrl: `https://github.com/${fullName}/commit/${current.sha}`, rollbackTo: null, flagLinks: flagLinksFromMessages([message || '']) };
     }
     const comparison = await githubGet({
         token,
@@ -82,10 +83,12 @@ async function describeRange({ token, fullName, previous, current, fetch }) {
         fetch,
     });
     // GitHub caps `commits` at 250; issues from the rest are missing (same known gap as the file-based sync).
-    const { keys, typesByKey } = issuesFromMessages((comparison?.commits || []).map((c) => c?.commit?.message || ''));
+    const messages = (comparison?.commits || []).map((c) => c?.commit?.message || '');
+    const { keys, typesByKey } = issuesFromMessages(messages);
     return {
         keys,
         typesByKey,
+        flagLinks: flagLinksFromMessages(messages),
         commitUrl: `https://github.com/${fullName}/compare/${previous.ref}...${current.fromFile ? current.ref : current.sha}`,
         // "behind": this ref is an ancestor of what was deployed before, so the environment moved backwards.
         rollbackTo: comparison?.status === 'behind' ? current.ref : null,
@@ -238,6 +241,15 @@ async function syncRepo({ pool, token, tenantId, repo, fetch: fetchFn = fetch, n
                     r.version, r.resolvedRef, r.manual, r.deployedByName]
             );
             inserted += rowCount;
+            // `Flag:` trailers of the deployment's commits (lib/deployment-logic.js): a strong flag -> work item link.
+            for (const { flag, keys } of r.flagLinks || []) {
+                await client.query(
+                    `INSERT INTO flag_commit_links (tenant_id, flag_key, item_key, repo_id)
+                     SELECT $1, $2, k, $4 FROM unnest($3::text[]) AS k
+                     ON CONFLICT (tenant_id, flag_key, item_key) DO NOTHING`,
+                    [tenantId, flag, keys, repoId]
+                );
+            }
             if (r.status !== 'success') continue;
             for (const key of r.keys) {
                 await client.query(

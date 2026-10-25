@@ -129,7 +129,7 @@ test('jira model: an issue mapped to the dashboard shape, its sprint taken from 
     assert.deepStrictEqual(issue, {
         key: 'ABC-1', type: 'Story', title: 'ABC-1 title', pi: 'PI-27.3', sprint: 'Sparks 27.3.2', status: 'In Progress', statusCategory: 'indeterminate',
         dependencyBlocked: true, blockedByKeys: ['XYZ-9'], projectName: 'eMobility Sparks', epicKey: 'ABC-10', epicTitle: 'The epic', impediment: true, subtasks: { done: 1, total: 2 }, subtaskKeys: ['ABC-7'],
-        priority: 'Major', created: '2026-09-01T10:00:00.000+0000', resolvedAt: null, featureFlags: [], dependencyNote: 'Blocked by XYZ-9: API first',
+        priority: 'Major', created: '2026-09-01T10:00:00.000+0000', resolvedAt: null, featureFlags: [], releaseLine: null, dependencyNote: 'Blocked by XYZ-9: API first',
     });
     assert.deepStrictEqual(mapIssue(raw('ABC-6', 'Task'), FIELD_IDS, scope).subtaskKeys, [], 'no sub-tasks: an empty list');
     const doneBlocker = mapIssue(raw('ABC-8', 'Bug', [], { issuelinks: [

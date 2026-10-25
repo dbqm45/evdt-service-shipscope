@@ -91,7 +91,7 @@ test('Jira names flags: admins pick a text/labels/select field or a label prefix
     assert.strictEqual((await as(bob)('GET', '/jira/flag-fields')).statusCode, 403);
 
     await admin('POST', '/jira/sync');
-    assert.deepStrictEqual((await flags()).newCheckout.links, { sender: ['ABC-9'], manual: [], jira: [] }, 'no convention yet: nothing from Jira');
+    assert.deepStrictEqual((await flags()).newCheckout.links, { sender: ['ABC-9'], manual: [], jira: [], commit: [] }, 'no convention yet: nothing from Jira');
 
     assert.deepStrictEqual((await admin('PUT', '/jira/flag-link', { type: 'label', prefix: 'flag:' })).json(), { flagLink: { type: 'label', prefix: 'flag:' } });
     assert.deepStrictEqual((await admin('GET', '/jira')).json().flagLink, { type: 'label', prefix: 'flag:' });
@@ -137,7 +137,7 @@ test('a flag set by hand: description and linked issues that a source\'s next me
     await send({ observations: [{ key: 'newCheckout', env: 'prod', state: 'on' }, { key: 'darkMode', env: 'prod', state: 'on' }], flags: [{ key: 'newCheckout', description: 'LD v2', jiraKeys: ['ABC-9'] }] });
     list = await flags();
     assert.deepStrictEqual([list.newCheckout.description, list.newCheckout.senderDescription, list.newCheckout.manualDescription], ['Our new checkout', 'LD v2', 'Our new checkout']);
-    assert.deepStrictEqual(list.newCheckout.links, { sender: ['ABC-9'], manual: ['ABC-4', 'ABC-5'], jira: [] });
+    assert.deepStrictEqual(list.newCheckout.links, { sender: ['ABC-9'], manual: ['ABC-4', 'ABC-5'], jira: [], commit: [] });
     const m = (await meta()).newCheckout;
     assert.deepStrictEqual([m.description, m.jiraKeys], ['Our new checkout', ['ABC-4', 'ABC-5', 'ABC-9']]);
 

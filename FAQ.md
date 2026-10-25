@@ -142,9 +142,14 @@ Only from the services the issue's code reached on that environment
 
 ### Which Jira issues does a flag belong to?
 
-From three places, merged: the keys the sending source attaches, keys an admin sets by hand in Settings (never
-overwritten by a source), and Jira itself — a custom field or a label prefix chosen in Settings (Jira → Feature flags
-in Jira).
+From four places, merged:
+
+- the keys the sending source attaches;
+- keys an admin sets by hand in Settings (never overwritten by a source);
+- Jira itself: a custom field or a label prefix chosen in Settings (Jira → Feature flags in Jira);
+- deployed commits: a `Flag: payment-retry` line below a commit's subject links the flag to the work items that same
+  commit names (`Change: TSK-57`, or a Jira key). It is linked at once, without an admin's answer. A key an admin
+  dismissed for the flag stays dismissed.
 
 For flags read from code, ShipScope also suggests links. When a deployment changes a flag in the file (a new value, a
 new flag, a flag removed), the commits since the previous reading that touched that file name their Jira keys. Those
@@ -324,6 +329,27 @@ key and its sub-tasks' keys): a bug fixed in a Story's sub-task shows the Story'
 blockers is followed. "Not deployed" means none of this matched; issues synced before the sub-task and blocker keys
 were added match on their own key until the next Jira sync. (`issueKeys()`, `deployedViaBlockers()` in
 `docs/app-model.js`; `subtaskKeys`/`blockedByKeys` from `server/lib/jira-model.js`.)
+
+## Release plan tab
+
+### What does it show?
+
+Plan against reality, per Epic (lines from Jira) or per change (a plan from a repo, later):
+
+- **Lines R1…Rn.** R1 is the MVP. Each issue is in the line its Jira label names (`release:R1` by default; Settings →
+  Jira → Release lines can use a fixVersion or a field instead). Every item shows its PROD status pill, computed like
+  everywhere else (`issueStatusForEnv()`). A line reads "R1 released" once every item in it is with users on PROD
+  (Released, or Code deployed with no flag to wait for).
+- **Flags.** The flags linked to the items, with how far each is out on PROD: on = 100%, a partial rollout its
+  percentage, off = 0. Across services the widest exposure counts.
+  - With a plan (a change's `release.yaml`), the flag's stage is the last planned stage it reached: a % stage once
+    the rollout is at least that, a named stage such as "internal" once the flag is on for anyone. Days in the stage
+    count from the flag's last change on PROD, against the stage's `min_days`: "3 of 7 days" while waiting, "Ready
+    for 100%" after that. A flag past its `remove_by` date is outlined in red, with the days since.
+  - Without a plan (Jira mode) only the rollout shows, marked "No plan".
+
+Lines are read from every synced issue, not one PI, so the PI selector is hidden on this tab.
+(`releasePlanModel()`, `flagPlanStatus()` in `docs/app-model.js`; `docs/app-release-plan.js`.)
 
 ## Delivery summary tab
 

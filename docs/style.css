@@ -155,7 +155,8 @@ html[data-theme="light"] .theme-toggle-icon.icon-sun { display:inline-flex; }
 /* Underlined tabs: the row carries a hairline bottom border, and the active tab draws a 2px accent bar
    over it (margin-bottom:-1px so the bar replaces the border instead of stacking on it). */
 .tabs-row { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:40px; flex-wrap:wrap; border-bottom:1px solid var(--border); }
-.tabs { display:inline-flex; gap:24px; }
+.tabs { display:inline-flex; gap:24px; max-width:100%; overflow-x:auto; scrollbar-width:none; }
+@media (max-width:640px) { .tabs { gap:16px; } }
 /* Groups the PI and Sprint scope controls together on the right of the tabs row — both narrow "what
    data is loaded" top-down (PI, then Sprint within it), so they read as one cascading control, not two
    unrelated ones; the Sprint control immediately affects the summary tiles/table rendered below, which is
@@ -708,3 +709,34 @@ a.dn-item-title:hover { color:var(--accent-blue); text-decoration:underline; }
 .dn-type { text-transform:uppercase; letter-spacing:.06em; font-weight:600; color:var(--nd-fg-2); }
 .dn-item-side { display:flex; flex-direction:column; align-items:flex-end; gap:8px; flex:none; }
 .dn-item-date { font-size:var(--text-md); font-family:var(--font-mono); color:var(--nd-fg-4); white-space:nowrap; }
+
+/* ---------- Release plan (G1.3) ---------- */
+#releasePlanBody { display:flex; flex-direction:column; gap:16px; }
+.rp-group { padding:14px 16px 16px; display:flex; flex-direction:column; gap:12px; overflow:visible; }
+.rp-group-head { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+.rp-group .rp-group-head h2 { font-size:15px; font-weight:600; margin:0; padding:0; border:0; }
+.rp-group-key { color:var(--muted); font-size:12px; }
+.rp-outcome { margin:0; color:var(--muted); font-size:13px; }
+.rp-lines { display:grid; grid-template-columns:repeat(auto-fit, minmax(300px, 1fr)); gap:12px; }
+.rp-line { border:1px solid var(--border); border-radius:8px; background:var(--panel-2); padding:10px 12px; min-width:0; }
+.rp-line-released { border-color:color-mix(in srgb, var(--ok) 55%, var(--border)); }
+.rp-line-head { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:8px; }
+.rp-line-id { font-family:var(--mono), monospace; font-weight:600; }
+.rp-line-name { color:var(--muted); }
+.rp-line-count { margin-left:auto; color:var(--muted); font-size:12px; }
+.tag-released { color:var(--ok); border-color:color-mix(in srgb, var(--ok) 55%, transparent); }
+.tag-mvp { color:var(--text); }
+.rp-items, .rp-flags ul { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:6px; }
+.rp-item { display:flex; align-items:center; gap:8px; min-width:0; font-size:13px; }
+.rp-key { flex:none; font-size:12px; }
+.rp-title { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.rp-pill { flex:none; }
+.rp-flags h3 { font-size:12px; text-transform:uppercase; letter-spacing:.03em; color:var(--muted); margin:0 0 6px; font-weight:600; }
+.rp-flag { display:flex; align-items:center; gap:12px; flex-wrap:wrap; font-size:13px; padding:6px 8px; border-radius:6px; border:1px solid var(--border-soft); }
+.rp-flag-key { font-weight:600; }
+.rp-flag-rollout, .rp-flag-owner { color:var(--muted); }
+.rp-flag-progress { color:var(--muted); font-size:12px; }
+.rp-flag-remove { margin-left:auto; color:var(--muted); font-size:12px; display:inline-flex; align-items:center; gap:4px; }
+.flag-overdue { border-color:color-mix(in srgb, var(--fail) 60%, transparent); background:color-mix(in srgb, var(--fail) 7%, transparent); }
+.rp-flag-remove-overdue { color:var(--fail); font-weight:600; }
+@media (max-width: 640px) { .rp-lines { grid-template-columns:1fr; } .rp-flag-remove { margin-left:0; } }
