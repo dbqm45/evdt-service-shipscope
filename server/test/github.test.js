@@ -91,7 +91,7 @@ test('an admin connects the GitHub App and chooses tracked repos', async (t) => 
     const after = (await app.inject({ method: 'GET', url: listUrl, cookies: { sid: alice } })).json().repositories;
     assert.deepStrictEqual(after.filter((r) => r.tracked).map((r) => r.fullName), ['acme/repo-104']);
     assert.deepStrictEqual((await app.inject({ method: 'GET', url: `/tenants/${tenantId}/github`, cookies: { sid: alice } })).json().repos,
-        [{ repoId: 70_104, fullName: 'acme/repo-104', installationId: ACME, lastSyncedAt: null, lastSyncError: null, rateLimitedUntil: null, deployments: 0, versionFile: null, flagStance: 'unknown', serviceRole: null, envMap: {}, seenEnvironments: [], driftIgnorePaths: [] }]);
+        [{ repoId: 70_104, fullName: 'acme/repo-104', installationId: ACME, lastSyncedAt: null, lastSyncError: null, workItemsError: null, rateLimitedUntil: null, deployments: 0, versionFile: null, flagStance: 'unknown', serviceRole: null, envMap: {}, seenEnvironments: [], driftIgnorePaths: [] }]);
 
     // Whether the repo uses feature flags: admins only, `unknown` or `none`.
     const stance = (sid, repoId, flagStance) => app.inject({ method: 'PUT', url: `/tenants/${tenantId}/github/repos/${repoId}/flag-stance`, cookies: { sid }, payload: { flagStance } });

@@ -313,6 +313,23 @@ previous increment. An issue's sprint is the one on the board being synced. Olde
 seen. Changes appear with the next sync (every 15 minutes by default) or about 30 seconds after a Jira webhook.
 (`server/lib/jira-sync.js`, rules in `server/lib/jira-model.js`.)
 
+### Can work items come from a repo instead of Jira?
+
+Yes. A tracked repository may keep its changes in `docs/project/changes/<CHG>/` (the pdi contract's layout, written by
+tf):
+
+- `intent.md` gives the change's title (its first `# ` heading);
+- `plan.md` lists its tasks in the YAML header (`tasks: [TSK-57, TSK-58]`), with each task's title and status
+  (`planned`, `in_progress`, `in_review`, `done`; `dropped` ones are left out) on the first body line that names it.
+
+They show as the increment "Changes (repo)": a change is a group header like an Epic, its tasks the rows under it.
+A commit naming a task (`Change: TSK-57`) counts for the task and for its change, so the change's status follows
+its tasks' deployments.
+
+The folder is read on the default branch after each repository sync, only when a commit touched it. A file that
+cannot be read shows as "changes folder: N problems" in Settings → GitHub; the other changes still count. Keys link
+to the file on GitHub. (`server/lib/work-items.js`, rules in `server/lib/work-items-model.js`.)
+
 ### How is "sprint" different from "PI"?
 
 A PI (Program Increment) usually spans several sprints. Both come from the Jira Sprint field: `pi` is derived from

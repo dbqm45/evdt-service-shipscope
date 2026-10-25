@@ -49,7 +49,7 @@ function sameValue(row, obs) {
 /**
  * Checks what the JSON schema can't express and normalizes the payload.
  *
- * @param {{ complete?: boolean, environments?: string[], observations: Array<{ key: string, env: string, state: string, rollout?: number, changedAt?: string }>, flags?: Array<{ key: string, description?: string|null, jiraKeys?: string[] }> }} payload
+ * @param {{ complete?: boolean, environments?: string[], observations: Array<{ key: string, env: string, state: string, rollout?: number, changedAt?: string }>, flags?: Array<{ key: string, description?: string|null, jiraKeys?: string[], itemKeys?: string[] }> }} payload
  * @param {Date} now
  * @returns {{ complete: boolean, environments: string[], observations: Array<{ key: string, env: string, state: string, rollout: number|null, changedAt: Date }>, metaByKey: Map<string, object> }}
  * @throws {IngestPayloadError}
@@ -89,7 +89,9 @@ function checkPayload(payload, now) {
         if (metaByKey.has(meta.key)) throw new IngestPayloadError(`flags[${i}]: ${meta.key} is listed twice`);
         // Metadata only travels with values: a sender describes the flags it reports, never someone else's.
         if (!observedKeys.has(meta.key)) throw new IngestPayloadError(`flags[${i}]: ${meta.key} has no observations in this payload`);
-        metaByKey.set(meta.key, meta);
+        // `itemKeys` (F1: any work item, CHG/TSK from a repo too) and `jiraKeys` are one list of linked keys.
+        const { itemKeys, ...rest } = meta;
+        metaByKey.set(meta.key, itemKeys ? { ...rest, jiraKeys: [...new Set([...(meta.jiraKeys || []), ...itemKeys])].sort() } : meta);
     }
     return { complete: payload.complete !== false, environments, observations, metaByKey };
 }

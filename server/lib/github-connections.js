@@ -53,7 +53,7 @@ async function linkInstallation(pool, { tenantId, actorUserId, installation }) {
  *
  * @param {import('pg').Pool} pool
  * @param {{ tenantId: string, actorUserId: string }} input
- * @returns {Promise<{ installations: Array<{ installationId: number, accountLogin: string, accountType: string }>, repos: Array<{ repoId: number, fullName: string, installationId: number, lastSyncedAt: Date|null, lastSyncError: string|null, rateLimitedUntil: Date|null, deployments: number, versionFile: string|null, flagStance: 'unknown'|'none', serviceRole: 'frontend'|'backend'|null, envMap: Record<string, string>, seenEnvironments: string[], driftIgnorePaths: string[] }> }>}
+ * @returns {Promise<{ installations: Array<{ installationId: number, accountLogin: string, accountType: string }>, repos: Array<{ repoId: number, fullName: string, installationId: number, lastSyncedAt: Date|null, lastSyncError: string|null, workItemsError: string|null, rateLimitedUntil: Date|null, deployments: number, versionFile: string|null, flagStance: 'unknown'|'none', serviceRole: 'frontend'|'backend'|null, envMap: Record<string, string>, seenEnvironments: string[], driftIgnorePaths: string[] }> }>}
  */
 async function listConnections(pool, { tenantId, actorUserId }) {
     return withScope(pool, { tenantId }, async (client) => {
@@ -63,7 +63,7 @@ async function listConnections(pool, { tenantId, actorUserId }) {
             [tenantId]
         );
         const { rows: repos } = await client.query(
-            `SELECT r.repo_id, r.full_name, r.installation_id, r.last_synced_at, r.last_sync_error, r.version_file, r.drift_ignore_paths, r.flag_stance, r.service_role, r.env_map, r.seen_environments,
+            `SELECT r.repo_id, r.full_name, r.installation_id, r.last_synced_at, r.last_sync_error, r.work_items_error, r.version_file, r.drift_ignore_paths, r.flag_stance, r.service_role, r.env_map, r.seen_environments,
                     CASE WHEN i.rate_limited_until > now() THEN i.rate_limited_until END AS rate_limited_until,
                     (SELECT count(*) FROM deployments d WHERE d.tenant_id = r.tenant_id AND d.repo_id = r.repo_id)::int AS deployments
              FROM tracked_repos r
@@ -79,6 +79,8 @@ async function listConnections(pool, { tenantId, actorUserId }) {
                 installationId: Number(r.installation_id),
                 lastSyncedAt: r.last_synced_at,
                 lastSyncError: r.last_sync_error,
+                // F1: what could not be read in docs/project/changes (lib/work-items.js), else null.
+                workItemsError: r.work_items_error,
                 rateLimitedUntil: r.rate_limited_until,
                 deployments: r.deployments,
                 versionFile: r.version_file,

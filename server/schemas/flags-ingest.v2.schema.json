@@ -55,7 +55,7 @@
             }
         },
         "flags": {
-            "description": "Optional description and linked Jira issues of flags observed in this message.",
+            "description": "Optional description and linked work items of flags observed in this message.",
             "type": "array",
             "maxItems": 5000,
             "items": {
@@ -66,6 +66,13 @@
                     "key": { "$ref": "#/definitions/flagKey" },
                     "description": { "type": ["string", "null"], "maxLength": 500 },
                     "jiraKeys": {
+                        "type": "array",
+                        "maxItems": 50,
+                        "uniqueItems": true,
+                        "items": { "$ref": "#/definitions/jiraKey" }
+                    },
+                    "itemKeys": {
+                        "description": "Work items of any origin the flag gates: Jira issues, or changes and tasks kept in a repo (CHG-12, TSK-57). Merged with jiraKeys.",
                         "type": "array",
                         "maxItems": 50,
                         "uniqueItems": true,

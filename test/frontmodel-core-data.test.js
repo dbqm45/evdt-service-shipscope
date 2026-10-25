@@ -148,7 +148,7 @@ test('buildFallbackData returns a coherent dataset', () => {
           byPi: [...f.jiraIssuesByPi.keys()], nDeps: f.deployments.length, nIssues: [...f.jiraIssuesByPi.values()].flat().length,
           sprintDates: f.jiraIndex.pis[0].sprints, idx: f.issueStatusIndex['EBO-16955'], jiraBrowseUrl: f.jiraBrowseUrl, nullSprintPi: f.jiraIndex.pis.find(p => p.pi === 'PI-27.1').sprints }; })())`));
 
-    assert.deepEqual(out.keys.sort(), ['componentsOrder', 'deployments', 'flagFreshness', 'flagStateHistory', 'flagStates', 'flagsMeta', 'issueDeployments', 'issueStatusIndex', 'jiraBrowseUrl', 'jiraIndex', 'jiraIssuesByPi', 'releasePlan']);
+    assert.deepEqual(out.keys.sort(), ['componentsOrder', 'deployments', 'flagFreshness', 'flagStateHistory', 'flagStates', 'flagsMeta', 'issueDeployments', 'issueStatusIndex', 'jiraBrowseUrl', 'jiraIndex', 'jiraIssuesByPi', 'releasePlan', 'workItemUrls']);
     assert.equal(out.current, 'PI-27.3');
     assert.deepEqual(out.pis, ['PI-27.3', 'PI-27.2', 'PI-27.1', 'PI-26.5']);
     assert.deepEqual(out.byPi.sort(), ['PI-26.5', 'PI-27.1', 'PI-27.2', 'PI-27.3']);
@@ -207,6 +207,12 @@ test('jiraIssueUrl: the tenant\'s own Jira site in API mode, none until Jira is 
         await bare.run('loadData().then((d) => { state = d; })');
         assert.equal(bare.run('jiraIssueUrl("ABC-1")'), null, 'no Jira connected (or no data): unlinked, never another org\'s site');
     }
+
+    // A work item from a repo (F1) links to its file on GitHub, also without Jira.
+    const repo = loadApp({ fetchImpl: () => jsonResponse({ jiraBrowseUrl: 'https://acme.atlassian.net/browse', workItemUrls: { 'TSK-57': 'https://github.com/acme/pay/blob/abc/docs/project/changes/CHG-12/plan.md' } }), loc: apiLocation() });
+    await repo.run('loadData().then((d) => { state = d; })');
+    assert.equal(repo.run('jiraIssueUrl("TSK-57")'), 'https://github.com/acme/pay/blob/abc/docs/project/changes/CHG-12/plan.md');
+    assert.equal(repo.run('jiraIssueUrl("ABC-1")'), 'https://acme.atlassian.net/browse/ABC-1');
 });
 
 test('API mode: one request to the tenant API, live badge with the last sync time, missing keys defaulted', async () => {

@@ -417,7 +417,7 @@ function buildFallbackData(){
     };
 
     // No Jira site behind the sample keys: they are shown unlinked.
-    return { deployments, flagsMeta, flagStates, flagStateHistory, flagFreshness, jiraIssuesByPi, jiraIndex, issueStatusIndex, componentsOrder, issueDeployments, jiraBrowseUrl: null, releasePlan };
+    return { deployments, flagsMeta, flagStates, flagStateHistory, flagFreshness, jiraIssuesByPi, jiraIndex, issueStatusIndex, componentsOrder, issueDeployments, jiraBrowseUrl: null, releasePlan, workItemUrls: {} };
 }
 
 // FALLBACK itself is initialised in app-main.js (right before init()): buildFallbackData() calls helpers from
@@ -435,7 +435,7 @@ const API_TENANT_ID = (() => {
 
 const emptyDashboardData = () => ({
     deployments: [], flagsMeta: {}, flagStates: {}, flagFreshness: {}, jiraIndex: { currentPi: null, pis: [] }, flagStateHistory: [],
-    componentsOrder: [], issueStatusIndex: {}, issueDeployments: {}, releasePlan: { mode: 'jira', lines: [], plans: [] },
+    componentsOrder: [], issueStatusIndex: {}, issueDeployments: {}, releasePlan: { mode: 'jira', lines: [], plans: [] }, workItemUrls: {},
 });
 
 /**

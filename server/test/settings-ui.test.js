@@ -92,6 +92,9 @@ test('settings page: GitHub -- installations, the tracked repositories table, th
     assert.match(admin, /<span class="settings-badge">FE<\/span><span><strong>web-service-frontend<\/strong><span class="settings-row-meta">acme<\/span>/);
     assert.match(admin, /<td class="mono">trigger\.properties<\/td>\s*<td class="mono">\.github\/, README\.md<\/td>/);
     assert.match(admin, /class="settings-sync fail" title="boom &quot;quoted&quot;">sync failed/);
+    // F1: a changes folder that could not be read shows under the sync state, with what failed.
+    const withItems = str(ui.renderGitHub({ enabled: true, github: { ...github, repos: [{ ...github.repos[0], lastSyncError: null, workItemsError: 'docs/project/changes/CHG-14/plan.md: no YAML header' }] }, installationRepos, admin: true }));
+    assert.match(withItems, /class="settings-sync warn" title="docs\/project\/changes\/CHG-14\/plan\.md: no YAML header">changes folder: 1 problem/);
     assert.match(admin, /data-action="edit-repo" data-repo-id="101"/);
     assert.match(admin, /data-action="untrack-repo" data-repo-id="101" data-installation-id="7" aria-label="Stop tracking acme\/web-service-frontend"/);
     assert.ok(!/save-repo-settings|data-action="track-repo"/.test(admin), 'no edit form or picker until asked');
