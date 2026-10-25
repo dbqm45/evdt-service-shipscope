@@ -7,6 +7,12 @@ dashboard, not a published package), so entries are grouped by date instead. See
 ShipScope is, `CLAUDE.md` for the technical reference, and `FAQ.md` for how specific numbers/badges are
 calculated.
 
+## [0.2.46] - 2026-10-25
+
+### Added
+
+- **SHP:** spread worker syncs over instances with per-tenant claims (#105)
+
 ## [0.2.45] - 2026-10-25
 
 ### Added
