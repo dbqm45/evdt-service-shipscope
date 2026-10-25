@@ -151,3 +151,4 @@
 .settings-wizard { margin: 10px 0 14px; padding: 10px 12px; border: 1px solid var(--line, rgba(127, 127, 127, 0.25)); border-radius: 8px; }
 .settings-list { list-style: none; margin: 6px 0 0; padding: 0; display: grid; gap: 8px; }
 .settings-list li { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.settings-repo-flags { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line, rgba(127, 127, 127, 0.25)); }

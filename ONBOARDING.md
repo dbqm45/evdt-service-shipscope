@@ -43,7 +43,9 @@ When a service keeps its flags in a file in its repository (JSON, YAML, `.proper
 JavaScript), ShipScope reads that file itself, at the commit each environment last deployed successfully. No token,
 no workflow, no GitHub Actions minutes (`design-docs/ADR-003-flag-sources.md`).
 
-1. In Settings → Sources, under **Read flags from code**, give the source a name and pick the repository. **Find
+1. In Settings → GitHub, open a repository with the pencil: its card shows its environments, whether it has flags,
+   and its flags. Or, in Settings → Sources, under **Read flags from code**, give the source a name and pick the
+   repository. **Find
    flags files** proposes the files there that look like flags files, each with the flags it reads; **Use this** fills
    the form, **Preview** shows what each environment's deployment would give. Or name the file yourself, e.g.
    `src/flags.ts` or `config/flags.{env}.json`. `{env}` stands for `test`, `qa` or `prod`; another name

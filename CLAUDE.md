@@ -240,7 +240,9 @@ success for 3 × `SYNC_INTERVAL_MINUTES` + 5 minutes, or an undrained webhook qu
   `#danger` for admins, `#getting-started`; old `#workspace` = General), beside a sidebar (`renderSidebar()`: the
   workspace, the pages with counts, amber/red when a checklist step waits on the admin or has a problem, and the
   admins' Setup card). GitHub lists installations as cards and tracked repositories as a table; "Track repository"
-  opens a picker over every installation's repositories, the pencil opens a row's version file/drift form. Admins
+  opens a picker over every installation's repositories, the pencil opens a row's card (`RepoFlagsCard()` below its
+  form): version file, drift, its GitHub environments' map, whether it has flags, and its flags — the sources read
+  from its code with each environment's state, or Find flags files / Preview / Read from code for this repo. Admins
   get a Getting started checklist (`onboardingSteps()`); an empty dashboard links to it (`#setupBanner`); the
   header's `#settingsLink` (a gear icon after the status badge) shows only in API mode. Every page and asset is
   served with `DASHBOARD_HEADERS` (`web.js`), including a Content-Security-Policy with `script-src 'self'` (no inline

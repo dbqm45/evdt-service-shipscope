@@ -117,6 +117,26 @@ test('settings page: GitHub -- installations, the tracked repositories table, th
     assert.match(admin, /<td>not set<\/td>/);
     assert.match(str(ui.renderGitHub({ enabled: true, github: { ...github, repos: [{ ...github.repos[0], flagStance: 'none' }] }, installationRepos: {}, admin: false })), /<td>none<\/td>/);
 
+    // The repository's card also holds its flags: set up from here when nothing reads them yet.
+    const card = (extra) => str(ui.renderGitHub({ enabled: true, github, installationRepos: {}, admin: true, editing: 101, ...extra }));
+    assert.match(card({ sources: null }), /Loading flag sources/);
+    assert.match(card({ sources: { error: 'nope' } }), /settings-error">nope/);
+    const unread = card({ sources: [] });
+    assert.match(unread, /<form class="settings-form" data-action="create-code-source" data-place="github" data-section="github">/);
+    assert.match(unread, /name="name" required maxlength="100" value="web-service-frontend flags"/);
+    assert.match(unread, /<input type="hidden" name="repoId" value="101">/);
+    assert.match(unread, /data-action="find-flag-files"[\s\S]*data-action="preview-code-source"/);
+    const codeSource = { id: 's3', name: 'Web code', origin: 'code', repoIds: [101], code: { file: 'src/flags.ts' }, environments: [{ env: 'prod', state: 'fresh', observedAt: '2026-10-01T10:00:00Z' }], effectiveStaleAfterMinutes: null };
+    const covered = card({ sources: [codeSource, { id: 's4', name: 'LaunchDarkly', origin: 'push', repoIds: [101] }, { id: 's5', name: 'Other', origin: 'code', repoIds: [102], code: { file: 'x.json' } }] });
+    assert.match(covered, /Web code: ShipScope reads <code>src\/flags.ts<\/code> at each deployment/);
+    assert.match(covered, /prod: confirmed/);
+    assert.match(covered, /Sent by LaunchDarkly \(Sources\)/);
+    assert.doesNotMatch(covered, /x\.json|data-place="github"/, 'another repo\'s source, and no set-up form when one reads it');
+    assert.match(str(ui.renderGitHub({ enabled: true, github: { ...github, repos: [{ ...github.repos[0], flagStance: 'none' }] }, installationRepos: {}, admin: true, editing: 101, sources: [] })), /Declared without feature flags/);
+    const wizardHere = { draft: { repoId: 101, name: 'Web', file: 'flags.json' }, found: { ref: 'a'.repeat(40), truncated: false, candidates: [{ file: 'flags.json', flags: { a: { state: 'on' } }, readFrom: 'flags.json' }] }, preview: null, place: 'github' };
+    assert.match(card({ sources: [], wizard: wizardHere }), /value="flags.json"[\s\S]*data-action="use-flag-file" data-index="0"/);
+    assert.doesNotMatch(str(ui.renderSourcesPage({ sources: [], repos: [{ repoId: 101, fullName: 'acme/web' }], admin: true, once: {}, origin: 'https://s', wizard: wizardHere })), /use-flag-file/, 'the helper shows on the form it was started from');
+
     const paused = { ...github, repos: [{ ...github.repos[0], rateLimitedUntil: '2026-10-16T12:10:00.000Z' }] };
     assert.match(str(ui.renderGitHub({ enabled: true, github: paused, installationRepos: {}, admin: false })),
         /class="settings-sync warn" title="GitHub asked ShipScope to slow down[^"]*">paused by GitHub's rate limit until /, 'a pause, not a failure');
@@ -610,6 +630,16 @@ test('settings page: actions send what the API expects, then reload their sectio
     await ui.runAction('preview-code-source', { dataset: {}, form: codeForm([]), closest: () => ({ id: 'flags' }) });
     assert.deepStrictEqual(wizardCalls, [], 'no file: nothing asked');
     assert.match(ui.settingsState.messages.flags.text, /Name the file to preview/);
+    global.fetch = fn;
+
+    // Added from a repository's card on GitHub: the flags are reloaded and the message stays on GitHub.
+    const { fn: cardFetch, calls: cardCalls } = fakeFetch({ [`POST ${base}/flag-sources`]: { source: { id: 's9' }, token: null }, [`GET ${base}/flag-sources`]: { sources: [] } });
+    global.fetch = cardFetch;
+    const cardForm = { ...form([['name', 'web flags'], ['repoId', '101'], ['file', 'src/flags.ts'], ['path', ''], ['prefix', '']], { place: 'github', section: 'github' }, 'github') };
+    await ui.runAction('create-code-source', cardForm);
+    assert.deepStrictEqual(cardCalls[0].method, 'POST');
+    assert.ok(cardCalls.some((c) => c.method === 'GET' && c.url === `${base}/flag-sources`), 'the sources are reloaded for the card');
+    assert.deepStrictEqual(ui.settingsState.messages.github, { error: false, text: 'Added: its flags are read at the next sync.' });
     global.fetch = fn;
 
     // Deleting the workspace: asks first, sends the typed name, then leaves for / (another workspace, or /start).
