@@ -83,6 +83,8 @@ async function populatedTenant({ pool, app, as }, owner, name, { jira = false } 
         await call('PUT', `/tenants/${tenantId}/jira/boards`, { boardIds: [10] });
         assert.strictEqual((await call('POST', `/tenants/${tenantId}/jira/sync`)).statusCode, 200);
     }
+    // A Jira access token the worker handed over (lib/jira-connections.js), as with a sealing key pair.
+    await withScope(pool, { tenantId }, (c) => c.query("INSERT INTO jira_access_grants (tenant_id, error) VALUES ($1, 'none')", [tenantId]));
     return tenantId;
 }
 

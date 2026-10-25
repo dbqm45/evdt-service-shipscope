@@ -96,7 +96,7 @@ changelog entry by hand outside a `chore(release)` PR.
 
 Deployed to Render per `context/foundation/infrastructure.md`: `render.yaml` builds both the Web Service and the
 Background Worker from the repo root (`npm ci --prefix server`, `node server/web.js`), not `rootDir: server`, which
-would hide `docs/` from the Web Service. Migrations (`server/migrations/001`–`029`, applied by the hand-rolled
+would hide `docs/` from the Web Service. Migrations (`server/migrations/001`–`030`, applied by the hand-rolled
 `lib/migrate.js`) run as each service's `preDeployCommand` under an advisory lock (`test/render-blueprint.test.js`).
 Dependencies, all in `server/package.json`: `pg`, `fastify`, `@fastify/cookie`. Fastify runs with
 `removeAdditional: false, coerceTypes: false`: unknown fields and wrong types are a 400, never silently fixed.
@@ -112,13 +112,13 @@ New rules go into the pure file; the I/O file orchestrates.
 
 **Tenant isolation (RLS).** Every query on an RLS table — the list is `RLS_TABLES` in `lib/scope.js` (memberships,
 invitations, github_installations, tracked_repos, deployments, issue_deployments, flag_sources, flag_source_repos, flag_source_envs, ingest_tokens, flags,
-flag_values, flag_value_history, jira_connections, jira_boards, jira_pis, jira_issues, secret_events, endpoint_tests) — must run inside
+flag_values, flag_value_history, jira_connections, jira_boards, jira_pis, jira_issues, secret_events, endpoint_tests, jira_access_grants) — must run inside
 `withScope()`, which sets `app.current_tenant_id`/`app.current_user_id` with transaction-local
 `set_config(..., true)`. An unscoped read returns zero rows; an unscoped write is an RLS error.
 `lib/withscope-guard.js` (`server/test/withscope-guard.test.js`) fails on any `pool.query(...)` in `server/lib/`
 that names an RLS table. Every tenant table cascades from `tenants`; `DELETE /tenants/:tenantId` (admin, name typed
 back, `deleteTenant()`) relies on it, and `server/test/tenant-delete.test.js` checks every table in `RLS_TABLES` is
-emptied. `sync_requests` (webhook, dashboard-refresh and test queue: `github`/`jira`/`flags`/`endpoint-test`) and `worker_status` (migration `020`) are the non-RLS tables; neither holds
+emptied. `sync_requests` (webhook, dashboard-refresh and worker-request queue: `github`/`jira`/`flags`/`endpoint-test`/`jira-token`) and `worker_status` (migration `020`) are the non-RLS tables; neither holds
 tenant data.
 
 **Logs and health.** Both services log JSON lines through `lib/log.js` (`createLogger()`, `LOG_LEVEL`; the web
@@ -246,7 +246,10 @@ success for 3 × `SYNC_INTERVAL_MINUTES` + 5 minutes, or an undrained webhook qu
   `lib/jira-connections.js`). Only the refresh token is stored, AES-256-GCM-sealed with the tenant id as associated
   data (`lib/secret-box.js`, key `TOKEN_ENCRYPTION_KEY`; format `v2.<key id>…`, any key of the ring opens it, old keys
   in `TOKEN_ENCRYPTION_KEY_PREVIOUS`, the worker's `secretsTick()` re-seals with the current one, `lib/secret-rotation.js`,
-  server/README.md "Rotating TOKEN_ENCRYPTION_KEY"); access tokens are minted per use under a row lock because
+  server/README.md "Rotating TOKEN_ENCRYPTION_KEY"; with the sealing key pair it is sealed for the worker instead,
+  `sealRefreshToken()`, and the web service gets access tokens through `accessTokenViaWorker()`: a `jira-token` request
+  the worker's `jiraTokenTick()` answers with `handOverAccessToken()` into `jira_access_grants`, migration `030`, cached
+  until expiry, `WorkerUnavailableError` = 503, `server/test/jira-worker-tokens.test.js`); access tokens are minted per use under a row lock because
   Atlassian rotates refresh tokens. Issues (`lib/jira-sync.js`) are scoped by the admin's chosen boards
   (company-managed `scrum`, team-managed `simple` or `kanban`): an issue's sprint is the one whose id is on the board
   being synced. Each pass fully re-syncs each board's current increment (plus its issues' Epics); a board's first

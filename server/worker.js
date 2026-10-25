@@ -6,6 +6,7 @@ const { cleanupAll } = require('./lib/retention');
 const { pollEndpoints } = require('./lib/flag-poll');
 const { resealSecrets } = require('./lib/secret-rotation');
 const { runQueuedEndpointTest } = require('./lib/endpoint-flags');
+const { handOverAccessToken } = require('./lib/jira-connections');
 const { pendingSyncRequests, finishSyncRequests } = require('./lib/webhooks');
 const { recordRun } = require('./lib/worker-status');
 const { createLogger, logLevel, logProcessFailures } = require('./lib/log');
@@ -25,6 +26,7 @@ const FLAGS_LOCK = 727_004;
 const SECRETS_LOCK = 727_005;
 const ENDPOINT_TEST_LOCK = 727_006;
 const ENDPOINT_TEST_INTERVAL_MS = 2_000; // an admin waits on these in Settings
+const JIRA_TOKEN_INTERVAL_MS = 1_000; // the web service waits on these, a page in Settings with it
 
 const defaultLogger = createLogger({ service: 'worker', level: logLevel(process.env), base: { version: APP_VERSION } });
 
@@ -175,6 +177,22 @@ async function endpointTestTick(pool, { encryptionKey, sealingKeys }, logger = d
 }
 
 /**
+ * Hands the web service short-lived Jira access tokens it asked for (lib/jira-connections.js accessTokenViaWorker()):
+ * where only the worker can open refresh tokens. Every second, since a page in Settings waits on it.
+ */
+async function jiraTokenTick(pool, atlassian, logger = defaultLogger, deps = { handOverAccessToken }) {
+    try {
+        const requests = await pendingSyncRequests(pool, 'jira-token');
+        if (!requests.length) return;
+        for (const { key } of requests) await deps.handOverAccessToken(pool, { tenantId: key, atlassian });
+        await finishSyncRequests(pool, 'jira-token', requests);
+        logger.info(`jira tokens handed over: ${requests.length}`, { job: 'jira-tokens', requests: requests.length });
+    } catch (err) {
+        logger.error('jira token hand-over failed', { job: 'jira-tokens', err });
+    }
+}
+
+/**
  * Picks up what webhooks asked for (migration 013) and syncs just that: the named repos, the named Jira
  * connections. Under the same locks as the periodic syncs, so never alongside one; a request that couldn't run
  * (lock held, or the sync failed as a whole) stays queued for the next tick. Errors are logged, never thrown; the
@@ -245,16 +263,18 @@ if (require.main === module) {
     } else {
         defaultLogger.warn('GITHUB_APP_* not set: deployment sync is off');
     }
+    // The private half too: only the worker reads customers' endpoint and Jira tokens (lib/sealed-box.js).
+    const sealingKeys = loadSealingKeys(process.env, { withPrivate: true });
     const atlassian = loadAtlassianConfig(process.env);
     if (atlassian) {
+        atlassian.sealingKeys = sealingKeys;
+        if (sealingKeys) timers.push(setInterval(() => jiraTokenTick(pool, atlassian), JIRA_TOKEN_INTERVAL_MS));
         timers.push(setInterval(() => jiraTick(pool, atlassian, undefined, undefined, budgetMs), syncMinutes * 60_000));
         jiraTick(pool, atlassian, undefined, undefined, budgetMs);
     } else {
         defaultLogger.warn('ATLASSIAN_* not set: Jira sync is off');
     }
     const encryptionKey = loadEncryptionKey(process.env);
-    // The private half too: only the worker reads customers' endpoint tokens (lib/sealed-box.js).
-    const sealingKeys = loadSealingKeys(process.env, { withPrivate: true });
     if (encryptionKey) {
         timers.push(setInterval(() => flagsTick(pool, encryptionKey, undefined, undefined, sealingKeys), FLAGS_INTERVAL_MS));
         flagsTick(pool, encryptionKey, undefined, undefined, sealingKeys);
@@ -275,4 +295,4 @@ if (require.main === module) {
     });
 }
 
-module.exports = { heartbeatTick, runExclusive, syncIntervalMinutes, tenantBudgetSeconds, syncTick, jiraTick, flagsTick, secretsTick, endpointTestTick, webhookTick, cleanupTick };
+module.exports = { heartbeatTick, runExclusive, syncIntervalMinutes, tenantBudgetSeconds, syncTick, jiraTick, flagsTick, secretsTick, endpointTestTick, jiraTokenTick, webhookTick, cleanupTick };

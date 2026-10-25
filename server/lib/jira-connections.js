@@ -2,6 +2,8 @@ const { recordSecretEvent } = require('./secret-audit');
 const { withScope } = require('./scope');
 const { assertAdmin, roleOf, TenantNotFoundError } = require('./tenants');
 const { seal, open, SecretBoxError } = require('./secret-box');
+const { sealFor, openWith, isSealedFor, SealedBoxError } = require('./sealed-box');
+const { requestSync } = require('./webhooks');
 const { AtlassianError, refreshAccessToken, fetchProjects } = require('./atlassian');
 
 /**
@@ -13,6 +15,26 @@ const { AtlassianError, refreshAccessToken, fetchProjects } = require('./atlassi
 
 class JiraNotConnectedError extends Error {}
 class JiraSiteError extends Error {}
+/** The web service asked the worker for a Jira access token and got no answer in time. */
+class WorkerUnavailableError extends Error {}
+
+// A cached access token is used while it has at least this long left; the web service waits this long for the worker.
+const GRANT_MARGIN_MS = 60_000;
+const GRANT_WAIT_MS = 15_000;
+const GRANT_POLL_MS = 250;
+
+/**
+ * Seals a Jira refresh token: for the worker alone when `atlassian.sealingKeys` has a public key (lib/sealed-box.js),
+ * else with TOKEN_ENCRYPTION_KEY. Bound to the tenant either way.
+ *
+ * @param {{ encryptionKey: object, sealingKeys?: { publicKey: object }|null }} atlassian
+ * @param {string} refreshToken
+ * @param {string} tenantId
+ * @returns {string}
+ */
+function sealRefreshToken(atlassian, refreshToken, tenantId) {
+    return atlassian.sealingKeys && atlassian.sealingKeys.publicKey ? sealFor(atlassian.sealingKeys.publicKey, refreshToken, tenantId) : seal(atlassian.encryptionKey, refreshToken, tenantId);
+}
 
 const ERROR_MAX_LENGTH = 300;
 
@@ -25,7 +47,7 @@ const ERROR_MAX_LENGTH = 300;
  * @param {{ tenantId: string, actorUserId: string, refreshToken: string, scopes: string[], sites: Array<{ cloudId: string, url: string, name: string }>, encryptionKey: Buffer }} input
  * @returns {Promise<{ siteChosen: boolean }>}
  */
-async function saveConnection(pool, { tenantId, actorUserId, refreshToken, scopes, sites, encryptionKey }) {
+async function saveConnection(pool, { tenantId, actorUserId, refreshToken, scopes, sites, encryptionKey, sealingKeys = null }) {
     return withScope(pool, { tenantId }, async (client) => {
         await assertAdmin(client, { tenantId, userId: actorUserId });
         const { rows: [previous] } = await client.query('SELECT cloud_id FROM jira_connections WHERE tenant_id = $1', [tenantId]);
@@ -36,9 +58,11 @@ async function saveConnection(pool, { tenantId, actorUserId, refreshToken, scope
              ON CONFLICT (tenant_id) DO UPDATE SET refresh_token_enc = EXCLUDED.refresh_token_enc, scopes = EXCLUDED.scopes,
                  available_sites = EXCLUDED.available_sites, cloud_id = EXCLUDED.cloud_id, site_url = EXCLUDED.site_url,
                  site_name = EXCLUDED.site_name, connected_by = EXCLUDED.connected_by, connected_at = now(), last_error = NULL`,
-            [tenantId, seal(encryptionKey, refreshToken, tenantId), scopes, JSON.stringify(sites), site?.cloudId ?? null, site?.url ?? null, site?.name ?? null, actorUserId]
+            [tenantId, sealRefreshToken({ encryptionKey, sealingKeys }, refreshToken, tenantId), scopes, JSON.stringify(sites), site?.cloudId ?? null, site?.url ?? null, site?.name ?? null, actorUserId]
         );
         if (previous && previous.cloud_id !== (site?.cloudId ?? null)) await forgetSiteData(client, tenantId);
+        // A token handed over for the previous grant must not outlive it.
+        await client.query('DELETE FROM jira_access_grants WHERE tenant_id = $1', [tenantId]);
         await recordSecretEvent(client, { tenantId, actorUserId, kind: 'jira_connected', subject: site?.name ?? null });
         return { siteChosen: Boolean(site) };
     });
@@ -124,6 +148,7 @@ async function disconnect(pool, { tenantId, actorUserId }) {
     return withScope(pool, { tenantId }, async (client) => {
         await assertAdmin(client, { tenantId, userId: actorUserId });
         const { rowCount } = await client.query('DELETE FROM jira_connections WHERE tenant_id = $1', [tenantId]);
+        await client.query('DELETE FROM jira_access_grants WHERE tenant_id = $1', [tenantId]);
         if (rowCount) await recordSecretEvent(client, { tenantId, actorUserId, kind: 'jira_disconnected' });
         return rowCount === 1;
     });
@@ -140,6 +165,17 @@ async function disconnect(pool, { tenantId, actorUserId }) {
  * @throws {JiraNotConnectedError|AtlassianError}
  */
 async function accessTokenFor(pool, { tenantId, atlassian, fetch: fetchFn = fetch }) {
+    const privateKeys = (atlassian.sealingKeys && atlassian.sealingKeys.privateKeys) || [];
+    if (!privateKeys.length) {
+        const { rows: [row] } = await withScope(pool, { tenantId }, (client) => client.query('SELECT refresh_token_enc FROM jira_connections WHERE tenant_id = $1', [tenantId]));
+        if (row && isSealedFor(row.refresh_token_enc)) return accessTokenViaWorker(pool, { tenantId, atlassian });
+    }
+    return mintAccessToken(pool, { tenantId, atlassian, fetch: fetchFn });
+}
+
+/** The refresh itself, where the refresh token can be opened (the worker, or anywhere without a sealing key pair). */
+async function mintAccessToken(pool, { tenantId, atlassian, fetch: fetchFn = fetch }) {
+    const privateKeys = (atlassian.sealingKeys && atlassian.sealingKeys.privateKeys) || [];
     let failure = null;
     const result = await withScope(pool, { tenantId }, async (client) => {
         const { rows: [row] } = await client.query(
@@ -150,9 +186,11 @@ async function accessTokenFor(pool, { tenantId, atlassian, fetch: fetchFn = fetc
         if (!row.cloud_id) throw new JiraNotConnectedError('Choose which Jira site to use first');
         let refreshToken;
         try {
-            refreshToken = open(atlassian.encryptionKey, row.refresh_token_enc, tenantId);
+            refreshToken = isSealedFor(row.refresh_token_enc)
+                ? openWith(privateKeys, row.refresh_token_enc, tenantId)
+                : open(atlassian.encryptionKey, row.refresh_token_enc, tenantId);
         } catch (err) {
-            if (!(err instanceof SecretBoxError)) throw err;
+            if (!(err instanceof SecretBoxError || err instanceof SealedBoxError)) throw err;
             failure = 'The stored Jira token cannot be read (was TOKEN_ENCRYPTION_KEY changed?); connect Jira again';
             return null;
         }
@@ -166,9 +204,9 @@ async function accessTokenFor(pool, { tenantId, atlassian, fetch: fetchFn = fetc
         }
         await client.query(
             'UPDATE jira_connections SET refresh_token_enc = $2, last_error = NULL WHERE tenant_id = $1',
-            [tenantId, seal(atlassian.encryptionKey, tokens.refreshToken || refreshToken, tenantId)]
+            [tenantId, sealRefreshToken(atlassian, tokens.refreshToken || refreshToken, tenantId)]
         );
-        return { accessToken: tokens.accessToken, cloudId: row.cloud_id };
+        return { accessToken: tokens.accessToken, cloudId: row.cloud_id, expiresIn: tokens.expiresIn };
     });
     if (result) return result;
     // Recorded in its own transaction: the one above ended without a token to return.
@@ -177,6 +215,66 @@ async function accessTokenFor(pool, { tenantId, atlassian, fetch: fetchFn = fetc
         [tenantId, failure.slice(0, ERROR_MAX_LENGTH)]
     ));
     throw new JiraNotConnectedError(failure);
+}
+
+/** A grant row that can be used now: a token with time left, issued after `since` when given. */
+function usableGrant(row, { now, since = null }) {
+    return row && row.access_token_enc && row.expires_at && row.expires_at - now > GRANT_MARGIN_MS && (!since || row.updated_at >= since);
+}
+
+/**
+ * Where the web service cannot open the refresh token: a cached access token the worker minted, or a fresh one asked
+ * for through sync_requests (`jira-token`) and waited for (GRANT_WAIT_MS).
+ *
+ * @throws {JiraNotConnectedError} the worker could not refresh the grant (the reason it recorded)
+ * @throws {WorkerUnavailableError} no answer in time
+ */
+async function accessTokenViaWorker(pool, { tenantId, atlassian, now = () => new Date(), sleep = (ms) => new Promise((r) => setTimeout(r, ms)) }) {
+    const read = () => withScope(pool, { tenantId }, async (client) => (await client.query(
+        'SELECT access_token_enc, cloud_id, expires_at, error, updated_at FROM jira_access_grants WHERE tenant_id = $1', [tenantId]
+    )).rows[0]);
+    const take = (row) => ({ accessToken: open(atlassian.encryptionKey, row.access_token_enc, `${tenantId}/jira-access`), cloudId: row.cloud_id });
+    const cached = await read();
+    if (usableGrant(cached, { now: now() })) return take(cached);
+    const asked = (await pool.query('SELECT now() AS at')).rows[0].at;
+    await requestSync(pool, { source: 'jira-token', keys: [tenantId] });
+    for (let waited = 0; waited < GRANT_WAIT_MS; waited += GRANT_POLL_MS) {
+        await sleep(GRANT_POLL_MS);
+        const row = await read();
+        if (row && row.updated_at >= asked) {
+            if (row.error) throw new JiraNotConnectedError(row.error);
+            if (usableGrant(row, { now: now() })) return take(row);
+        }
+    }
+    throw new WorkerUnavailableError('The worker did not hand over a Jira token in time; try again shortly');
+}
+
+/**
+ * The worker's side: refreshes the tenant's grant and leaves a short-lived access token for the web service (sealed
+ * with TOKEN_ENCRYPTION_KEY, until it expires), or why it could not.
+ *
+ * @param {import('pg').Pool} pool
+ * @param {{ tenantId: string, atlassian: object, fetch?: typeof fetch, now?: Date }} input
+ * @returns {Promise<boolean>} whether a token was handed over
+ */
+async function handOverAccessToken(pool, { tenantId, atlassian, fetch: fetchFn = fetch, now = new Date() }) {
+    let grant;
+    let error = null;
+    try {
+        grant = await mintAccessToken(pool, { tenantId, atlassian, fetch: fetchFn });
+    } catch (err) {
+        if (!(err instanceof JiraNotConnectedError || err instanceof AtlassianError)) throw err;
+        error = err instanceof JiraNotConnectedError ? err.message : 'Jira did not answer; try again shortly';
+    }
+    await withScope(pool, { tenantId }, (client) => client.query(
+        `INSERT INTO jira_access_grants (tenant_id, access_token_enc, cloud_id, expires_at, error, updated_at) VALUES ($1, $2, $3, $4, $5, now())
+         ON CONFLICT (tenant_id) DO UPDATE SET access_token_enc = EXCLUDED.access_token_enc, cloud_id = EXCLUDED.cloud_id,
+             expires_at = EXCLUDED.expires_at, error = EXCLUDED.error, updated_at = now()`,
+        grant
+            ? [tenantId, seal(atlassian.encryptionKey, grant.accessToken, `${tenantId}/jira-access`), grant.cloudId, new Date(now.getTime() + grant.expiresIn * 1000), null]
+            : [tenantId, null, null, null, String(error).slice(0, ERROR_MAX_LENGTH)]
+    ));
+    return Boolean(grant);
 }
 
 /**
@@ -193,4 +291,4 @@ async function listProjects(pool, { tenantId, actorUserId, atlassian, fetch: fet
     return fetchProjects({ accessToken, cloudId, fetch: fetchFn });
 }
 
-module.exports = { JiraNotConnectedError, JiraSiteError, saveConnection, getConnection, selectSite, disconnect, accessTokenFor, listProjects };
+module.exports = { WorkerUnavailableError, accessTokenViaWorker, handOverAccessToken, sealRefreshToken, JiraNotConnectedError, JiraSiteError, saveConnection, getConnection, selectSite, disconnect, accessTokenFor, listProjects };

@@ -5,7 +5,7 @@ const cookie = require('@fastify/cookie');
 const { createPool } = require('./lib/db');
 const { loadAuthConfig, loadGitHubAppConfig, loadAtlassianConfig, loadEncryptionKey, loadSealingKeys } = require('./lib/config');
 const { AtlassianError } = require('./lib/atlassian');
-const { JiraNotConnectedError, JiraSiteError } = require('./lib/jira-connections');
+const { JiraNotConnectedError, JiraSiteError, WorkerUnavailableError } = require('./lib/jira-connections');
 const { JiraBoardError } = require('./lib/jira-sync');
 const { APP_VERSION } = require('./lib/version');
 const { createLogger, logLevel, loggerOptions, logProcessFailures } = require('./lib/log');
@@ -93,6 +93,7 @@ const ERROR_STATUS = [
     [FlagSourceConflictError, 409],
     [FlagSourceConfigError, 400],
     [JiraNotConnectedError, 409],
+    [WorkerUnavailableError, 503],
     [JiraSiteError, 400],
     [JiraBoardError, 400],
     [AtlassianError, 502],
@@ -244,6 +245,8 @@ if (require.main === module) {
     const encryptionKey = loadEncryptionKey(process.env);
     // The public half only: the web service seals endpoint tokens it can never read back.
     const sealingKeys = loadSealingKeys(process.env, { withPrivate: false });
+    // Jira refresh tokens too: sealed for the worker, which hands this service short-lived access tokens.
+    if (atlassian) atlassian.sealingKeys = sealingKeys;
     const pool = createPool();
     const dashboardDir = process.env.DASHBOARD_DIR || DEFAULT_DASHBOARD_DIR;
     const mockDashboard = mockDataEnabled(process.env) ? loadMockDashboard(dashboardDir) : null;
