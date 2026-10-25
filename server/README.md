@@ -435,6 +435,26 @@ optionally alert on the word `degraded` too. The worker records each job's last 
 `worker_status` (migration `020`, `lib/worker-status.js`); the web service judges them (`judgeWorker()`). If you change
 `SYNC_INTERVAL_MINUTES`, set it on both services.
 
+**Metrics.** With `METRICS_TOKEN` set on the web service (32+ characters, `openssl rand -hex 32`), `GET /metrics`
+answers Prometheus' text format to `Authorization: Bearer <METRICS_TOKEN>` (401 otherwise; without the variable the
+route does not exist). Labels are fixed words, never a tenant, key or error text (`lib/metrics.js`):
+
+| Metric | What |
+|---|---|
+| `shipscope_flag_ingest_messages_total{outcome}` | flag messages this web process answered: `accepted`, `invalid` (400), `unauthorized` (401), `forbidden` (403), `rate_limited` (429), `busy` (503), `error` |
+| `shipscope_webhook_deliveries_total{source,outcome}` | GitHub/Jira deliveries `accepted` or `refused` |
+| `shipscope_http_responses_total{status_class}` | every answer by `2xx`/`4xx`/`5xx` |
+| `shipscope_worker_job_last_run_timestamp_seconds`, `…_last_success_timestamp_seconds`, `…_last_duration_seconds{job}` | each worker job's last run (migration `033`) |
+| `shipscope_worker_job_runs_total`, `…_failures_total{job}`, `shipscope_worker_job_failed_tenants{job}` | runs, runs that failed as a whole, tenants whose part of the last run failed |
+| `shipscope_sync_queue_pending`, `shipscope_sync_queue_oldest_age_seconds{source}` | the webhook/dashboard/Settings queue |
+| `shipscope_flag_sources{origin}`, `shipscope_flag_source_environments{state}`, `shipscope_flag_sources_refused_last_hour` | every tenant's flag sources, counted by the worker's `sources` job every 5 minutes |
+
+The web counters live in memory per process and restart at zero on a deploy (Prometheus' `rate()` handles that);
+the worker's come from the database, so any web instance answers the same. Suggested alerts: a job's last success
+older than three sync intervals, `rate(shipscope_worker_job_failures_total[1h]) > 0`, a growing
+`shipscope_flag_source_environments{state="error"}`, `rate(shipscope_flag_ingest_messages_total{outcome!="accepted"}[15m])`
+above the usual.
+
 **Logs.** Both services write one JSON object per line to stdout (`lib/log.js`; the web service through Fastify's
 own logger with the same shape), which Render keeps under each service's **Logs** tab. Every line has `time`,
 `level`, `service` (`web`/`worker`), `version` and `msg`, plus context:
@@ -443,7 +463,7 @@ own logger with the same shape), which Render keeps under each service's **Logs*
 |---|---|---|
 | `requestId` | every line of one HTTP request; also sent back as `X-Request-Id` (a caller's own is kept) | follow one request a user reports |
 | `tenantId`, `userId` | requests under `/tenants/:tenantId/...`, signed-in requests | see everything that happened for one workspace |
-| `job`, `durationMs` | worker jobs: `heartbeat`, `deployments`, `jira`, `flags`, `secrets`, `webhooks`, `cleanup` | see how long syncs take and which failed |
+| `job`, `durationMs` | worker jobs: `heartbeat`, `deployments`, `jira`, `flags`, `secrets`, `sources`, `webhooks`, `cleanup` | see how long syncs take and which failed |
 | `repo`, `installationId`, `retryAt` | per-repo and per-tenant sync lines | find the repo or connection behind a failure |
 | `err` (`type`, `message`, `code`, `status`, `stack`) | every logged error | see where it failed |
 

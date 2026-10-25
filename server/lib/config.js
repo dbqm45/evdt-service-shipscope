@@ -182,4 +182,19 @@ function loadAtlassianConfig(env) {
     return { clientId: env.ATLASSIAN_CLIENT_ID, clientSecret: env.ATLASSIAN_CLIENT_SECRET, encryptionKey, webhookUrl, requireWebhookExp: env.JIRA_WEBHOOK_REQUIRE_EXP === '1' };
 }
 
-module.exports = { loadAuthConfig, loadGitHubAppConfig, loadAtlassianConfig, loadEncryptionKey, loadSealingKeys };
+/**
+ * METRICS_TOKEN (web service): the bearer token GET /metrics asks for. Unset, the route does not exist; set, at least 32
+ * characters (`openssl rand -hex 32`).
+ *
+ * @param {NodeJS.ProcessEnv} env
+ * @returns {string|null}
+ * @throws {Error}
+ */
+function loadMetricsToken(env) {
+    const token = env.METRICS_TOKEN;
+    if (token === undefined || token === '') return null;
+    if (token.length < 32 || /\s/.test(token)) throw new Error('Invalid configuration: METRICS_TOKEN must be at least 32 characters without spaces (openssl rand -hex 32)');
+    return token;
+}
+
+module.exports = { loadAuthConfig, loadGitHubAppConfig, loadAtlassianConfig, loadEncryptionKey, loadSealingKeys, loadMetricsToken };

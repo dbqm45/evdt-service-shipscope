@@ -779,7 +779,38 @@ async function recordSourceEnvError(pool, { tenantId, sourceId, env, message, no
     ));
 }
 
+/**
+ * The flag sources of every tenant, counted (GET /metrics through the worker's `sources` job): sources by origin, their
+ * environments by freshness (freshnessOf()), and how many had a message refused in the last hour. Tenant by tenant
+ * under its own scope; counts only, never a name.
+ *
+ * @param {import('pg').Pool} pool
+ * @param {{ now?: Date }} [input]
+ * @returns {Promise<{ tenants: number, sources: { push: number, code: number, endpoint: number }, environments: { fresh: number, stale: number, error: number, unknown: number }, refusedLastHour: number }>}
+ */
+async function flagSourceHealth(pool, { now = new Date() } = {}) {
+    const { rows: tenants } = await pool.query('SELECT id FROM tenants ORDER BY created_at');
+    const totals = { tenants: tenants.length, sources: { push: 0, code: 0, endpoint: 0 }, environments: { fresh: 0, stale: 0, error: 0, unknown: 0 }, refusedLastHour: 0 };
+    const hourAgo = new Date(now.getTime() - 60 * 60 * 1000);
+    for (const { id: tenantId } of tenants) {
+        await withScope(pool, { tenantId }, async (client) => {
+            const { rows: sources } = await client.query(
+                'SELECT id, kind, origin, stale_after_minutes, last_error_at FROM flag_sources WHERE tenant_id = $1', [tenantId]
+            );
+            if (!sources.length) return;
+            const envs = await sourceEnvironments(client, tenantId, sources, now);
+            for (const s of sources) {
+                totals.sources[s.origin || 'push'] = (totals.sources[s.origin || 'push'] || 0) + 1;
+                if (s.last_error_at && s.last_error_at > hourAgo) totals.refusedLastHour += 1;
+                for (const env of envs.get(s.id) || []) totals.environments[env.state] = (totals.environments[env.state] || 0) + 1;
+            }
+        });
+    }
+    return totals;
+}
+
 module.exports = {
+    flagSourceHealth,
     recordSourceEnvError,
     endpointTokenAad,
     sealEndpointToken,

@@ -12,19 +12,25 @@ const QUEUE_MAX_AGE_MS = 10 * 60_000;
  * Records one run of a worker job: always when it ran; when it succeeded, or the error.
  *
  * @param {import('pg').Pool} pool
- * @param {{ job: 'heartbeat'|'deployments'|'jira'|'flags'|'secrets'|'webhooks'|'cleanup', ok: boolean, error?: string|null, details?: object, now?: Date }} input
+ * @param {{ job: 'heartbeat'|'deployments'|'jira'|'flags'|'secrets'|'sources'|'webhooks'|'cleanup', ok: boolean, error?: string|null, details?: object, durationMs?: number|null, now?: Date }} input
+ *   `durationMs`: how long the run took (GET /metrics); the run and failure counters go up by one
  * @returns {Promise<void>}
  */
-async function recordRun(pool, { job, ok, error = null, details = {}, now = new Date() }) {
+async function recordRun(pool, { job, ok, error = null, details = {}, durationMs = null, now = new Date() }) {
     await pool.query(
-        `INSERT INTO worker_status (job, last_run_at, last_ok_at, last_error, last_error_at, details)
-         VALUES ($1, $2::timestamptz, CASE WHEN $3::boolean THEN $2::timestamptz END, $4, CASE WHEN $3::boolean THEN NULL ELSE $2::timestamptz END, $5)
+        `INSERT INTO worker_status (job, last_run_at, last_ok_at, last_error, last_error_at, details, last_duration_ms, runs_total, failures_total)
+         VALUES ($1, $2::timestamptz, CASE WHEN $3::boolean THEN $2::timestamptz END, $4, CASE WHEN $3::boolean THEN NULL ELSE $2::timestamptz END, $5, $6, 1,
+                 CASE WHEN $3::boolean THEN 0 ELSE 1 END)
          ON CONFLICT (job) DO UPDATE SET last_run_at = EXCLUDED.last_run_at,
              last_ok_at = COALESCE(EXCLUDED.last_ok_at, worker_status.last_ok_at),
              last_error = CASE WHEN $3 THEN worker_status.last_error ELSE EXCLUDED.last_error END,
              last_error_at = CASE WHEN $3 THEN worker_status.last_error_at ELSE EXCLUDED.last_error_at END,
-             details = EXCLUDED.details`,
-        [job, now, ok, error === null ? null : String(error).slice(0, ERROR_MAX_LENGTH), details]
+             details = EXCLUDED.details,
+             last_duration_ms = COALESCE(EXCLUDED.last_duration_ms, worker_status.last_duration_ms),
+             runs_total = worker_status.runs_total + 1,
+             failures_total = worker_status.failures_total + EXCLUDED.failures_total`,
+        [job, now, ok, error === null ? null : String(error).slice(0, ERROR_MAX_LENGTH), details,
+            durationMs === null ? null : Math.max(0, Math.round(durationMs))]
     );
 }
 
