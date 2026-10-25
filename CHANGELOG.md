@@ -7,6 +7,12 @@ dashboard, not a published package), so entries are grouped by date instead. See
 ShipScope is, `CLAUDE.md` for the technical reference, and `FAQ.md` for how specific numbers/badges are
 calculated.
 
+## [0.2.30] - 2026-10-25
+
+### Added
+
+- **SHP:** read runtime flags from a customer's https endpoint (#87)
+
 ## [0.2.29] - 2026-10-25
 
 ### Added
