@@ -11,7 +11,9 @@ history of how they came about is in git and `CHANGELOG.md`. Related documents:
   `SECURITY.md` — security decisions (actions pinned to a commit SHA, Dependabot) and the settings still to set by
   hand.
 - `FAQ.md` — how each number and badge on the dashboard is computed; `ONBOARDING.md` — setting up a workspace;
-  `server/README.md` — routes, security model, local setup; `RELEASING.md` — versions.
+  `server/README.md` — routes, security model, local setup; `server/SETUP.pl.md` — setting up a server;
+  `server/SEKRETY.pl.md` — the encryption keys (what each is for, first setup, rotation, troubleshooting);
+  `RELEASING.md` — versions.
 
 ## What this repo is
 
