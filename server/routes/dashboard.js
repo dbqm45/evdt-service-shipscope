@@ -1,6 +1,7 @@
 const { loadDashboardAssets, loadUiAssets, ASSET_PATTERN } = require('../lib/dashboard-assets');
 const { buildDashboardData } = require('../lib/dashboard-data');
 const { listPiIssues } = require('../lib/jira-sync');
+const { listChangeIssues, CHANGES_KEY } = require('../lib/work-items');
 const { getSessionUser } = require('../lib/sessions');
 const { listTenantsForUser, roleOf, TenantNotFoundError } = require('../lib/tenants');
 const { withScope } = require('../lib/scope');
@@ -133,6 +134,8 @@ function registerDashboardRoutes(app, ctx) {
             const pis = request.query.pi === '@now' ? (mockDashboard.data.jiraIndex.pis.find((p) => p.pi === '@now') || {}).includes || [] : [request.query.pi];
             return pis.flatMap((pi) => mockDashboard.issuesByPi[pi] || []);
         }
+        // The Changes increment: work items read from the tracked repos (lib/work-items.js), not Jira.
+        if (request.query.pi === CHANGES_KEY) return listChangeIssues(pool, { tenantId: request.params.tenantId, actorUserId: request.user.id });
         return listPiIssues(pool, { tenantId: request.params.tenantId, actorUserId: request.user.id, pi: request.query.pi });
     });
 }

@@ -143,7 +143,7 @@ Webhooks (migration `013`; the worker picks up what they ask for every 30 second
 | `POST /webhooks/jira` | `Authorization: Bearer <JWT>`, HS256 with `ATLASSIAN_CLIENT_SECRET` | An issue event from a webhook ShipScope registered queues a sync of the tenant(s) it names (`matchedWebhookIds`, else the issue's site). 202 `{ queued }`; 401 for a missing, forged, expired or non-HS256 token, and with `JIRA_WEBHOOK_REQUIRE_EXP=1` one without `exp` (off by default: Atlassian does not document the claims, so a token without `exp` is accepted and logged as `jira webhook token without exp`; refusals log `webhook refused` with the reason). |
 | `GET /t/:tenantId/` | session + member (else sign-in and back) | The dashboard page (`docs/index.html`). |
 | `GET /t/:tenantId/:asset` | — | `style.css`, `favicon.svg`, `app-*.js` only (the same public code GitHub Pages serves). |
-| `GET /api/tenants/:tenantId/jira-issues?pi=PI-27.3` | session + member | One PI's issues (what a `data/jira-issues/<PI>.json` shard holds); `pi=@now` gives every board's current increment together. |
+| `GET /api/tenants/:tenantId/jira-issues?pi=PI-27.3` | session + member | One PI's issues (what a `data/jira-issues/<PI>.json` shard holds); `pi=@now` gives every board's current increment together; `pi=@changes` gives the work items read from the tracked repos (F1: changes as Epics over their tasks, `lib/work-items.js`). |
 | `GET /api/tenants/:tenantId/dashboard-data` | session + member | Everything the page loads (shapes in CLAUDE.md, "Dashboard data"): `deployments` (repo short name as `component`; `version` is the resolved release/tag/version-file/message label, else the short sha; `driftBehind` on each environment's latest successful deploy), `issueDeployments`, `componentsOrder` (tracked repos), `lastSyncedAt`, `flagsMeta`/`flagStates`/`flagStateHistory` (flags some source still reports; each value also carries `state`, `rollout` and `sourceName`); `jiraIndex` (current increment -- `@now` when boards are in different ones -- and every synced increment with its `kind` (`pi`/`sprint`/`now`) and sprints) and `issueStatusIndex` (per issue key, its newest PI). |
 
 Deployments and settings:
@@ -308,7 +308,7 @@ not stripped or coerced).
   `github_installations` and `tracked_repos` (migration `004`), `deployments` and `issue_deployments`
   (migration `005`), `flag_sources`, `ingest_tokens`, `flags`, `flag_values` and `flag_value_history` (migration
   `008`), `jira_connections` (migration `009`), `jira_boards`, `jira_pis` and `jira_issues` (migration `010`),
-  `release_lines` and `flag_commit_links` (migration `036`) and the rest of `RLS_TABLES` in `lib/scope.js` are
+  `release_lines` and `flag_commit_links` (migration `036`), `work_items` (migration `037`) and the rest of `RLS_TABLES` in `lib/scope.js` are
   tenant-scoped the same way. An ingest request carries no session: like an invitation, it can read
   exactly the one `ingest_tokens` row whose hash it holds (`app.ingest_token_hash`), then works under that row's
   tenant, one ingest per tenant at a time (a transaction advisory lock).

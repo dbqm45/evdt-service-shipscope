@@ -635,7 +635,7 @@ function renderGitHub({ enabled, webhooks, github, installationRepos, admin, pic
             <td><span class="settings-repo"><span class="settings-badge">${repoBadge(r.fullName)}</span><span><strong>${name}</strong><span class="settings-row-meta">${owner}</span></span></span></td>
             <td class="mono">${r.versionFile || '—'}</td>
             <td class="mono">${(r.driftIgnorePaths || []).join(', ') || '—'}</td>
-            <td class="mono">${syncStatus(r)}</td>
+            <td class="mono">${syncStatus(r)}${r.workItemsError ? html`<div><span class="settings-sync warn" title="${r.workItemsError}">changes folder: ${r.workItemsError.split('; ').length} problem${r.workItemsError.split('; ').length === 1 ? '' : 's'}</span></div>` : ''}</td>
             <td>${FLAG_STANCES[r.flagStance] || FLAG_STANCES.unknown}</td>
             ${admin ? html`<td class="actions">
                 <button type="button" class="btn btn-icon" data-action="edit-repo" data-repo-id="${r.repoId}" aria-label="Edit ${r.fullName}" title="Version file, drift and flags">${SETTINGS_ICONS.edit}</button>

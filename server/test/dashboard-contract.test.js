@@ -86,10 +86,13 @@ test('the frontend reads what the syncs stored: release status by sub-task and b
             { id: 1, environment: 'qa', sha: sha(1), created_at: at(30) },
         ],
         statuses: { 1: [{ state: 'success', created_at: at(29) }], 2: [{ state: 'success', created_at: at(19) }] },
-        commits: { [sha(1)]: 'feat: ABC-7 first part', [sha(2)]: 'feat: ABC-7 second part' },
+        commits: { [sha(1)]: 'feat: ABC-7 first part', [sha(2)]: 'feat: ABC-7 second part\n\nChange: TSK-57' },
         tags: [{ name: 'v1.0.0', commit: { sha: sha(1) } }, { name: 'v1.1.0', commit: { sha: sha(2) } }],
         compare: () => ({ ahead_by: 1, behind_by: 0 }),
-        trees: { [`tree-${sha(1)}`]: tree({ 'src/a.js': '1' }), [`tree-${sha(2)}`]: tree({ 'src/a.js': '2' }) },
+        trees: { [`tree-${sha(1)}`]: tree({ 'src/a.js': '1' }), [`tree-${sha(2)}`]: tree({ 'src/a.js': '2' }), [sha(2)]: tree({ 'docs/project/changes/CHG-12/plan.md': 'p' }) },
+        // F1: a change kept in the repo, its task named by the test deployment's commit.
+        fileCommits: { 'docs/project/changes': [sha(2)] },
+        files: { [sha(2)]: { 'docs/project/changes/CHG-12/plan.md': '---\nartifact: plan\nchange: CHG-12\ntasks: [TSK-57]\n---\n\n- TSK-57: Retry endpoint (in_progress)\n' } },
     };
     const { app: githubApp, publicKey } = testGitHubApp();
     const github = fakeGitHub(USERS, { publicKey, installations: { [ACME]: { account: { login: 'acme', type: 'Organization' }, repos: [] } }, repos: { 'acme/web': web } });
@@ -133,6 +136,14 @@ test('the frontend reads what the syncs stored: release status by sub-task and b
     // blockedByKeys: the Bug shipped in the Story that blocks it.
     assert.strictEqual(level('ABC-9', 'test'), 'deployed_code_only');
     assert.strictEqual(level('ABC-8', 'test'), 'none');
+    // F1: the Changes increment; the change counts its task's commits (subtaskKeys).
+    await run(`(async () => { state.jiraIssues = await loadJiraIssuesForPi('@changes'); })()`);
+    assert.strictEqual(ev(`incrementLabel('@changes')`), 'Changes (repo)');
+    assert.deepStrictEqual(ev('state.jiraIssues.map(i => [i.key, i.type, i.epicKey]).sort()'), [['CHG-12', 'Epic', null], ['TSK-57', 'Story', 'CHG-12']]);
+    assert.strictEqual(level('CHG-12', 'test'), 'deployed_code_only');
+    assert.strictEqual(level('CHG-12', 'prod'), 'none');
+    assert.match(ev('jiraIssueUrl("TSK-57")'), /^https:\/\/github\.com\/acme\/web\/blob\/[0-9a-f]{40}\/docs\/project\/changes\/CHG-12\/plan\.md$/);
+    await run(`(async () => { state.jiraIssues = await loadJiraIssuesForPi(state.selectedPi); })()`);
     // releasePlan (G1.3): the release:R1 label is a line; the Release plan tab reads it with the item's PROD status.
     assert.deepStrictEqual(ev('releasePlanModel().groups.map(g => g.lines.map(l => [l.id, l.items.map(i => [i.key, i.prodLevel, i.subtaskKeys])]))'),
         [[['R1', [['ABC-1', 'none', ['ABC-7']]]]]]);

@@ -1,0 +1,133 @@
+// Work items from a repo (F1 of the pdi one-flow plan): after each repo sync (deployment-sync.js syncRepo()), the
+// worker reads docs/project/changes/<CHG>/intent.md and plan.md from the repo's default branch, pinned to the newest
+// commit that touched that folder, and keeps work_items (migration 037) as the folder is now. Unchanged folder = one
+// GitHub request. A file that can't be read is recorded on the repo (tracked_repos.work_items_error, Settings) and the
+// other changes still count; a GitHub failure keeps what was read before; a rate limit is rethrown like elsewhere.
+const { withScope } = require('./scope');
+const { roleOf, TenantNotFoundError } = require('./tenants');
+const { githubGet, GitHubApiError, GitHubRateLimitError } = require('./github-app');
+const { CHANGES_DIR, CHANGES_KEY, MAX_CHANGES, buildWorkItems, workItemIssues } = require('./work-items-model');
+
+const MAX_FILE_BYTES = 256 * 1024;
+const ARTIFACT = new RegExp(`^${CHANGES_DIR}/([^/]+)/(intent|plan)\\.md$`);
+const ERROR_MAX = 1000;
+
+/** A file's text at a commit; null when it is too big or not a file. */
+async function fileText({ token, fullName, path, ref, fetch: fetchFn }) {
+    const body = await githubGet({ token, path: `/repos/${fullName}/contents/${path.split('/').map(encodeURIComponent).join('/')}?ref=${ref}`, fetch: fetchFn });
+    if (!body || body.type !== 'file' || body.encoding !== 'base64' || typeof body.content !== 'string') return null;
+    if (typeof body.size === 'number' && body.size > MAX_FILE_BYTES) return null;
+    return Buffer.from(body.content, 'base64').toString('utf8').slice(0, MAX_FILE_BYTES);
+}
+
+/**
+ * Reads the repo's changes folder again when its newest commit moved since the last read; replaces the repo's work
+ * items with what the folder holds now.
+ *
+ * @param {{ pool: import('pg').Pool, token: string, tenantId: string, repo: { repoId: number, fullName: string }, fetch?: typeof fetch, log?: Function }} input
+ * @returns {Promise<{ read: number, errors: number, unchanged?: true }>} read: items stored; errors: files (or the read) that failed
+ * @throws {GitHubRateLimitError}
+ */
+async function refreshWorkItems({ pool, token, tenantId, repo, fetch: fetchFn = fetch, log = () => {} }) {
+    const { repoId, fullName } = repo;
+    const stored = await withScope(pool, { tenantId }, async (client) => (await client.query(
+        'SELECT work_items_ref FROM tracked_repos WHERE tenant_id = $1 AND repo_id = $2', [tenantId, repoId]
+    )).rows[0]);
+    if (!stored) return { read: 0, errors: 0, unchanged: true };
+
+    let ref;
+    let changes;
+    try {
+        const newest = await githubGet({ token, path: `/repos/${fullName}/commits?path=${encodeURIComponent(CHANGES_DIR)}&per_page=1`, fetch: fetchFn });
+        ref = Array.isArray(newest) && typeof newest[0]?.sha === 'string' && /^[0-9a-f]{40}$/.test(newest[0].sha) ? newest[0].sha : null;
+        if (ref === stored.work_items_ref) return { read: 0, errors: 0, unchanged: true };
+        changes = [];
+        if (ref) {
+            const tree = await githubGet({ token, path: `/repos/${fullName}/git/trees/${ref}?recursive=1`, fetch: fetchFn });
+            if (!tree || !Array.isArray(tree.tree)) throw new GitHubApiError('the tree could not be read', 0);
+            if (tree.truncated) throw new GitHubApiError('the repository tree is too large to list', 0);
+            const byDir = new Map();
+            for (const entry of tree.tree) {
+                const m = entry && entry.type === 'blob' && typeof entry.path === 'string' ? ARTIFACT.exec(entry.path) : null;
+                if (!m) continue;
+                if (!byDir.has(m[1])) {
+                    if (byDir.size >= MAX_CHANGES) continue;
+                    byDir.set(m[1], { dir: m[1] });
+                }
+                byDir.get(m[1])[m[2]] = entry.path;
+            }
+            for (const c of byDir.values()) {
+                const change = { dir: c.dir };
+                for (const artifact of ['intent', 'plan']) {
+                    if (!c[artifact]) continue;
+                    const text = await fileText({ token, fullName, path: c[artifact], ref, fetch: fetchFn });
+                    change[artifact] = text === null ? '' : text;
+                }
+                changes.push(change);
+            }
+        }
+    } catch (err) {
+        if (err instanceof GitHubRateLimitError || !(err instanceof GitHubApiError)) throw err;
+        const message = `Could not read ${CHANGES_DIR}: ${err.message}`.slice(0, ERROR_MAX);
+        await withScope(pool, { tenantId }, (client) => client.query(
+            'UPDATE tracked_repos SET work_items_error = $3 WHERE tenant_id = $1 AND repo_id = $2', [tenantId, repoId, message]
+        ));
+        log(`${fullName}: ${message}`, { level: 'warn', tenantId, repo: fullName, err });
+        return { read: 0, errors: 1 };
+    }
+
+    const { items, errors } = buildWorkItems(changes);
+    const errorText = errors.length ? errors.map((e) => e.message).join('; ').slice(0, ERROR_MAX) : null;
+    await withScope(pool, { tenantId }, async (client) => {
+        await client.query('DELETE FROM work_items WHERE tenant_id = $1 AND repo_id = $2 AND NOT (item_key = ANY($3))', [tenantId, repoId, items.map((i) => i.key)]);
+        for (const i of items) {
+            await client.query(
+                `INSERT INTO work_items (tenant_id, item_key, kind, parent_key, repo_id, title, status, source_key, path, ref, synced_at)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, now())
+                 ON CONFLICT (tenant_id, item_key) DO UPDATE SET kind = EXCLUDED.kind, parent_key = EXCLUDED.parent_key, repo_id = EXCLUDED.repo_id,
+                     title = EXCLUDED.title, status = EXCLUDED.status, source_key = EXCLUDED.source_key, path = EXCLUDED.path, ref = EXCLUDED.ref, synced_at = now()`,
+                [tenantId, i.key, i.kind, i.parent, repoId, i.title, i.status, i.source, i.path, ref]
+            );
+        }
+        await client.query('UPDATE tracked_repos SET work_items_ref = $3, work_items_error = $4 WHERE tenant_id = $1 AND repo_id = $2', [tenantId, repoId, ref, errorText]);
+    });
+    if (errors.length) log(`${fullName}: ${errorText}`, { level: 'warn', tenantId, repo: fullName });
+    return { read: items.length, errors: errors.length };
+}
+
+/**
+ * The tenant's work items with the link to their file on GitHub.
+ *
+ * @param {import('pg').PoolClient} client inside withScope()
+ * @param {string} tenantId
+ * @returns {Promise<Array<{ key: string, kind: string, parent: string|null, title: string, status: string|null, url: string }>>}
+ */
+async function readWorkItems(client, tenantId) {
+    const { rows } = await client.query(
+        `SELECT w.item_key, w.kind, w.parent_key, w.title, w.status, w.path, w.ref, r.full_name
+         FROM work_items w JOIN tracked_repos r ON r.tenant_id = w.tenant_id AND r.repo_id = w.repo_id
+         WHERE w.tenant_id = $1 ORDER BY w.item_key`,
+        [tenantId]
+    );
+    return rows.map((r) => ({
+        key: r.item_key, kind: r.kind, parent: r.parent_key, title: r.title, status: r.status,
+        url: `https://github.com/${r.full_name}/blob/${r.ref}/${r.path}`,
+    }));
+}
+
+/**
+ * The Changes increment's issues (GET /api/tenants/:id/jira-issues?pi=@changes). Members only.
+ *
+ * @param {import('pg').Pool} pool
+ * @param {{ tenantId: string, actorUserId: string }} input
+ * @returns {Promise<object[]>}
+ * @throws {TenantNotFoundError}
+ */
+async function listChangeIssues(pool, { tenantId, actorUserId }) {
+    return withScope(pool, { tenantId }, async (client) => {
+        if (!(await roleOf(client, { tenantId, userId: actorUserId }))) throw new TenantNotFoundError('Tenant not found');
+        return workItemIssues(await readWorkItems(client, tenantId));
+    });
+}
+
+module.exports = { refreshWorkItems, readWorkItems, listChangeIssues, CHANGES_KEY };

@@ -102,7 +102,7 @@ changelog entry by hand outside a `chore(release)` PR.
 
 Deployed to Render per `context/foundation/infrastructure.md`: `render.yaml` builds both the Web Service and the
 Background Worker from the repo root (`npm ci --prefix server`, `node server/web.js`), not `rootDir: server`, which
-would hide `docs/` from the Web Service. Migrations (`server/migrations/001`–`036`, applied by the hand-rolled
+would hide `docs/` from the Web Service. Migrations (`server/migrations/001`–`037`, applied by the hand-rolled
 `lib/migrate.js`) run as each service's `preDeployCommand` under an advisory lock (`test/render-blueprint.test.js`).
 Dependencies, all in `server/package.json`: `pg`, `fastify`, `@fastify/cookie`. Fastify runs with
 `removeAdditional: false, coerceTypes: false`: unknown fields and wrong types are a 400, never silently fixed.
@@ -118,7 +118,7 @@ New rules go into the pure file; the I/O file orchestrates.
 
 **Tenant isolation (RLS).** Every query on an RLS table — the list is `RLS_TABLES` in `lib/scope.js` (memberships,
 invitations, github_installations, tracked_repos, deployments, issue_deployments, flag_sources, flag_source_repos, flag_source_envs, ingest_tokens, flags,
-flag_values, flag_value_history, jira_connections, jira_boards, jira_pis, jira_issues, audit_events, endpoint_tests, jira_access_grants, release_lines, flag_commit_links) — must run inside
+flag_values, flag_value_history, jira_connections, jira_boards, jira_pis, jira_issues, audit_events, endpoint_tests, jira_access_grants, release_lines, flag_commit_links, work_items) — must run inside
 `withScope()`, which sets `app.current_tenant_id`/`app.current_user_id` with transaction-local
 `set_config(..., true)`. An unscoped read returns zero rows; an unscoped write is an RLS error.
 `lib/withscope-guard.js` (`server/test/withscope-guard.test.js`) fails on any `pool.query(...)` in `server/lib/`
@@ -307,7 +307,22 @@ the web service fills once a minute (`sampleStatus()`, web.js); a day is an outa
   Settings → Jira `ReleaseLinkForm()`), read by `extractReleaseLine()` in `lib/jira-model.js` (the lowest of several)
   into the issue's `releaseLine`; the sync keeps `release_lines` (origin `jira`) in step with every issue it read
   (`writeReleaseLines()`) (`server/test/release-lines.test.js`). The repo mode (`changes/CHG-n/release.yaml`, origin
-  `repo`, a pinned copy of the contract's schema) waits for F1 (design-docs/G1.3-PLAN.pl.md).
+  `repo`, a pinned copy of the contract's schema) comes next (design-docs/G1.3-PLAN.pl.md).
+- **Work items from a repo (F1 of the pdi one-flow plan)** — `lib/work-items.js` `refreshWorkItems()`, run by
+  `syncRepo()` after the flags in code: the newest commit touching `docs/project/changes` on the default branch
+  (`commits?path=…&per_page=1`), compared with `tracked_repos.work_items_ref` (migration `037`; unchanged = one
+  request); else its tree and each `<CHG>/intent.md`/`plan.md` (Contents API at that sha, 256 KB, 200 changes), and the
+  repo's rows of `work_items` (RLS; `kind` change/task, `parent_key`, cascade from `tracked_repos`) replaced in one
+  transaction. Parsing is pure (`lib/work-items-model.js`): `parseFrontMatter()` (tf's simple YAML), `checkHeader()`
+  (`change` = folder, `source`/`tasks` keys), the title = intent's first `# ` heading, `planTasks()` (the first body
+  line naming a task: table cells or list text, a task.schema.json status; `dropped` left out). A bad file is recorded
+  in `tracked_repos.work_items_error` (Settings → GitHub, "changes folder: N problems") and only its change is left
+  out; a GitHub failure keeps the stored items; a rate limit is rethrown. The dashboard data appends the increment
+  `{ pi: '@changes', kind: 'change', label: 'Changes (repo)' }` (`CHANGES_KEY`; `currentPi` when there is no Jira),
+  puts the items in `issueStatusIndex` and gives `workItemUrls` (key → the file on GitHub, which `jiraIssueUrl()`
+  prefers); `GET …/jira-issues?pi=@changes` answers `workItemIssues()`: a change as an Epic whose `subtaskKeys` are its
+  tasks (so a commit naming a task counts for the change), tasks as Stories under it (`server/test/work-items.test.js`,
+  `dashboard-contract.test.js`). The ingest's `flags[].itemKeys` (any work item key) is merged with `jiraKeys`.
 - **Webhooks** (`lib/webhooks.js`, migration `013`) — `POST /webhooks/github` (HMAC, `GITHUB_APP_WEBHOOK_SECRET`)
   and `POST /webhooks/jira` (HS256 JWT signed with the Atlassian client secret; a token without `exp` is logged as
   `jira webhook token without exp` and accepted unless `JIRA_WEBHOOK_REQUIRE_EXP=1`, since Atlassian does not
@@ -345,7 +360,7 @@ the web service fills once a minute (`sampleStatus()`, web.js); a day is an outa
 reading it through `loadData()` in a `vm`; `server-test.yml` also runs on `docs/app-*.js` changes for it):
 `deployments`, `flagsMeta`, `flagStates`, `flagStateHistory`, `jiraIndex`, `issueStatusIndex`, `issueDeployments`,
 `flagStatesByComponent`, `flagFreshness`, `componentsOrder` (the tracked repos), `lastSyncedAt`, `jiraBrowseUrl`,
-`releasePlan` (`readReleasePlan()`: `{ mode: 'jira', lines: [{ key, release, title, type, epicKey, epicTitle,
+`workItemUrls` (F1), `releasePlan` (`readReleasePlan()`: `{ mode: 'jira', lines: [{ key, release, title, type, epicKey, epicTitle,
 subtaskKeys, blockedByKeys, dependencyBlocked, featureFlags }], plans: [] }`, every item with a line, from its newest
 synced copy whatever its increment; `plans` = release.yaml objects in the contract's shape, none until the repo mode).
 The `FALLBACK` sample data has the same shape.

@@ -146,6 +146,9 @@ place is one **flag source**:
   (`test`, `qa` or `prod`: map your own names, e.g. `staging` → `qa`, `production` → `prod`), `state` (`on`, `off` or
   `partial` — on for some users, with an optional `rollout` percentage) and an optional `changedAt` (ISO 8601) when
   you send late; it must be within the last 7 days, and an older value never replaces a newer one.
+- `flags` (optional) describes flags of this message: `description`, and the work items the flag gates in `itemKeys`
+  (any origin: Jira issues like `ABC-123`, or changes and tasks kept in a repo like `CHG-12`, `TSK-57`). The older
+  `jiraKeys` is the same list under its first name; both may be sent and are merged.
 - **Full state:** a flag the source no longer lists in an environment the message covers is marked removed and
   disappears from the dashboard (it comes back when sent again). `environments` names the covered environments
   (default: those in `observations`); `"environments": ["prod"]` with no observations means "no flags left in prod".

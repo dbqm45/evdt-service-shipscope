@@ -1,4 +1,6 @@
 const { withScope } = require('./scope');
+const { readWorkItems } = require('./work-items');
+const { CHANGES_KEY, CHANGES_LABEL, workItemIssues } = require('./work-items-model');
 const { roleOf, TenantNotFoundError } = require('./tenants');
 const { readDashboardFlags } = require('./flags');
 const { readDashboardJira } = require('./jira-sync');
@@ -96,7 +98,7 @@ function shortRef(ref) {
  * @param {{ tenantId: string, actorUserId: string }} input
  * @returns {Promise<{ deployments: object[], flagsMeta: object, flagStates: object, jiraIndex: { currentPi: string|null, pis: object[] },
  *   flagStateHistory: [], componentsOrder: object[], issueStatusIndex: object, issueDeployments: object,
- *   lastSyncedAt: string|null, jiraBrowseUrl: string|null, releasePlan: { mode: string, lines: object[], plans: object[] } }>}
+ *   lastSyncedAt: string|null, jiraBrowseUrl: string|null, releasePlan: { mode: string, lines: object[], plans: object[] }, workItemUrls: Object<string, string> }>}
  * @throws {TenantNotFoundError} the user isn't a member
  */
 async function buildDashboardData(pool, { tenantId, actorUserId }) {
@@ -141,6 +143,17 @@ async function buildDashboardData(pool, { tenantId, actorUserId }) {
 
         const { jiraIndex, issueStatusIndex } = await readDashboardJira(client, { tenantId });
         const releasePlan = await readReleasePlan(client, tenantId);
+        // Work items from the repos (F1): their own increment, their keys in the status index, links to their files.
+        const workItems = await readWorkItems(client, tenantId);
+        const workItemUrls = {};
+        if (workItems.length) {
+            jiraIndex.pis.push({ pi: CHANGES_KEY, kind: 'change', label: CHANGES_LABEL, file: 'changes.json', sprints: [] });
+            if (!jiraIndex.currentPi) jiraIndex.currentPi = CHANGES_KEY;
+            for (const issue of workItemIssues(workItems)) {
+                if (!issueStatusIndex[issue.key]) issueStatusIndex[issue.key] = { pi: CHANGES_KEY, statusCategory: issue.statusCategory };
+            }
+            for (const w of workItems) workItemUrls[w.key] = w.url;
+        }
         const { flagsMeta, flagStates, flagStatesByComponent, flagFreshness, flagStateHistory, coveredComponents } = await readDashboardFlags(client, {
             tenantId, componentOf: (repoId) => names.get(repoId),
         });
@@ -174,6 +187,7 @@ async function buildDashboardData(pool, { tenantId, actorUserId }) {
             lastSyncedAt: synced.length ? synced[0].toISOString() : null,
             jiraBrowseUrl,
             releasePlan,
+            workItemUrls,
         };
     });
 }

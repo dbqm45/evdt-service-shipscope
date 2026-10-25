@@ -470,6 +470,15 @@ test('ingest: descriptions and Jira keys of many flags in one message; a field l
     meta = (await dashboard()).flagsMeta;
     assert.deepStrictEqual([meta.f0.description, meta.f0.jiraKeys], ['Flag 0 "quoted"', []], 'only the Jira keys were sent');
     assert.deepStrictEqual([meta.f1.description, meta.f1.jiraKeys], ['', ['ABC-2']], 'only the description was sent (cleared)');
+
+    // F1: `itemKeys` names work items of any origin (CHG/TSK from a repo, or Jira keys), merged with `jiraKeys`.
+    res = await ingest(token, { observations: [obs('f2', 'prod', 'on')], flags: [{ key: 'f2', itemKeys: ['TSK-57', 'CHG-12'], jiraKeys: ['ABC-3', 'TSK-57'] }] });
+    assert.strictEqual(res.statusCode, 200, res.body);
+    assert.deepStrictEqual((await dashboard()).flagsMeta.f2.jiraKeys, ['ABC-3', 'CHG-12', 'TSK-57']);
+    res = await ingest(token, { observations: [obs('f3', 'prod', 'on')], flags: [{ key: 'f3', itemKeys: ['TSK-58'] }] });
+    assert.deepStrictEqual((await dashboard()).flagsMeta.f3.jiraKeys, ['TSK-58'], 'itemKeys alone');
+    assert.strictEqual((await ingest(token, { observations: [obs('f3', 'prod', 'on')], flags: [{ key: 'f3', itemKeys: ['tsk 58'] }] })).statusCode, 400);
+    assert.strictEqual((await ingest(token, { observations: [obs('f3', 'prod', 'on')], flags: [{ key: 'f3', workItems: ['TSK-58'] }] })).statusCode, 400, 'unknown fields stay a 400');
 });
 
 test('RLS: every table with a tenant_id forces row-level security, and flags are invisible across tenants', async (t) => {

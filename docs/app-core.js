@@ -53,6 +53,11 @@ let state = null;
 /** A Jira issue's link on the tenant's own site (`state.jiraBrowseUrl`), or null — no Jira connected yet, or the
  *  sample data — and the key is shown unlinked. */
 function jiraIssueUrl(key){
+    // A work item kept in a repo (F1: CHG/TSK) links to its file there, whether or not Jira is connected.
+    const repoUrl = state && state.workItemUrls ? state.workItemUrls[key] : null;
+    if (repoUrl) {
+        return repoUrl;
+    }
     const base = state && state.jiraBrowseUrl;
     return base ? `${base}/${key}` : null;
 }
