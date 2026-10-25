@@ -52,7 +52,7 @@ Każdy punkt to osobny PR, wdrażalny sam; `[ ]` = do zrobienia, `[x]` = zrobion
 
 ### 4. Endpoint z flagami
 
-- [ ] Wspólny moduł połączeń wychodzących (ochrona przed SSRF: https:443, wszystkie adresy z DNS, przypięte IP,
+- [x] Wspólny moduł połączeń wychodzących (ochrona przed SSRF: https:443, wszystkie adresy z DNS, przypięte IP,
   bez przekierowań, limity czasu i rozmiaru po dekompresji) z testami listy adresów zakazanych.
 - [ ] Źródło typu endpoint: adres per środowisko, token w `secret-box` z zakresem (tenant, źródło, cel),
   mapowanie jak w adapterze, „Testuj" zwracający tylko sparsowane flagi, podpis żądań per tenant.

@@ -243,6 +243,13 @@ not stripped or coerced).
   own scope, under the same advisory locks as the periodic syncs. Jira webhooks are registered by the worker per
   tenant with the `manage:jira-webhook` scope (filtered to the selected boards' projects, refreshed before
   Atlassian's 30-day expiry); a failure is shown in settings and never fails the sync.
+- **Calls to customers' addresses** (`lib/safe-fetch.js`, for flags endpoints): https on port 443 only, no user
+  info in the URL, no `localhost`/single-label/`.internal`/`.local` names. The name is resolved once and every address
+  it resolves to must be public -- private, loopback, link-local (cloud metadata `169.254.169.254`), carrier NAT,
+  multicast, reserved and documentation ranges are refused, IPv4-mapped and NAT64 IPv6 forms included
+  (`forbiddenAddress()`) -- and the connection goes to that checked address (the certificate is still checked
+  against the name), so DNS rebinding cannot redirect it. A redirect is an error, the whole request has a time
+  limit (10 s) and the body a size limit counted after decompression (1 MB), and only the caller's headers are sent.
 - **Deleting a workspace**: admins only, with the name typed back (checked before anything outside ShipScope is
   touched, and again in the deleting transaction, which locks the tenant row). One `DELETE FROM tenants` removes every
   row of it (all tenant tables cascade; `server/test/tenant-delete.test.js` checks each one is empty afterwards and

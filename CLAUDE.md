@@ -196,6 +196,9 @@ success for 3 × `SYNC_INTERVAL_MINUTES` + 5 minutes, or an undrained webhook qu
   only when that ref differs from `flag_source_envs.last_ref`, under `lockTenantFlags()`, through
   `applyObservations()` (complete, `changedAt` = the deployment's time). A missing or unreadable file records the
   environment's `last_error` and keeps the flags; a rate limit is rethrown (`server/test/code-flags.test.js`).
+  Every request to an address a customer gives goes through `safeFetch()` (`lib/safe-fetch.js`): https:443, every
+  DNS answer public (`forbiddenAddress()`, a `net.BlockList`), the connection pinned to the checked address, no
+  redirects, a time limit and a size limit after decompression (`server/test/safe-fetch.test.js`, a local TLS server).
   Setting one up (`lib/flag-discovery.js`, admin, read only): `GET …/github/repos/:repoId/flag-files` proposes files
   named like flags (`flagFileCandidates()`: json/yaml/ts, outside tests/builds, a file per environment folded into one
   `{env}` template with `envNames`; never `.env`/`.properties`) at the latest prod deployment (else any, else `HEAD`),
