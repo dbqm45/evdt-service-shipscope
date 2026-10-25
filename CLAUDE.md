@@ -96,7 +96,7 @@ changelog entry by hand outside a `chore(release)` PR.
 
 Deployed to Render per `context/foundation/infrastructure.md`: `render.yaml` builds both the Web Service and the
 Background Worker from the repo root (`npm ci --prefix server`, `node server/web.js`), not `rootDir: server`, which
-would hide `docs/` from the Web Service. Migrations (`server/migrations/001`–`021`, applied by the hand-rolled
+would hide `docs/` from the Web Service. Migrations (`server/migrations/001`–`022`, applied by the hand-rolled
 `lib/migrate.js`) run as each service's `preDeployCommand` under an advisory lock (`test/render-blueprint.test.js`).
 Dependencies, all in `server/package.json`: `pg`, `fastify`, `@fastify/cookie`. Fastify runs with
 `removeAdditional: false, coerceTypes: false`: unknown fields and wrong types are a 400, never silently fixed.
@@ -248,8 +248,11 @@ reading it through `loadData()` in a `vm`; `server-test.yml` also runs on `docs/
 `deployments`, `flagsMeta`, `flagStates`, `flagStateHistory`, `jiraIndex`, `issueStatusIndex`, `issueDeployments`,
 `flagStatesByComponent`, `flagFreshness`, `componentsOrder` (the tracked repos), `lastSyncedAt`, `jiraBrowseUrl`. The `FALLBACK` sample data has the same shape.
 
-- **Deployment record**: `component`, environment (`test`/`qa`/`prod`; `mapEnvironment()` maps by substring,
-  `production` → `prod`, `dev` → `test`, `preprod` never `prod`, anything else is skipped), status, `deployedAt`,
+- **Deployment record**: `component`, environment (`test`/`qa`/`prod`; `environmentFor()`: the repo's
+  `tracked_repos.env_map` first — migration `022`, names without case, `skip`, set by
+  `PUT …/github/repos/:repoId/environments`, which syncs the repo again from the start when it changes — else
+  `mapEnvironment()` by substring, `production` → `prod`, `dev` → `test`, `preprod` never `prod`, anything else is
+  skipped; the sync keeps the names it saw in `seen_environments` for Settings), status, `deployedAt`,
   `version`, `relatedIssues` (Jira keys from commit messages in the compare range), `workflowRunUrl`, `durationMs`
   (between the first and last status, ignoring GitHub's `inactive`), `manual`, `commitUrl`, `deployedBy` (display
   name, else login), `rollback: { toRef }` (GitHub's compare with the previous deploy on that env says `behind`).

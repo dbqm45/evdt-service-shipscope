@@ -146,6 +146,34 @@ test('sync: a deploy that moves an environment back to an older commit is marked
     ]);
 });
 
+test('sync: a repo\'s own environment map decides first; the names seen are kept; a changed map syncs from the start', async (t) => {
+    const web = {
+        deployments: [
+            { id: 303, environment: 'preprod', sha: sha(33), created_at: at(10) },
+            { id: 302, environment: 'Production-EU', sha: sha(32), created_at: at(20) },
+            { id: 301, environment: 'staging', sha: sha(31), created_at: at(30) },
+        ],
+        statuses: { 301: [status('success', 29)], 302: [status('success', 19)], 303: [status('success', 9)] },
+        commits: {},
+        compare: () => ({ status: 'ahead', commits: [] }),
+    };
+    const { app, alice, tenantId, sync, rows } = await setup(t, { 'acme/web': web, 'acme/api': emptyRepo() });
+    await sync();
+    assert.deepStrictEqual((await rows('SELECT deployment_id, environment FROM deployments ORDER BY deployment_id')).map((d) => [Number(d.deployment_id), d.environment]),
+        [[302, 'prod']], 'the default rule: staging and preprod are skipped');
+    assert.deepStrictEqual((await rows('SELECT seen_environments FROM tracked_repos WHERE repo_id = 1'))[0].seen_environments, ['staging', 'Production-EU', 'preprod']);
+
+    const put = (envMap) => app.inject({ method: 'PUT', url: `/tenants/${tenantId}/github/repos/1/environments`, cookies: { sid: alice }, payload: { envMap } });
+    assert.strictEqual((await put({ staging: 'staging' })).statusCode, 400, 'only test, qa, prod or skip');
+    assert.deepStrictEqual((await put({ Staging: 'qa', 'production-eu': 'skip' })).json(), { repoId: 1, envMap: { Staging: 'qa', 'production-eu': 'skip' }, resynced: true });
+    assert.strictEqual((await put({ Staging: 'qa', 'production-eu': 'skip' })).json().resynced, false, 'the same map again: no new sync');
+    await sync();
+    assert.deepStrictEqual((await rows('SELECT deployment_id, environment FROM deployments ORDER BY deployment_id')).map((d) => [Number(d.deployment_id), d.environment]),
+        [[301, 'qa'], [302, 'prod']], 'a name the map lists, whatever its case; what was stored keeps its environment');
+    const listed = (await app.inject({ method: 'GET', url: `/tenants/${tenantId}/github`, cookies: { sid: alice } })).json().repos.find((r) => r.repoId === 1);
+    assert.deepStrictEqual([listed.envMap, listed.seenEnvironments], [{ Staging: 'qa', 'production-eu': 'skip' }, ['staging', 'Production-EU', 'preprod']]);
+});
+
 test('sync: one failing repo records its error and the others still sync', async (t) => {
     const web = { ...emptyRepo(), fail: 500 };
     const api = {

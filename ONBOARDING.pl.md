@@ -9,7 +9,8 @@ Co zrobić, w jakiej kolejności, żeby dane trafiły do workspace'u ShipScope. 
 statusami dla każdego środowiska, na które wdraża (`test`/`qa`/`prod`). ShipScope czyta historię wdrożeń wyłącznie
 przez GitHub Deployments API. W GitHub Actions job z `environment: test` (albo `qa`, `prod`) tworzy go przy każdym
 uruchomieniu. Nazwy środowisk są dopasowywane luźno (`production` → `prod`, `dev` → `test`, `preprod` to nie
-`prod`); inne (`staging`, `uat`) są pomijane.
+`prod`); inne (`staging`, `uat`) są pomijane, chyba że je zmapujesz: w Settings → GitHub ołówek przy repozytorium
+pokazuje dotąd widziane środowiska GitHuba, każde z wyborem test, qa, prod albo pomiń (skip).
 
 ## Zakładanie workspace'u
 

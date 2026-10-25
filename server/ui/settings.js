@@ -537,6 +537,56 @@ function TrackPicker(installations, installationRepos){
     });
 }
 
+/** The server's default rule for a GitHub environment name (lib/deployment-logic.js mapEnvironment()), for the form. */
+function defaultEnvOf(name){
+    const e = String(name || '').toLowerCase().trim();
+    if (/pre[-_]?prod/.test(e)) {
+        return null;
+    }
+    if (e.includes('prod')) {
+        return 'prod';
+    }
+    if (e.includes('qa')) {
+        return 'qa';
+    }
+    return e.includes('test') || e.includes('dev') ? 'test' : null;
+}
+
+/** One row per GitHub environment the sync has seen (or the map names): auto (the default rule), test, qa, prod, skip. */
+function EnvironmentMapFields(r){
+    const map = r.envMap || {};
+    const names = [...(r.seenEnvironments || [])];
+    for (const name of Object.keys(map)) {
+        if (!names.some((n) => n.toLowerCase() === name.toLowerCase())) {
+            names.push(name);
+        }
+    }
+    if (!names.length) {
+        return html`<p class="settings-row-meta">Environments: none seen yet; they show up here after the first deployments are synced.</p>`;
+    }
+    const chosen = (name) => {
+        const key = Object.keys(map).find((k) => k.toLowerCase() === name.toLowerCase());
+        return key ? map[key] : 'auto';
+    };
+    return html`<fieldset class="settings-envs"><legend>GitHub environments</legend>${names.map((name, i) => {
+        const auto = defaultEnvOf(name);
+        const options = [['auto', `auto (${auto || 'skipped'})`], ['test', 'test'], ['qa', 'qa'], ['prod', 'prod'], ['skip', 'skip']];
+        return html`<label class="inline"><input type="hidden" name="envName${i}" value="${name}">${name} <select name="envChoice${i}">${options.map(([value, label]) => html`<option value="${value}" ${value === chosen(name) ? raw('selected') : ''}>${label}</option>`)}</select></label>`;
+    })}</fieldset>`;
+}
+
+/** The environment map from the form: only the names not left on auto. */
+function envMapOf(values){
+    const map = {};
+    for (let i = 0; values[`envName${i}`] !== undefined; i += 1) {
+        const choice = values[`envChoice${i}`];
+        if (choice && choice !== 'auto') {
+            map[values[`envName${i}`]] = choice;
+        }
+    }
+    return map;
+}
+
 // Whether a repo uses feature flags (tracked_repos.flag_stance). A repo some flag source covers is tracked anyway;
 // the dashboard then reads its flags, and "no flags" means deployed code is live.
 const FLAG_STANCES = { unknown: 'not set', none: 'none' };
@@ -576,9 +626,10 @@ function renderGitHub({ enabled, webhooks, github, installationRepos, admin, pic
         if (!admin || editing !== r.repoId) {
             return row;
         }
-        return html`${row}<tr class="settings-edit-row"><td colspan="6"><form class="settings-form" data-action="save-repo-settings" data-repo-id="${r.repoId}" data-flag-stance="${r.flagStance || 'unknown'}">
+        return html`${row}<tr class="settings-edit-row"><td colspan="6"><form class="settings-form" data-action="save-repo-settings" data-repo-id="${r.repoId}" data-flag-stance="${r.flagStance || 'unknown'}" data-env-map="${JSON.stringify(r.envMap || {})}">
             <label>Version file <input name="versionFile" placeholder="e.g. trigger.properties" value="${r.versionFile || ''}" maxlength="200"></label>
             <label>Paths not counted as drift (one per line) <textarea name="driftIgnorePaths" placeholder=".github/&#10;README.md">${(r.driftIgnorePaths || []).join('\n')}</textarea></label>
+            ${EnvironmentMapFields(r)}
             <label>Feature flags <select name="flagStance">${Object.entries(FLAG_STANCE_CHOICES).map(([value, label]) => html`<option value="${value}" ${value === (r.flagStance || 'unknown') ? raw('selected') : ''}>${label}</option>`)}</select></label>
             <button type="submit" class="btn btn-primary">Save</button>
             <button type="button" class="btn" data-action="edit-repo" data-repo-id="${r.repoId}">Cancel</button></form></td></tr>`;
@@ -1126,6 +1177,10 @@ const actions = {
         });
         if (values.flagStance && values.flagStance !== data.flagStance) {
             await api('PUT', tenantPath(`/github/repos/${data.repoId}/flag-stance`), { flagStance: values.flagStance });
+        }
+        const envMap = envMapOf(values);
+        if (values.envName0 !== undefined && JSON.stringify(envMap) !== (data.envMap || '{}')) {
+            await api('PUT', tenantPath(`/github/repos/${data.repoId}/environments`), { envMap });
         }
         settingsState.editingRepo = null;
         return { section: 'github', ok: 'Saved; drift is recomputed with the next sync.' };

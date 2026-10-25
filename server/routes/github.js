@@ -1,7 +1,7 @@
 const crypto = require('crypto');
 const { listInstallationRepos } = require('../lib/github-app');
 const {
-    listConnections, trackedRepoIdsForAdmin, trackRepo, untrackRepo, updateRepoSettings, setRepoFlagStance, unlinkInstallation,
+    listConnections, trackedRepoIdsForAdmin, trackRepo, untrackRepo, updateRepoSettings, setRepoFlagStance, setRepoEnvironments, unlinkInstallation,
 } = require('../lib/github-connections');
 
 const INSTALL_COOKIE = 'gh_install';
@@ -161,6 +161,33 @@ function registerGitHubRoutes(app, ctx) {
     }, async (request, reply) => {
         const updated = await setRepoFlagStance(pool, {
             tenantId: request.params.tenantId, actorUserId: request.user.id, repoId: Number(request.params.repoId), flagStance: request.body.flagStance,
+        });
+        if (!updated) return reply.code(404).send({ error: 'That repository is not tracked' });
+        return updated;
+    });
+
+    // Which GitHub environment is test, qa or prod (or skipped) for this repo; unlisted names keep the default rule.
+    app.put('/tenants/:tenantId/github/repos/:repoId/environments', {
+        preHandler: requireUser,
+        schema: {
+            params: repoParams,
+            body: {
+                type: 'object',
+                required: ['envMap'],
+                additionalProperties: false,
+                properties: {
+                    envMap: {
+                        type: 'object',
+                        maxProperties: 50,
+                        propertyNames: { type: 'string', minLength: 1, maxLength: 100, pattern: '^[^\\u0000-\\u001f]+$' },
+                        additionalProperties: { type: 'string', enum: ['test', 'qa', 'prod', 'skip'] },
+                    },
+                },
+            },
+        },
+    }, async (request, reply) => {
+        const updated = await setRepoEnvironments(pool, {
+            tenantId: request.params.tenantId, actorUserId: request.user.id, repoId: Number(request.params.repoId), envMap: request.body.envMap,
         });
         if (!updated) return reply.code(404).send({ error: 'That repository is not tracked' });
         return updated;

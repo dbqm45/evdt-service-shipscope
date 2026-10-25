@@ -51,7 +51,7 @@ async function linkInstallation(pool, { tenantId, actorUserId, installation }) {
  *
  * @param {import('pg').Pool} pool
  * @param {{ tenantId: string, actorUserId: string }} input
- * @returns {Promise<{ installations: Array<{ installationId: number, accountLogin: string, accountType: string }>, repos: Array<{ repoId: number, fullName: string, installationId: number, lastSyncedAt: Date|null, lastSyncError: string|null, rateLimitedUntil: Date|null, deployments: number, versionFile: string|null, flagStance: 'unknown'|'none', driftIgnorePaths: string[] }> }>}
+ * @returns {Promise<{ installations: Array<{ installationId: number, accountLogin: string, accountType: string }>, repos: Array<{ repoId: number, fullName: string, installationId: number, lastSyncedAt: Date|null, lastSyncError: string|null, rateLimitedUntil: Date|null, deployments: number, versionFile: string|null, flagStance: 'unknown'|'none', envMap: Record<string, string>, seenEnvironments: string[], driftIgnorePaths: string[] }> }>}
  */
 async function listConnections(pool, { tenantId, actorUserId }) {
     return withScope(pool, { tenantId }, async (client) => {
@@ -61,7 +61,7 @@ async function listConnections(pool, { tenantId, actorUserId }) {
             [tenantId]
         );
         const { rows: repos } = await client.query(
-            `SELECT r.repo_id, r.full_name, r.installation_id, r.last_synced_at, r.last_sync_error, r.version_file, r.drift_ignore_paths, r.flag_stance,
+            `SELECT r.repo_id, r.full_name, r.installation_id, r.last_synced_at, r.last_sync_error, r.version_file, r.drift_ignore_paths, r.flag_stance, r.env_map, r.seen_environments,
                     CASE WHEN i.rate_limited_until > now() THEN i.rate_limited_until END AS rate_limited_until,
                     (SELECT count(*) FROM deployments d WHERE d.tenant_id = r.tenant_id AND d.repo_id = r.repo_id)::int AS deployments
              FROM tracked_repos r
@@ -81,6 +81,8 @@ async function listConnections(pool, { tenantId, actorUserId }) {
                 deployments: r.deployments,
                 versionFile: r.version_file,
                 flagStance: r.flag_stance,
+                envMap: r.env_map,
+                seenEnvironments: r.seen_environments,
                 driftIgnorePaths: r.drift_ignore_paths,
             })),
         };
@@ -168,6 +170,31 @@ async function updateRepoSettings(pool, { tenantId, actorUserId, repoId, version
 }
 
 /**
+ * A tracked repo's environment map (migration 022): GitHub environment name -> test, qa, prod or skip; names it
+ * doesn't list keep the default rule. A changed map syncs the repo's deployments again from the start, so ones the
+ * old map skipped are picked up; ones already stored keep their environment. Admins only.
+ *
+ * @param {import('pg').Pool} pool
+ * @param {{ tenantId: string, actorUserId: string, repoId: number, envMap: Record<string, 'test'|'qa'|'prod'|'skip'> }} input
+ * @returns {Promise<{ repoId: number, envMap: Record<string, string>, resynced: boolean }|null>} null if it isn't tracked
+ */
+async function setRepoEnvironments(pool, { tenantId, actorUserId, repoId, envMap }) {
+    return withScope(pool, { tenantId }, async (client) => {
+        await assertAdmin(client, { tenantId, userId: actorUserId });
+        const { rows: [current] } = await client.query('SELECT env_map FROM tracked_repos WHERE tenant_id = $1 AND repo_id = $2 FOR UPDATE', [tenantId, repoId]);
+        if (!current) return null;
+        const sorted = (m) => JSON.stringify(Object.keys(m).sort().map((k) => [k.toLowerCase(), m[k]]));
+        const changed = sorted(current.env_map || {}) !== sorted(envMap);
+        await client.query(
+            `UPDATE tracked_repos SET env_map = $3, deployments_cursor = CASE WHEN $4 THEN 0 ELSE deployments_cursor END
+             WHERE tenant_id = $1 AND repo_id = $2`,
+            [tenantId, repoId, envMap, changed]
+        );
+        return { repoId, envMap, resynced: changed };
+    });
+}
+
+/**
  * Records whether a tracked repo uses feature flags (`tracked_repos.flag_stance`). Admins only.
  *
  * @param {import('pg').Pool} pool
@@ -209,6 +236,7 @@ module.exports = {
     untrackRepo,
     updateRepoSettings,
     setRepoFlagStance,
+    setRepoEnvironments,
     unlinkInstallation,
     InstallationNotFoundError,
     InstallationTakenError,

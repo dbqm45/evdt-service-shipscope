@@ -9,7 +9,8 @@ value is computed is in `FAQ.md`.
 environment it deploys to (`test`/`qa`/`prod`). ShipScope reads deployment history only through the GitHub
 Deployments API. In GitHub Actions a job with `environment: test` (or `qa`, `prod`) creates one each time it runs.
 Environment names are matched loosely (`production` → `prod`, `dev` → `test`, `preprod` is not `prod`); anything
-else (`staging`, `uat`) is skipped.
+else (`staging`, `uat`) is skipped, unless you map it: in Settings → GitHub, the pencil on a repository lists the
+GitHub environments seen so far, each with a choice of test, qa, prod or skip.
 
 ## Setting up a workspace
 
