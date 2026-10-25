@@ -566,6 +566,52 @@ test('settings page: actions send what the API expects, then reload their sectio
     await ui.runAction('save-source', form([['name', 'Web code'], ['priority', '0'], ['repoId', '101'], ['file', 'new.yaml'], ['path', ''], ['prefix', 'ff_']], { sourceId: 's7', origin: 'code' }, 'flags'));
     assert.deepStrictEqual(calls[0].body, { name: 'Web code', kind: 'build', priority: 0, repoIds: [101], code: { file: 'new.yaml', keys: ['a'], envNames: { prod: 'production' }, prefix: 'ff_' } });
 
+    // Reading flags from code with help: find the files, use one (its env names come along), preview, then add.
+    const repos = [{ repoId: 101, fullName: 'acme/web' }];
+    const codeForm = (fields) => form([['name', 'Web flags'], ['repoId', '101'], ['file', ''], ['path', ''], ['prefix', ''], ...fields], {}, 'flags');
+    const found = { ref: 'a'.repeat(40), truncated: false, candidates: [
+        { file: 'config/flags.{env}.json', envNames: { prod: 'production' }, path: 'features', flags: { newCheckout: { state: 'on' } }, readFrom: 'config/flags.production.json' },
+        { file: 'ui/feature-flags.json', error: 'ui/feature-flags.json: flag dbUrl is not on, off or a rollout percentage', readFrom: 'ui/feature-flags.json' },
+    ] };
+    const preview = [{ env: 'prod', ref: 'b'.repeat(40), file: 'config/flags.production.json', flags: { newCheckout: { state: 'on' }, beta: { state: 'partial', rollout: 30 } } },
+        { env: 'qa', ref: 'c'.repeat(40), file: 'config/flags.qa.json', error: 'config/flags.qa.json is not in acme/web at cccccccccccc' }];
+    const { fn: wizardFetch, calls: wizardCalls } = fakeFetch({
+        [`GET ${base}/github/repos/101/flag-files`]: found,
+        [`POST ${base}/github/repos/101/flag-preview`]: { envs: preview },
+        [`POST ${base}/flag-sources`]: { source: { id: 's8' }, token: null },
+    });
+    global.fetch = wizardFetch;
+    ui.settingsState.codeWizard = { draft: {}, found: null, preview: null };
+    await ui.runAction('find-flag-files', { dataset: {}, form: codeForm([]), closest: () => ({ id: 'flags' }) });
+    assert.deepStrictEqual(wizardCalls.map((c) => [c.method, c.url]), [['GET', `${base}/github/repos/101/flag-files`]]);
+    let page = str(ui.renderSourcesPage({ sources: [], repos, admin: true, once: {}, origin: 'https://s', wizard: ui.settingsState.codeWizard }));
+    assert.match(page, /the deployed commit aaaaaaaaaaaa/);
+    assert.match(page, /<code>config\/flags.\{env\}.json<\/code> · flags under <code>features<\/code>[\s\S]*1 flag\(s\): <span class="mono">newCheckout on<\/span>[\s\S]*data-action="use-flag-file" data-index="0"/);
+    assert.match(page, /flag dbUrl is not on, off/);
+    assert.doesNotMatch(page, /data-index="1"/, 'nothing to use in a file that does not read');
+    await ui.runAction('use-flag-file', { dataset: { index: '0' }, closest: () => ({ id: 'flags' }) });
+    page = str(ui.renderSourcesPage({ sources: [], repos, admin: true, once: {}, origin: 'https://s', wizard: ui.settingsState.codeWizard }));
+    assert.match(page, /name="file" required maxlength="200" placeholder="config\/flags.\{env\}.json" value="config\/flags.\{env\}.json"/);
+    assert.match(page, /name="path" maxlength="100" placeholder="features" value="features"/);
+    assert.match(page, /name="name" required maxlength="100" placeholder="e.g. Web flags" value="Web flags"/, 'the name typed before stays');
+
+    const filled = [['file', 'config/flags.{env}.json'], ['path', 'features']];
+    wizardCalls.length = 0;
+    await ui.runAction('preview-code-source', { dataset: {}, form: codeForm(filled), closest: () => ({ id: 'flags' }) });
+    assert.deepStrictEqual(wizardCalls[0].body, { code: { file: 'config/flags.{env}.json', envNames: { prod: 'production' }, path: 'features' } }, 'the proposed environment names come along');
+    page = str(ui.renderSourcesPage({ sources: [], repos, admin: true, once: {}, origin: 'https://s', wizard: ui.settingsState.codeWizard }));
+    assert.match(page, /<span class="state-tag ok">prod<\/span> <code>config\/flags.production.json<\/code>[\s\S]*2 flag\(s\): <span class="mono">newCheckout on, beta 30%<\/span>/);
+    assert.match(page, /<span class="state-tag fail">qa<\/span>[\s\S]*is not in acme\/web at cccccccccccc/);
+    wizardCalls.length = 0;
+    await ui.runAction('create-code-source', codeForm(filled));
+    assert.deepStrictEqual(wizardCalls[0].body, { name: 'Web flags', kind: 'build', origin: 'code', repoIds: [101], code: { file: 'config/flags.{env}.json', envNames: { prod: 'production' }, path: 'features' } });
+    assert.deepStrictEqual(ui.settingsState.codeWizard, { draft: {}, found: null, preview: null }, 'added: the helper starts over');
+    wizardCalls.length = 0;
+    await ui.runAction('preview-code-source', { dataset: {}, form: codeForm([]), closest: () => ({ id: 'flags' }) });
+    assert.deepStrictEqual(wizardCalls, [], 'no file: nothing asked');
+    assert.match(ui.settingsState.messages.flags.text, /Name the file to preview/);
+    global.fetch = fn;
+
     // Deleting the workspace: asks first, sends the typed name, then leaves for / (another workspace, or /start).
     global.location = { pathname: `/t/${TENANT}/settings`, assign: (url) => { global.location.assigned = url; } };
     global.confirm = () => false;

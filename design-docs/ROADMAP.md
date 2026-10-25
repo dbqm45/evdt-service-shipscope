@@ -44,9 +44,10 @@ Każdy punkt to osobny PR, wdrażalny sam; `[ ]` = do zrobienia, `[x]` = zrobion
   `changedAt` = czas wdrożenia; brak pliku = błąd, nie usunięcie.
 - [x] Parsery z `adapters/flags/lib.js` w izolowanym wątku (`worker_threads`, limity pamięci, timeout), limity
   rozmiaru, aliasów i głębokości; komunikaty błędów bez wartości; wymagany prefiks albo lista kluczy.
-- [ ] Automatyczne wykrywanie plików flag w repozytorium i propozycja do potwierdzenia.
+- [x] Automatyczne wykrywanie plików flag w repozytorium i propozycja do potwierdzenia.
 - [x] Jawna mapa nazw środowisk per repozytorium (zamiast samego `mapEnvironment()`).
-- [ ] Kreator setupu: karta per repozytorium (środowiska, flagi, mapowanie) z podglądem przed zapisem.
+- [ ] Kreator setupu: karta per repozytorium (środowiska, flagi, mapowanie) z podglądem przed zapisem. Częściowo:
+  wykrywanie i podgląd są w Settings → Sources, mapa środowisk w Settings → GitHub; brakuje jednej karty łączącej je.
 - [x] Reguła w `scripts/lib/module-boundaries.js`: serwer może wymagać tylko parserów adaptera.
 
 ### 4. Endpoint z flagami

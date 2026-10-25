@@ -146,3 +146,8 @@
 .settings-envs legend { float: left; padding: 0; margin-right: 2px; }
 .settings-envs-state { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 6px 0; }
 .settings-token { display: block; margin-top: 3px; }
+
+/* "Read flags from code": the files found in a repository and the preview of a reading. */
+.settings-wizard { margin: 10px 0 14px; padding: 10px 12px; border: 1px solid var(--line, rgba(127, 127, 127, 0.25)); border-radius: 8px; }
+.settings-list { list-style: none; margin: 6px 0 0; padding: 0; display: grid; gap: 8px; }
+.settings-list li { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
