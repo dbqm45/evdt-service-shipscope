@@ -80,7 +80,7 @@ test('an endpoint source: its token is sealed and never returned, it takes no in
     assert.deepStrictEqual([source.origin, source.kind, source.hasEndpointToken, source.endpoint], ['endpoint', 'runtime', true, { urls: { prod: PROD, qa: QA }, path: 'features' }]);
     assert.ok(!res.body.includes('cust-secret-1'));
     const [{ endpoint_token_enc: sealed }] = await rows('SELECT endpoint_token_enc FROM flag_sources WHERE id = $1', [source.id]);
-    assert.match(sealed, /^v1\./);
+    assert.match(sealed, /^v2\./);
     assert.ok(!sealed.includes('cust-secret-1'));
     assert.ok(!(await api('GET', '/flag-sources')).body.includes(sealed), 'the sealed value is not listed either');
     await assert.rejects(createIngestToken(pool, { tenantId, actorUserId: aliceId, sourceId: source.id }), /takes no ingest token/);

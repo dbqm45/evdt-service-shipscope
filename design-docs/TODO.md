@@ -14,12 +14,12 @@ Brakuje:
 - sprawdzania układu w prawdziwej przeglądarce w CI (atrapa DOM nie parsuje HTML, więc wyrównywanie wysokości
   wierszy i synchronizacja przewijania nie są sprawdzane; Playwright był dotąd uruchamiany tylko ręcznie).
 
-## Rotacja klucza `TOKEN_ENCRYPTION_KEY` i sekretu podpisu endpointów
+## Zmiana sekretu podpisu endpointów jednego tenanta i log audytowy sekretów
 
-ADR-003 (punkt 5) wymaga rotacji kluczy dla sekretów klientów. Dziś `lib/secret-box.js` ma format `v1` z jednym
-kluczem, a sekret podpisu żądań do endpointów jest wyprowadzany z tego klucza per tenant (`signingSecret()`), więc nie
-da się go zmienić jednemu tenantowi. Do zrobienia: drugi klucz (`v2`) z odczytem obu i przeszyfrowaniem, wersja
-sekretu podpisu per tenant oraz log audytowy dostępu do sekretów.
+Rotacja `TOKEN_ENCRYPTION_KEY` już działa (`TOKEN_ENCRYPTION_KEY_PREVIOUS`, `lib/secret-rotation.js`), a sekret
+podpisu jest zapisany per tenant (`tenants.endpoint_signing_secret_enc`). ADR-003 (punkt 5) wymaga jeszcze: zmiany
+sekretu podpisu przez admina jednego workspace'u (na wypadek wycieku) i logu audytowego dostępu do sekretów (kto
+pokazał sekret podpisu, ustawił lub usunął token endpointu, połączył Jirę).
 
 ## Tryb jasny nie pokrywa wszystkich kolorów
 

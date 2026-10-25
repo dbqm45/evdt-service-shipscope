@@ -4,6 +4,7 @@ const { syncAllJira } = require('./lib/jira-sync');
 const { syncAll } = require('./lib/deployment-sync');
 const { cleanupAll } = require('./lib/retention');
 const { pollEndpoints } = require('./lib/flag-poll');
+const { resealSecrets } = require('./lib/secret-rotation');
 const { pendingSyncRequests, finishSyncRequests } = require('./lib/webhooks');
 const { recordRun } = require('./lib/worker-status');
 const { createLogger, logLevel, logProcessFailures } = require('./lib/log');
@@ -20,6 +21,7 @@ const SYNC_LOCK = 727_001;
 const CLEANUP_LOCK = 727_002;
 const JIRA_LOCK = 727_003;
 const FLAGS_LOCK = 727_004;
+const SECRETS_LOCK = 727_005;
 
 const defaultLogger = createLogger({ service: 'worker', level: logLevel(process.env), base: { version: APP_VERSION } });
 
@@ -183,6 +185,15 @@ async function webhookTick(pool, { app, atlassian, encryptionKey = null, tenantB
     await noteRun(pool, log, deps, { job: 'webhooks', ok: !errors.length, error: errors.join('; ') || null, details: handled });
 }
 
+/** Seals every stored secret with the current TOKEN_ENCRYPTION_KEY (lib/secret-rotation.js), at start and daily. */
+async function secretsTick(pool, encryptionKey, logger = defaultLogger, deps = { resealSecrets }) {
+    await runJob(pool, {
+        job: 'secrets', lock: SECRETS_LOCK, logger, deps,
+        run: () => deps.resealSecrets({ pool, encryptionKey, log: syncLogger(logger.child({ job: 'secrets' })) }),
+        summary: (r) => `secrets re-sealed: ${r.resealed} in ${r.tenants} tenant(s), ${r.stale} still on an older key (${r.unreadable} unreadable)`,
+    });
+}
+
 /** The daily retention cleanup, never overlapping another. */
 async function cleanupTick(pool, logger = defaultLogger, deps = { cleanupAll }) {
     await runJob(pool, {
@@ -220,6 +231,8 @@ if (require.main === module) {
     if (encryptionKey) {
         timers.push(setInterval(() => flagsTick(pool, encryptionKey), FLAGS_INTERVAL_MS));
         flagsTick(pool, encryptionKey);
+        timers.push(setInterval(() => secretsTick(pool, encryptionKey), CLEANUP_INTERVAL_MS));
+        secretsTick(pool, encryptionKey);
     } else {
         defaultLogger.warn('TOKEN_ENCRYPTION_KEY not set: flags from endpoints are off');
     }
@@ -234,4 +247,4 @@ if (require.main === module) {
     });
 }
 
-module.exports = { heartbeatTick, runExclusive, syncIntervalMinutes, tenantBudgetSeconds, syncTick, jiraTick, flagsTick, webhookTick, cleanupTick };
+module.exports = { heartbeatTick, runExclusive, syncIntervalMinutes, tenantBudgetSeconds, syncTick, jiraTick, flagsTick, secretsTick, webhookTick, cleanupTick };

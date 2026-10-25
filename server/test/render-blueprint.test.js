@@ -52,13 +52,13 @@ test('render.yaml: every variable the code reads is declared on the service that
     const config = read('lib/config.js');
     const declaredInConfig = new Set([...config.matchAll(/\b([A-Z][A-Z0-9_]{3,})\b/g)].map((m) => m[1]).filter((k) => /^(GITHUB|ATLASSIAN|TOKEN|PUBLIC)_/.test(k)));
     const web = [...declaredInConfig, 'DATABASE_URL'];
-    const worker = ['DATABASE_URL', 'GITHUB_APP_ID', 'GITHUB_APP_SLUG', 'GITHUB_APP_PRIVATE_KEY', 'ATLASSIAN_CLIENT_ID', 'ATLASSIAN_CLIENT_SECRET', 'TOKEN_ENCRYPTION_KEY', 'PUBLIC_BASE_URL'];
+    const worker = ['DATABASE_URL', 'GITHUB_APP_ID', 'GITHUB_APP_SLUG', 'GITHUB_APP_PRIVATE_KEY', 'ATLASSIAN_CLIENT_ID', 'ATLASSIAN_CLIENT_SECRET', 'TOKEN_ENCRYPTION_KEY', 'TOKEN_ENCRYPTION_KEY_PREVIOUS', 'PUBLIC_BASE_URL'];
     for (const key of web) assert.ok(byName['shipscope-web'].env.includes(key), `shipscope-web declares ${key}`);
     for (const key of worker) assert.ok(byName['shipscope-worker'].env.includes(key), `shipscope-worker declares ${key}`);
     for (const service of Object.values(byName)) assert.ok(service.env.includes('LOG_LEVEL'), `${service.name} declares LOG_LEVEL (lib/log.js)`);
     assert.ok(declaredInConfig.has('GITHUB_APP_WEBHOOK_SECRET') && declaredInConfig.has('PUBLIC_BASE_URL'), 'the scan finds the config\'s variables');
     // Secrets are never in the file: every one of them is `sync: false` (Render asks for the value).
-    for (const key of ['GITHUB_APP_CLIENT_SECRET', 'GITHUB_APP_PRIVATE_KEY', 'GITHUB_APP_WEBHOOK_SECRET', 'ATLASSIAN_CLIENT_SECRET', 'TOKEN_ENCRYPTION_KEY']) {
+    for (const key of ['GITHUB_APP_CLIENT_SECRET', 'GITHUB_APP_PRIVATE_KEY', 'GITHUB_APP_WEBHOOK_SECRET', 'ATLASSIAN_CLIENT_SECRET', 'TOKEN_ENCRYPTION_KEY', 'TOKEN_ENCRYPTION_KEY_PREVIOUS']) {
         for (const match of blueprint.matchAll(new RegExp(`- key: ${key}\\n\\s+(\\S+):`, 'g'))) assert.strictEqual(match[1], 'sync', `${key} is sync: false`);
     }
 });
