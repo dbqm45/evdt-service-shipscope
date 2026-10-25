@@ -7,6 +7,12 @@ dashboard, not a published package), so entries are grouped by date instead. See
 ShipScope is, `CLAUDE.md` for the technical reference, and `FAQ.md` for how specific numbers/badges are
 calculated.
 
+## [0.2.40] - 2026-10-25
+
+### Added
+
+- **SHP:** log Jira webhook tokens without exp, refuse them on request (#99)
+
 ## [0.2.39] - 2026-10-25
 
 ### Added
