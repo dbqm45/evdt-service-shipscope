@@ -948,3 +948,23 @@ test('Sources: replacing the signing secret asks first; the secret activity list
     assert.deepStrictEqual(calls[0], { method: 'POST', url: `${base}/flag-endpoint-signing/rotate`, body: undefined });
     assert.deepStrictEqual(ui.settingsState.once, { signing: { secret: 'ef'.repeat(32) } });
 });
+
+test('Sources: Test with a token only the worker can read waits for the worker\'s result', async () => {
+    ui.settingsState.tenantId = TENANT;
+    const base = `/tenants/${TENANT}`;
+    let polls = 0;
+    const { fn, calls } = fakeFetch({
+        [`POST ${base}/flag-endpoint-test`]: { pending: true, testId: 't1' },
+        [`GET ${base}/flag-endpoint-test/t1`]: () => (++polls < 2 ? { status: 'pending' } : { status: 'done', envs: [{ env: 'prod', host: 'flags.acme.io', flags: {} }] }),
+    });
+    global.fetch = fn;
+    ui.settingsState.endpointTestWaitMs = 0;
+    ui.settingsState.flags = [{ id: 's5', endpoint: { urls: { prod: 'https://flags.acme.io/f' } } }];
+    const fields = [['url_test', ''], ['url_qa', ''], ['url_prod', 'https://flags.acme.io/f'], ['path', ''], ['tokenHeader', ''], ['endpointToken', '']];
+    await ui.runAction('test-endpoint-source', { dataset: {}, form: form(fields, { sourceId: 's5' }, 'flags'), closest: () => ({ id: 'flags' }) });
+    assert.deepStrictEqual(calls.map((c) => `${c.method} ${c.url}`), [`POST ${base}/flag-endpoint-test`, `GET ${base}/flag-endpoint-test/t1`, `GET ${base}/flag-endpoint-test/t1`]);
+    assert.deepStrictEqual(ui.settingsState.endpointTest, { place: 's5', envs: [{ env: 'prod', host: 'flags.acme.io', flags: {} }] });
+    assert.match(str(ui.renderSourcesPage({ sources: [{ ...ui.settingsState.flags[0], name: 'API', kind: 'runtime', priority: 100, origin: 'endpoint', repoIds: [], tokens: [] }], repos: [], admin: true, once: {}, origin: 'https://s', endpointTest: { place: 's5', pending: true } })),
+        /the worker reads it/);
+    delete ui.settingsState.endpointTestWaitMs;
+});

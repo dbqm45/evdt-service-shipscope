@@ -12,7 +12,8 @@
     "migrate": "node scripts/migrate.js",
     "test": "node --test \"test/*.test.js\"",
     "dev": "node scripts/dev.js",
-    "dev:mock": "node scripts/dev.js --mock"
+    "dev:mock": "node scripts/dev.js --mock",
+    "sealing-keys": "node scripts/sealing-keys.js"
   },
   "dependencies": {
     "@fastify/cookie": "^11.1.2",

@@ -104,6 +104,47 @@ function loadEncryptionKey(env) {
 }
 
 /**
+ * The key pair that seals customers' endpoint tokens so only the worker can read them (lib/sealed-box.js):
+ * SECRETS_PUBLIC_KEY on both services, SECRETS_PRIVATE_KEY (and, during a rotation, SECRETS_PRIVATE_KEY_PREVIOUS, comma
+ * separated, newest first) on the worker only. Optional: without a public key tokens are sealed with
+ * TOKEN_ENCRYPTION_KEY as before. Keys are base64 DER (SPKI / PKCS#8), as `npm run sealing-keys` prints them.
+ *
+ * @param {NodeJS.ProcessEnv} env
+ * @param {{ withPrivate: boolean }} options the worker reads the private keys; the web service never does
+ * @returns {{ publicKey: import('crypto').KeyObject, privateKeys: import('crypto').KeyObject[] }|null}
+ * @throws {Error} a malformed key, a private key without its public key, or a current private key that does not match
+ */
+function loadSealingKeys(env, { withPrivate }) {
+    const crypto = require('crypto');
+    if (!env.SECRETS_PUBLIC_KEY) {
+        if (withPrivate && env.SECRETS_PRIVATE_KEY) throw new Error('Invalid configuration: SECRETS_PRIVATE_KEY is set but SECRETS_PUBLIC_KEY is not');
+        return null;
+    }
+    const parse = (name, value, type) => {
+        try {
+            const key = type === 'spki'
+                ? crypto.createPublicKey({ key: Buffer.from(value, 'base64'), format: 'der', type })
+                : crypto.createPrivateKey({ key: Buffer.from(value, 'base64'), format: 'der', type });
+            if (key.asymmetricKeyType !== 'x25519') throw new Error('not x25519');
+            return key;
+        } catch {
+            throw new Error(`Invalid configuration: ${name} must be an X25519 key, base64 DER (npm run sealing-keys)`);
+        }
+    };
+    const publicKey = parse('SECRETS_PUBLIC_KEY', env.SECRETS_PUBLIC_KEY.trim(), 'spki');
+    if (!withPrivate) return { publicKey, privateKeys: [] };
+    if (!env.SECRETS_PRIVATE_KEY) throw new Error('Invalid configuration: the worker needs SECRETS_PRIVATE_KEY with SECRETS_PUBLIC_KEY');
+    const current = parse('SECRETS_PRIVATE_KEY', env.SECRETS_PRIVATE_KEY.trim(), 'pkcs8');
+    const spki = (k) => crypto.createPublicKey(k).export({ format: 'der', type: 'spki' });
+    if (!spki(current).equals(publicKey.export({ format: 'der', type: 'spki' }))) {
+        throw new Error('Invalid configuration: SECRETS_PRIVATE_KEY does not belong to SECRETS_PUBLIC_KEY');
+    }
+    const previous = (env.SECRETS_PRIVATE_KEY_PREVIOUS || '').split(',').map((k) => k.trim()).filter(Boolean)
+        .map((k) => parse('SECRETS_PRIVATE_KEY_PREVIOUS', k, 'pkcs8'));
+    return { publicKey, privateKeys: [current, ...previous] };
+}
+
+/**
  * Reads the Atlassian OAuth 2.0 (3LO) app's credentials and the key that encrypts stored Jira tokens (FR-007).
  * Optional as a whole -- without them the Jira routes are off -- but a partial set fails fast.
  * TOKEN_ENCRYPTION_KEY is 32 random bytes, base64-encoded (`openssl rand -base64 32`).
@@ -136,4 +177,4 @@ function loadAtlassianConfig(env) {
     return { clientId: env.ATLASSIAN_CLIENT_ID, clientSecret: env.ATLASSIAN_CLIENT_SECRET, encryptionKey, webhookUrl };
 }
 
-module.exports = { loadAuthConfig, loadGitHubAppConfig, loadAtlassianConfig, loadEncryptionKey };
+module.exports = { loadAuthConfig, loadGitHubAppConfig, loadAtlassianConfig, loadEncryptionKey, loadSealingKeys };

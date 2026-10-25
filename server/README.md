@@ -181,6 +181,7 @@ Feature flags:
 | `POST /tenants/:tenantId/flag-endpoint-test` | session + admin | Body `{ "endpoint": { ... }, "endpointToken"?: "..." \| null, "sourceId"?: uuid }`: reads the endpoint per environment now, saved or not (without `endpointToken`, a saved source's own token), and returns only what was parsed: `{ envs: [{ env, host, flags? \| error? }] }`, never the answer itself. 10 per workspace, then one every 6 s (429 + `Retry-After`). |
 | `POST /tenants/:tenantId/flag-endpoint-signing/rotate` | session + admin | Replaces the workspace's signing secret with a new random one and returns it like the route below, once more readable there. The old secret stops at once: until the customer's endpoint has the new one, it refuses ShipScope's reads, which show as errors and keep the flags. |
 | `GET /tenants/:tenantId/secret-events` | session + admin | The audit log of the workspace's secrets, newest first (at most 100): `{ events: [{ at, kind, subject, actor }] }`, `kind` one of `signing_secret_viewed`, `signing_secret_rotated`, `endpoint_token_set`, `endpoint_token_removed`, `jira_connected`, `jira_disconnected`; `subject` the source or Jira site, `actor` a GitHub login. Never a secret. |
+| `GET /tenants/:tenantId/flag-endpoint-test/:testId` | session + admin | The result of a "Test" the worker ran because the stored token is sealed for it (the POST answered `202 { pending: true, testId }`): `{ status: "pending" }` or `{ status: "done", envs }`, kept a day. |
 | `GET /tenants/:tenantId/flag-endpoint-signing` | session + admin | How the customer's endpoint tells ShipScope's requests from anyone else's: `{ secret, algorithm: "HMAC-SHA256", signedText, headers }`. Every request carries `X-ShipScope-Timestamp` (Unix seconds) and `X-ShipScope-Signature: v1=<hex HMAC-SHA256 of "<timestamp>.GET.<full URL>">`. The secret is per workspace, derived from `TOKEN_ENCRYPTION_KEY`. |
 | `DELETE /tenants/:tenantId/flag-sources/:sourceId` | session + admin | Deletes the source with its tokens, values and history. 204, or 404. |
 | `POST /tenants/:tenantId/flag-sources/:sourceId/tokens` | session + admin | Another token for the source (rotation without downtime). Optional body `{ "expiresInDays"?: 1..730 \| null, "environments"?: ["test" \| "qa" \| "prod", ...] \| null }`: the token expires after that many days (left out: 365; `null`: never) and may send only those environments (left out or `null`: all). Returns `{ id, token, expiresAt, environments }`. 201. Tokens made before migration `017` never expire and send every environment. |
@@ -398,6 +399,24 @@ so a key can be replaced without anyone reconnecting:
 A value no key opens (the old key was dropped too early) is counted as `unreadable` and left alone: the Jira
 connection or the endpoint token then has to be entered again. A workspace's signing secret does not change with the
 key: it is stored the first time it is needed, from the value earlier versions derived from the oldest key.
+
+## Endpoint tokens only the worker can read
+
+With a sealing key pair configured, a customer's endpoint token is sealed with a public key the Web Service holds and
+opened only with the private key the worker alone holds (`lib/sealed-box.js`, X25519 + AES-256-GCM). A leak of the Web
+Service (its environment, its memory, a request it makes) then exposes no stored token.
+
+1. `npm run sealing-keys --prefix server` prints a pair.
+2. Set `SECRETS_PUBLIC_KEY` on **both** services and `SECRETS_PRIVATE_KEY` on the **worker only** (`render.yaml`
+   declares the private key nowhere else). Deploy. The worker refuses to start with a private key that does not match.
+3. The worker's `secrets` job moves every endpoint token sealed with `TOKEN_ENCRYPTION_KEY` to the pair.
+
+"Test" with a stored token then runs on the worker: Settings queues it (`202`, `endpoint_tests`, `sync_requests`
+`endpoint-test`), the worker runs queued tests every 2 seconds and Settings shows the result. A typed token is still
+tested at once. To rotate the pair, put the new pair in place and the old private key in
+`SECRETS_PRIVATE_KEY_PREVIOUS` on the worker; remove it once the `secrets` job reports nothing left on an older key.
+Without the pair, tokens are sealed with `TOKEN_ENCRYPTION_KEY` as before. Jira refresh tokens and signing secrets still
+use `TOKEN_ENCRYPTION_KEY` on both services (the Web Service calls Jira for Settings and signs "Test" requests).
 
 ## Monitoring and logs
 

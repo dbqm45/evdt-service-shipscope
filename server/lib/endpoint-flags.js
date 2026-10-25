@@ -14,6 +14,8 @@ const crypto = require('crypto');
 const { withScope } = require('./scope');
 const { assertAdmin } = require('./tenants');
 const { open, seal, keyRing, SecretBoxError } = require('./secret-box');
+const { openWith, isSealedFor, SealedBoxError } = require('./sealed-box');
+const { requestSync } = require('./webhooks');
 const { safeFetch, SafeFetchError } = require('./safe-fetch');
 const { parseFlagFile, FlagFileError } = require('./flag-file-parser');
 const { checkEndpointConfig, FlagSourceConfigError } = require('./flags-logic');
@@ -105,38 +107,35 @@ function readError(err, url) {
     return `${new URL(url).hostname}: could not be read`;
 }
 
-/** The stored token of an endpoint source, opened; null without one. */
-function openToken(row, { tenantId, encryptionKey }) {
+/** A stored token sealed for the worker, asked for where only the public key is (the web service). */
+class TokenOnWorkerError extends Error {}
+
+/**
+ * The stored token of an endpoint source, opened; null without one. A token sealed for the worker
+ * (lib/sealed-box.js) opens only with `sealingKeys.privateKeys`.
+ *
+ * @throws {TokenOnWorkerError} sealed for the worker, and no private key here
+ * @throws {FlagSourceConfigError} no key opens it
+ */
+function openToken(row, { tenantId, encryptionKey, sealingKeys = null }) {
     if (!row.endpoint_token_enc) return null;
+    const aad = endpointTokenAad(tenantId, row.id);
     try {
-        return open(encryptionKey, row.endpoint_token_enc, endpointTokenAad(tenantId, row.id));
+        if (isSealedFor(row.endpoint_token_enc)) {
+            if (!sealingKeys || !sealingKeys.privateKeys.length) throw new TokenOnWorkerError('Only the worker can read this token');
+            return openWith(sealingKeys.privateKeys, row.endpoint_token_enc, aad);
+        }
+        return open(encryptionKey, row.endpoint_token_enc, aad);
     } catch (err) {
-        if (err instanceof SecretBoxError) throw new FlagSourceConfigError('The stored endpoint token cannot be read (was TOKEN_ENCRYPTION_KEY changed?); enter it again');
+        if (err instanceof SecretBoxError || err instanceof SealedBoxError) {
+            throw new FlagSourceConfigError('The stored endpoint token cannot be read (was a key changed without its previous one?); enter it again');
+        }
         throw err;
     }
 }
 
-/**
- * "Test" in Settings: reads an endpoint configuration per environment, before or after it is saved, and returns only
- * the parsed flags (or why not). Nothing is stored. Admins only. Without `endpointToken` a saved source's own token
- * is used (`sourceId`); null tests without one.
- *
- * @param {import('pg').Pool} pool
- * @param {{ tenantId: string, actorUserId: string, endpoint: object, endpointToken?: string|null, sourceId?: string, encryptionKey: Buffer|null, fetchImpl?: typeof safeFetch, now?: Date }} input
- * @returns {Promise<Array<{ env: string, host: string, flags?: Record<string, { state: string, rollout?: number }>, error?: string }>>}
- * @throws {FlagSourceConfigError|FlagSourceNotFoundError}
- */
-async function testEndpoint(pool, { tenantId, actorUserId, endpoint, endpointToken, sourceId, encryptionKey, fetchImpl = safeFetch, now = new Date() }) {
-    const config = checkEndpointConfig(endpoint, { kind: 'runtime' });
-    if (!encryptionKey) throw new FlagSourceConfigError('Reading flags from an endpoint needs TOKEN_ENCRYPTION_KEY on the server');
-    const { token, secret } = await withScope(pool, { tenantId }, async (client) => {
-        await assertAdmin(client, { tenantId, userId: actorUserId });
-        const signing = await tenantSigningSecret(client, { tenantId, encryptionKey });
-        if (endpointToken !== undefined || !sourceId) return { token: endpointToken ?? null, secret: signing };
-        const { rows: [row] } = await client.query("SELECT id, endpoint_token_enc FROM flag_sources WHERE tenant_id = $1 AND id = $2 AND origin = 'endpoint'", [tenantId, sourceId]);
-        if (!row) throw new FlagSourceNotFoundError('No such flag source');
-        return { token: openToken(row, { tenantId, encryptionKey }), secret: signing };
-    });
+/** Each configured environment's reading, for "Test": host, then the parsed flags or why not. */
+async function runEndpointTest({ config, token, secret, now, fetchImpl }) {
     const out = [];
     for (const env of ENVS.filter((e) => config.urls[e])) {
         const host = new URL(config.urls[env]).hostname;
@@ -149,16 +148,112 @@ async function testEndpoint(pool, { tenantId, actorUserId, endpoint, endpointTok
     return out;
 }
 
+// How long a queued test is kept for Settings to read back.
+const TEST_KEEP_HOURS = 24;
+
+/**
+ * "Test" in Settings: reads an endpoint configuration per environment, before or after it is saved, and returns only
+ * the parsed flags (or why not). Nothing is stored. Admins only. Without `endpointToken` a saved source's own token
+ * is used (`sourceId`); null tests without one. A stored token only the worker can read is tested there: the test is
+ * queued (`{ pending: true, testId }`) and its result read with endpointTestResult().
+ *
+ * @param {import('pg').Pool} pool
+ * @param {{ tenantId: string, actorUserId: string, endpoint: object, endpointToken?: string|null, sourceId?: string, encryptionKey: Buffer|null, sealingKeys?: object|null, fetchImpl?: typeof safeFetch, now?: Date }} input
+ * @returns {Promise<{ envs: Array<{ env: string, host: string, flags?: Record<string, { state: string, rollout?: number }>, error?: string }> }|{ pending: true, testId: string }>}
+ * @throws {FlagSourceConfigError|FlagSourceNotFoundError}
+ */
+async function testEndpoint(pool, { tenantId, actorUserId, endpoint, endpointToken, sourceId, encryptionKey, sealingKeys = null, fetchImpl = safeFetch, now = new Date() }) {
+    const config = checkEndpointConfig(endpoint, { kind: 'runtime' });
+    if (!encryptionKey) throw new FlagSourceConfigError('Reading flags from an endpoint needs TOKEN_ENCRYPTION_KEY on the server');
+    const prepared = await withScope(pool, { tenantId }, async (client) => {
+        await assertAdmin(client, { tenantId, userId: actorUserId });
+        const signing = await tenantSigningSecret(client, { tenantId, encryptionKey });
+        if (endpointToken !== undefined || !sourceId) return { token: endpointToken ?? null, secret: signing };
+        const { rows: [row] } = await client.query("SELECT id, endpoint_token_enc FROM flag_sources WHERE tenant_id = $1 AND id = $2 AND origin = 'endpoint'", [tenantId, sourceId]);
+        if (!row) throw new FlagSourceNotFoundError('No such flag source');
+        try {
+            return { token: openToken(row, { tenantId, encryptionKey, sealingKeys }), secret: signing };
+        } catch (err) {
+            if (!(err instanceof TokenOnWorkerError)) throw err;
+            await client.query("DELETE FROM endpoint_tests WHERE tenant_id = $1 AND requested_at < now() - make_interval(hours => $2)", [tenantId, TEST_KEEP_HOURS]);
+            const { rows: [test] } = await client.query(
+                'INSERT INTO endpoint_tests (tenant_id, source_id, endpoint_config, requested_by) VALUES ($1, $2, $3, $4) RETURNING id',
+                [tenantId, sourceId, config, actorUserId]
+            );
+            return { queued: test.id };
+        }
+    });
+    if (prepared.queued) {
+        await requestSync(pool, { source: 'endpoint-test', keys: [`${tenantId}/${prepared.queued}`] });
+        return { pending: true, testId: prepared.queued };
+    }
+    return { envs: await runEndpointTest({ config, token: prepared.token, secret: prepared.secret, now, fetchImpl }) };
+}
+
+/**
+ * A queued test's result, for Settings to read back: pending until the worker ran it. Admins only.
+ *
+ * @param {import('pg').Pool} pool
+ * @param {{ tenantId: string, actorUserId: string, testId: string }} input
+ * @returns {Promise<{ status: 'pending' } | { status: 'done', envs: object[] }>}
+ * @throws {FlagSourceNotFoundError} no such test (or older than a day)
+ */
+async function endpointTestResult(pool, { tenantId, actorUserId, testId }) {
+    return withScope(pool, { tenantId }, async (client) => {
+        await assertAdmin(client, { tenantId, userId: actorUserId });
+        const { rows: [row] } = await client.query('SELECT finished_at, result FROM endpoint_tests WHERE tenant_id = $1 AND id = $2', [tenantId, testId]);
+        if (!row) throw new FlagSourceNotFoundError('No such test');
+        return row.finished_at ? { status: 'done', envs: row.result } : { status: 'pending' };
+    });
+}
+
+/**
+ * The worker's side of a queued test: opens the source's token with the private key, reads every address and stores
+ * the parsed flags (or why not). A test whose source is gone is dropped.
+ *
+ * @param {import('pg').Pool} pool
+ * @param {{ tenantId: string, testId: string, encryptionKey: object, sealingKeys: object|null, fetchImpl?: typeof safeFetch, now?: Date }} input
+ * @returns {Promise<boolean>} whether a test was run
+ */
+async function runQueuedEndpointTest(pool, { tenantId, testId, encryptionKey, sealingKeys, fetchImpl = safeFetch, now = new Date() }) {
+    const prepared = await withScope(pool, { tenantId }, async (client) => {
+        const { rows: [test] } = await client.query(
+            `SELECT t.endpoint_config, s.id, s.endpoint_token_enc FROM endpoint_tests t
+             JOIN flag_sources s ON s.tenant_id = t.tenant_id AND s.id = t.source_id
+             WHERE t.tenant_id = $1 AND t.id = $2 AND t.finished_at IS NULL`,
+            [tenantId, testId]
+        );
+        if (!test) return null;
+        const secret = await tenantSigningSecret(client, { tenantId, encryptionKey });
+        try {
+            return { config: test.endpoint_config, token: openToken(test, { tenantId, encryptionKey, sealingKeys }), secret };
+        } catch (err) {
+            if (!(err instanceof FlagSourceConfigError || err instanceof TokenOnWorkerError)) throw err;
+            return { config: test.endpoint_config, error: err.message };
+        }
+    });
+    if (!prepared) return false;
+    const envs = prepared.error
+        ? ENVS.filter((e) => prepared.config.urls[e]).map((env) => ({ env, host: new URL(prepared.config.urls[env]).hostname, error: prepared.error }))
+        : await runEndpointTest({ config: prepared.config, token: prepared.token, secret: prepared.secret, now, fetchImpl });
+    await withScope(pool, { tenantId }, (client) => client.query(
+        'UPDATE endpoint_tests SET finished_at = $3, result = $4 WHERE tenant_id = $1 AND id = $2',
+        [tenantId, testId, now, JSON.stringify(envs)]
+    ));
+    return true;
+}
+
 /**
  * Polls one endpoint source: each environment's address, its flags written as that environment's full state through
  * applyObservations() (changedAt = now: an endpoint says what is, not since when). A failed environment is recorded
  * on it and the others go on.
  *
  * @param {import('pg').Pool} pool
- * @param {{ tenantId: string, sourceId: string, encryptionKey: Buffer, fetchImpl?: typeof safeFetch, now?: Date, log?: Function }} input
+ * @param {{ tenantId: string, sourceId: string, encryptionKey: Buffer, sealingKeys?: object|null, fetchImpl?: typeof safeFetch, now?: Date, log?: Function }} input
+ *   `sealingKeys`: the worker's private keys, for tokens sealed for it
  * @returns {Promise<{ read: number, failed: number }|null>} null when there is no such endpoint source
  */
-async function refreshEndpointSource(pool, { tenantId, sourceId, encryptionKey, fetchImpl = safeFetch, now = new Date(), log = () => {} }) {
+async function refreshEndpointSource(pool, { tenantId, sourceId, encryptionKey, sealingKeys = null, fetchImpl = safeFetch, now = new Date(), log = () => {} }) {
     const row = await withScope(pool, { tenantId }, async (client) => {
         const { rows } = await client.query(
             "SELECT id, name, endpoint_config, endpoint_token_enc FROM flag_sources WHERE tenant_id = $1 AND id = $2 AND origin = 'endpoint'",
@@ -173,9 +268,11 @@ async function refreshEndpointSource(pool, { tenantId, sourceId, encryptionKey, 
     let token;
     let secret;
     try {
-        token = openToken(row, { tenantId, encryptionKey });
+        token = openToken(row, { tenantId, encryptionKey, sealingKeys });
         secret = await withScope(pool, { tenantId }, (client) => tenantSigningSecret(client, { tenantId, encryptionKey }));
     } catch (err) {
+        // Recorded like an unreadable token: the environments show why until the worker has its private key.
+        if (err instanceof TokenOnWorkerError) err = new FlagSourceConfigError('The endpoint token is sealed for the worker: set SECRETS_PRIVATE_KEY on it');
         if (!(err instanceof FlagSourceConfigError)) throw err;
         for (const env of envs) await recordSourceEnvError(pool, { tenantId, sourceId, env, message: err.message, now });
         log(`flags not read from endpoint source ${row.name}: ${err.message}`, { level: 'warn', tenantId, source: row.name, reason: err.message });
@@ -251,4 +348,4 @@ async function rotateSigningSecret(pool, { tenantId, actorUserId, encryptionKey 
     return { secret, ...SIGNING_SCHEME };
 }
 
-module.exports = { rotateSigningSecret, signingSecret, signingSecretAad, tenantSigningSecret, signatureHeaders, testEndpoint, refreshEndpointSource, endpointSigning };
+module.exports = { endpointTestResult, runQueuedEndpointTest, TokenOnWorkerError, rotateSigningSecret, signingSecret, signingSecretAad, tenantSigningSecret, signatureHeaders, testEndpoint, refreshEndpointSource, endpointSigning };

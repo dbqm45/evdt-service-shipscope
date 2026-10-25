@@ -63,6 +63,10 @@ services:
         sync: false
       - key: TOKEN_ENCRYPTION_KEY_PREVIOUS
         sync: false
+      # Seals customers' endpoint tokens for the worker (npm run sealing-keys): the public half only, so this
+      # service can store a token but never read it back.
+      - key: SECRETS_PUBLIC_KEY
+        sync: false
 
   - type: worker
     name: shipscope-worker
@@ -103,6 +107,13 @@ services:
       - key: TOKEN_ENCRYPTION_KEY
         sync: false
       - key: TOKEN_ENCRYPTION_KEY_PREVIOUS
+        sync: false
+      # The key pair that seals customers' endpoint tokens: only this service holds the private half.
+      - key: SECRETS_PUBLIC_KEY
+        sync: false
+      - key: SECRETS_PRIVATE_KEY
+        sync: false
+      - key: SECRETS_PRIVATE_KEY_PREVIOUS
         sync: false
       # The Web Service's public https URL (same value): the worker registers Jira webhooks at <url>/webhooks/jira.
       - key: PUBLIC_BASE_URL

@@ -2,6 +2,7 @@ const crypto = require('crypto');
 const { withScope, setScope } = require('./scope');
 const { assertAdmin, roleOf, TenantNotFoundError } = require('./tenants');
 const { seal } = require('./secret-box');
+const { sealFor } = require('./sealed-box');
 const { recordSecretEvent } = require('./secret-audit');
 const {
     IngestPayloadError, checkPayload, planIngestWrites, sourceDescriptors, pickWinningValues, visibleFlagsMeta, historyRecords,
@@ -142,7 +143,7 @@ const LOCK_NOT_AVAILABLE = '55P03';
  * Creates a flag source with its first token. Admins only. The token is returned once and never stored.
  *
  * @param {import('pg').Pool} pool
- * @param {{ tenantId: string, actorUserId: string, name: string, kind: 'build'|'runtime', priority?: number, repoIds?: number[], repoId?: number|null, tokenExpiresInDays?: number|null, tokenEnvironments?: string[]|null, staleAfterMinutes?: number|null, origin?: 'push'|'code'|'endpoint', code?: object, endpoint?: object, endpointToken?: string|null, pollIntervalMinutes?: number|null, encryptionKey?: Buffer|null }} input
+ * @param {{ tenantId: string, actorUserId: string, name: string, kind: 'build'|'runtime', priority?: number, repoIds?: number[], repoId?: number|null, tokenExpiresInDays?: number|null, tokenEnvironments?: string[]|null, staleAfterMinutes?: number|null, origin?: 'push'|'code'|'endpoint', code?: object, endpoint?: object, endpointToken?: string|null, pollIntervalMinutes?: number|null, encryptionKey?: Buffer|null, sealingKeys?: { publicKey: object }|null }} input
  *   the first token's lifetime and environments, as for createIngestToken(); `staleAfterMinutes` null = the kind's default.
  *   `origin: 'code'` with `code` (checkCodeConfig()): a source ShipScope reads itself from one repository; it has no token.
  *   `origin: 'endpoint'` with `endpoint` (checkEndpointConfig()) and optionally the customer's `endpointToken`, sealed
@@ -151,7 +152,7 @@ const LOCK_NOT_AVAILABLE = '55P03';
  * @throws {FlagSourceNotFoundError} a repo in its scope isn't tracked
  * @throws {FlagSourceConflictError} the name is taken
  */
-async function createFlagSource(pool, { tenantId, actorUserId, name, kind, priority, repoIds, repoId, tokenExpiresInDays, tokenEnvironments = null, staleAfterMinutes = null, origin = 'push', code, endpoint, endpointToken, pollIntervalMinutes, encryptionKey = null }) {
+async function createFlagSource(pool, { tenantId, actorUserId, name, kind, priority, repoIds, repoId, tokenExpiresInDays, tokenEnvironments = null, staleAfterMinutes = null, origin = 'push', code, endpoint, endpointToken, pollIntervalMinutes, encryptionKey = null, sealingKeys = null }) {
     return withScope(pool, { tenantId }, async (client) => {
         await assertAdmin(client, { tenantId, userId: actorUserId });
         const scope = scopeOf({ repoIds, repoId });
@@ -172,7 +173,7 @@ async function createFlagSource(pool, { tenantId, actorUserId, name, kind, prior
         row = { ...row, repo_id: scope[0] ?? null };
         if (endpointToken) {
             await client.query('UPDATE flag_sources SET endpoint_token_enc = $3 WHERE tenant_id = $1 AND id = $2',
-                [tenantId, row.id, seal(encryptionKey, endpointToken, endpointTokenAad(tenantId, row.id))]);
+                [tenantId, row.id, sealEndpointToken({ encryptionKey, sealingKeys }, endpointToken, endpointTokenAad(tenantId, row.id))]);
             row.has_endpoint_token = true;
             await recordSecretEvent(client, { tenantId, actorUserId, kind: 'endpoint_token_set', subject: name });
         }
@@ -214,6 +215,19 @@ function endpointTokenAad(tenantId, sourceId) {
     return `${tenantId}/flag-source/${sourceId}/endpoint-token`;
 }
 
+/**
+ * Seals a customer's endpoint token: for the worker alone when the sealing key pair is configured (lib/sealed-box.js,
+ * the web service then cannot read it back), else with TOKEN_ENCRYPTION_KEY.
+ *
+ * @param {{ encryptionKey: Buffer|object, sealingKeys?: { publicKey: object }|null }} keys
+ * @param {string} token
+ * @param {string} aad endpointTokenAad()
+ * @returns {string}
+ */
+function sealEndpointToken({ encryptionKey, sealingKeys }, token, aad) {
+    return sealingKeys && sealingKeys.publicKey ? sealFor(sealingKeys.publicKey, token, aad) : seal(encryptionKey, token, aad);
+}
+
 /** The endpoint fields of a create/update: checked config for an endpoint source, else none may be given. */
 function checkEndpointFields({ origin, kind, endpoint, endpointToken, pollIntervalMinutes, encryptionKey }) {
     if (origin !== 'endpoint') {
@@ -246,11 +260,11 @@ async function saveSource(client, query) {
  * `pollIntervalMinutes` (left out = unchanged, null = the default); saving one reads it at the next tick. Admins only.
  *
  * @param {import('pg').Pool} pool
- * @param {{ tenantId: string, actorUserId: string, sourceId: string, name: string, kind: 'build'|'runtime', priority: number, repoIds?: number[], repoId?: number|null, staleAfterMinutes?: number|null, code?: object, endpoint?: object, endpointToken?: string|null, pollIntervalMinutes?: number|null, encryptionKey?: Buffer|null }} input
+ * @param {{ tenantId: string, actorUserId: string, sourceId: string, name: string, kind: 'build'|'runtime', priority: number, repoIds?: number[], repoId?: number|null, staleAfterMinutes?: number|null, code?: object, endpoint?: object, endpointToken?: string|null, pollIntervalMinutes?: number|null, encryptionKey?: Buffer|null, sealingKeys?: { publicKey: object }|null }} input
  * @returns {Promise<FlagSource>}
  * @throws {FlagSourceNotFoundError|FlagSourceConflictError}
  */
-async function updateFlagSource(pool, { tenantId, actorUserId, sourceId, name, kind, priority, repoIds, repoId, staleAfterMinutes, code, endpoint, endpointToken, pollIntervalMinutes, encryptionKey = null }) {
+async function updateFlagSource(pool, { tenantId, actorUserId, sourceId, name, kind, priority, repoIds, repoId, staleAfterMinutes, code, endpoint, endpointToken, pollIntervalMinutes, encryptionKey = null, sealingKeys = null }) {
     return withScope(pool, { tenantId }, async (client) => {
         await assertAdmin(client, { tenantId, userId: actorUserId });
         const scope = scopeOf({ repoIds, repoId });
@@ -260,7 +274,7 @@ async function updateFlagSource(pool, { tenantId, actorUserId, sourceId, name, k
         const codeConfig = current.origin === 'code' ? checkCodeConfig(code ?? current.code_config, { kind, repoIds: scope }) : null;
         const endpointConfig = checkEndpointFields({ origin: current.origin, kind, endpoint: current.origin === 'endpoint' ? endpoint ?? current.endpoint_config : endpoint, endpointToken, pollIntervalMinutes, encryptionKey });
         await assertTrackedRepos(client, tenantId, scope);
-        const sealed = typeof endpointToken === 'string' ? seal(encryptionKey, endpointToken, endpointTokenAad(tenantId, sourceId)) : null;
+        const sealed = typeof endpointToken === 'string' ? sealEndpointToken({ encryptionKey, sealingKeys }, endpointToken, endpointTokenAad(tenantId, sourceId)) : null;
         const row = await saveSource(client, () => client.query(
             `UPDATE flag_sources SET name = $3, kind = $4, priority = $5, repo_id = $6,
                  stale_after_minutes = CASE WHEN $7 THEN $8::integer ELSE stale_after_minutes END,
@@ -690,6 +704,7 @@ async function recordSourceEnvError(pool, { tenantId, sourceId, env, message, no
 module.exports = {
     recordSourceEnvError,
     endpointTokenAad,
+    sealEndpointToken,
     FlagNotFoundError,
     listFlags,
     setFlagDetails,
