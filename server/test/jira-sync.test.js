@@ -234,6 +234,7 @@ const { AUTH, fakeGitHub, signIn } = require('./helpers/auth');
 const { fakeAtlassian } = require('./helpers/atlassian');
 const { withScope } = require('../lib/scope');
 const { syncAllJira, syncTenant, WEBHOOK_RECONNECT } = require('../lib/jira-sync');
+const { CLAIM_CLASS } = require('../lib/tenant-claim');
 
 const USERS = { alice: { id: 890_000_001, login: 'alice' }, bob: { id: 890_000_002, login: 'bob' } };
 const ATLASSIAN = { clientId: 'atl-client', clientSecret: 'atl-secret', encryptionKey: crypto.randomBytes(32) };
@@ -659,4 +660,18 @@ test('fairness: the Jira connection that waited longest syncs first', async (t) 
     await setAttempt(tenantId, '1 minute');
     await setAttempt(other, '1 hour');
     assert.deepStrictEqual(await order(), ['13', '10'], 'Labs waited longer');
+});
+
+test('several workers: a tenant another instance holds is busy; two passes at once sync it once', async (t) => {
+    const { pool, call, tenantId, fetch } = await setup(t);
+    await call('PUT', '/jira/boards', { boardIds: [10] });
+    const holder = await pool.connect();
+    await holder.query('SELECT pg_advisory_lock($1, hashtext($2))', [CLAIM_CLASS.jira, tenantId]);
+    assert.deepStrictEqual(await syncAllJira({ pool, atlassian: ATLASSIAN, fetch }), { tenants: 0, issues: 0, failed: 0, deferred: 0, busy: 1 });
+    await holder.query('SELECT pg_advisory_unlock($1, hashtext($2))', [CLAIM_CLASS.jira, tenantId]);
+    holder.release();
+
+    const [one, two] = await Promise.all([syncAllJira({ pool, atlassian: ATLASSIAN, fetch, concurrency: 2 }), syncAllJira({ pool, atlassian: ATLASSIAN, fetch, concurrency: 2 })]);
+    assert.strictEqual(one.tenants + two.tenants, 1, `${JSON.stringify(one)} ${JSON.stringify(two)}`);
+    assert.strictEqual(one.issues + two.issues, 6);
 });

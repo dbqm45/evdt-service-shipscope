@@ -82,17 +82,21 @@ test('syncTick and cleanupTick log their outcome with fields, record it, and nev
     const { runs, recordRun } = recorder();
     let options = null;
     let syncLog = null;
-    await syncTick(lockPool(true).pool, {}, logger, { recordRun, syncAll: async (input) => { ({ options, log: syncLog } = input); return { repos: 2, inserted: 3, failed: 1, deferred: 4 }; } }, 30_000);
-    assert.deepStrictEqual(options, { tenantBudgetMs: 30_000 }, 'each tenant\'s share of the pass');
-    await syncTick(lockPool(false).pool, {}, logger, { recordRun, syncAll: async () => assert.fail('must not run') });
+    // Several instances share the pass (tenants are claimed in lib/deployment-sync.js), but one process never runs two.
+    let release;
+    const first = syncTick(lockPool(true).pool, {}, logger, { recordRun, syncAll: async (input) => { ({ options, log: syncLog } = input); await new Promise((r) => { release = r; }); return { repos: 2, inserted: 3, failed: 1, deferred: 4 }; } }, 30_000, 3);
+    await syncTick(lockPool(true).pool, {}, logger, { recordRun, syncAll: async () => assert.fail('must not run') });
+    release();
+    await first;
+    assert.deepStrictEqual(options, { tenantBudgetMs: 30_000, concurrency: 3 }, 'each tenant\'s share of the pass, tenants side by side');
     await syncTick(lockPool(true).pool, {}, logger, { recordRun, syncAll: async () => { throw new Error('db down'); } });
     await cleanupTick(lockPool(true).pool, logger, { recordRun, cleanupAll: async () => ({ deployments: 4, flagChanges: 7 }) });
     await cleanupTick({ connect: async () => { throw new Error('no db'); } }, logger, { recordRun });
 
-    const done = lines[0];
-    assert.match(done.msg, /deployment sync done: 2 repos, \+3 deployments, 1 failed, 4 left for the next pass/);
+    const done = lines[1];
+    assert.match(lines[0].msg, /deployments skipped: the previous pass is still running/);
+    assert.match(done.msg, /deployment sync done: 2 repos, \+3 deployments, 1 failed, 4 left for the next pass$/);
     assert.deepStrictEqual([done.level, done.job, done.repos, done.failed, typeof done.durationMs], ['warn', 'deployments', 2, 1, 'number'], 'a pass with failed repos is a warning');
-    assert.match(lines[1].msg, /deployments skipped/);
     assert.deepStrictEqual([lines[2].level, lines[2].msg, lines[2].err.message], ['error', 'deployments failed', 'db down']);
     assert.deepStrictEqual([lines[3].level, lines[3].msg, lines[3].deployments, lines[3].flagChanges], ['info', 'cleanup done: 4 old deployment records and 7 old flag changes deleted', 4, 7]);
     assert.deepStrictEqual([lines[4].msg, lines[4].err.message], ['cleanup failed', 'no db']);
@@ -112,21 +116,19 @@ test('a job whose status cannot be recorded still runs, and says so', async () =
     assert.deepStrictEqual(lines.map((l) => l.msg), ['cleanup done: 0 old deployment records and 0 old flag changes deleted', 'could not record the worker status']);
 });
 
-test('jiraTick runs the Jira sync under its own lock, logs its outcome and never throws', async () => {
+test('jiraTick runs the Jira sync without a global lock, logs its outcome (busy tenants too) and never throws', async () => {
     const { logger, lines } = memoryLogger();
     const { recordRun } = recorder();
     const { pool, queries } = lockPool(true);
     await jiraTick(pool, { clientId: 'x' }, logger, {
         recordRun,
-        syncAllJira: async ({ atlassian, tenantBudgetMs }) => {
-            assert.deepStrictEqual([atlassian.clientId, tenantBudgetMs], ['x', 120_000]);
-            return { tenants: 2, issues: 30, failed: 1, deferred: 1 };
+        syncAllJira: async ({ atlassian, tenantBudgetMs, concurrency }) => {
+            assert.deepStrictEqual([atlassian.clientId, tenantBudgetMs, concurrency], ['x', 120_000, 1]);
+            return { tenants: 2, issues: 30, failed: 1, deferred: 1, busy: 2 };
         },
     });
-    await jiraTick(lockPool(false).pool, {}, logger, { recordRun, syncAllJira: async () => assert.fail('must not run') });
     await jiraTick(lockPool(true).pool, {}, logger, { recordRun, syncAllJira: async () => { throw new Error('db down'); } });
-    assert.deepStrictEqual(queries[0], ['SELECT pg_try_advisory_lock($1) AS locked', [727_003]], 'not the deployment sync\'s lock');
-    assert.match(lines[0].msg, /jira sync done: 2 tenants, 30 issues, 1 failed, 1 left for the next pass/);
-    assert.match(lines[1].msg, /jira skipped/);
-    assert.deepStrictEqual([lines[2].msg, lines[2].err.message], ['jira failed', 'db down']);
+    assert.deepStrictEqual(queries, [], 'tenants are claimed by the sync itself');
+    assert.match(lines[0].msg, /jira sync done: 2 tenants, 30 issues, 1 failed, 1 left for the next pass, 2 tenant\(s\) busy in another instance/);
+    assert.deepStrictEqual([lines[1].msg, lines[1].err.message], ['jira failed', 'db down']);
 });

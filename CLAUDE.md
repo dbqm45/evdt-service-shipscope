@@ -158,7 +158,14 @@ the web service fills once a minute (`sampleStatus()`, web.js); a day is an outa
   An installation is linked only after the user's own token shows they can access it (`GET /user/installations` in
   the sign-in callback), never on the `installation_id` of GitHub's setup redirect alone.
 - **Deployment ingestion (FR-005)** — the worker (`worker.js`) runs `lib/deployment-sync.js` and the Jira sync
-  every `SYNC_INTERVAL_MINUTES` (default 15) and `lib/retention.js` daily, each behind a Postgres advisory lock. Retention is per tenant
+  every `SYNC_INTERVAL_MINUTES` (default 15) and `lib/retention.js` daily (behind a Postgres advisory lock). The deployment,
+  Jira and endpoint-flag passes take no global lock: each tenant is claimed per job (`withTenantClaim()`,
+  `lib/tenant-claim.js`, `pg_try_advisory_lock(CLAIM_CLASS[job], hashtext(tenantId))`), so several worker instances
+  share them; a tenant held elsewhere is skipped (`busy`), what is due is re-read under the claim, a periodic pass
+  leaves out what was attempted after it began, `WORKER_CONCURRENCY` (1–8, default 1) tenants run at a time per job
+  (`eachLimited()`), a tick is skipped while the job's previous pass still runs in the process, and endpoint polling
+  sends at most 2 requests at a time to one host (`limitPerHost()`) (`server/test/tenant-claim.test.js`,
+  `sync-fairness.test.js`, `jira-sync.test.js`, `flag-poll.test.js`). Retention is per tenant
   (`tenants.deployment_retention_days`, default 90, 7–730) and always keeps each repo/environment's latest and latest
   successful deployment; flag changes (`flag_value_history`, `cleanupFlagHistory()`, migration `034`) follow it too,
   keeping each source/flag/environment's latest, and the dashboard reads at most the newest `HISTORY_READ_LIMIT` (5000)
@@ -295,7 +302,7 @@ the web service fills once a minute (`sampleStatus()`, web.js); a day is an outa
   `jira webhook token without exp` and accepted unless `JIRA_WEBHOOK_REQUIRE_EXP=1`, since Atlassian does not
   document the claims) only queue a key in `sync_requests`;
   the worker's `webhookTick()` drains it every 30 s with `syncAll({ repoIds })`/`syncAllJira({ keys })` under the
-  regular advisory locks. Jira webhooks are registered and refreshed per tenant by `ensureWebhook()` in the Jira sync
+  same per-tenant claims; a request whose tenant was `busy` stays queued. Jira webhooks are registered and refreshed per tenant by `ensureWebhook()` in the Jira sync
   (scope `manage:jira-webhook`, needs an https `PUBLIC_BASE_URL` on the worker); best effort, never failing the sync.
 - **Fair syncs across tenants** (migration `015`) — longest-waiting first (`last_attempt_at`), a per-tenant time
   budget per pass (`SYNC_TENANT_BUDGET_SECONDS`, default 120). The deployment cursor never passes unfinished work

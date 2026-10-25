@@ -74,6 +74,7 @@ const { buildApp } = require('../web');
 const { AUTH, fakeGitHub, signIn, testGitHubApp } = require('./helpers/auth');
 const { withScope } = require('../lib/scope');
 const { syncAll } = require('../lib/deployment-sync');
+const { CLAIM_CLASS } = require('../lib/tenant-claim');
 
 const USERS = { alice: { id: 850_000_001, login: 'alice' }, bob: { id: 850_000_002, login: 'bob' } };
 const ACME = 6101;
@@ -237,4 +238,26 @@ test('fairness: cut short while resolving (which runs in status order, not id or
     await ctx.sync();
     assert.deepStrictEqual((await ctx.rows('Acme', 'SELECT deployment_id FROM deployments ORDER BY deployment_id')).map((r) => Number(r.deployment_id)), [41, 42, 43]);
     assert.strictEqual(Number((await ctx.rows('Acme', "SELECT deployments_cursor FROM tracked_repos WHERE full_name = 'acme/web'"))[0].deployments_cursor), 43);
+});
+
+test('several instances: a tenant another instance holds is skipped (busy); two passes at once sync every repo once', async (t) => {
+    const ctx = await setup(t, { 'acme/web': deploys(11), 'acme/api': deploys(21), 'beta/app': deploys(31) });
+    const deployments = async (name) => (await ctx.rows(name, 'SELECT deployment_id FROM deployments ORDER BY deployment_id')).map((r) => Number(r.deployment_id));
+
+    // Another instance holds Acme's claim (lib/tenant-claim.js): Beta syncs, Acme is left to it.
+    const holder = await ctx.pool.connect();
+    await holder.query('SELECT pg_advisory_lock($1, hashtext($2))', [CLAIM_CLASS.deployments, ctx.tenants.Acme.tenantId]);
+    assert.deepStrictEqual(await ctx.sync(), { repos: 1, inserted: 1, failed: 0, deferred: 0, busy: 1 });
+    await holder.query('SELECT pg_advisory_unlock($1, hashtext($2))', [CLAIM_CLASS.deployments, ctx.tenants.Acme.tenantId]);
+    holder.release();
+    assert.deepStrictEqual(await deployments('Acme'), []);
+
+    // Two instances' passes at once, each with two tenants side by side: every repo once between them.
+    await ctx.rows('Beta', "UPDATE tracked_repos SET last_attempt_at = now() - interval '1 hour'");
+    const [one, two] = await Promise.all([ctx.sync({ options: { concurrency: 2 } }), ctx.sync({ options: { concurrency: 2 } })]);
+    assert.strictEqual(one.repos + two.repos, 3, `${JSON.stringify(one)} ${JSON.stringify(two)}`);
+    assert.deepStrictEqual([await deployments('Acme'), await deployments('Beta')], [[11, 21], [31]]);
+
+    // A periodic pass leaves out repos attempted since it began; a webhook's (repoIds) always syncs what it names.
+    assert.deepStrictEqual(await ctx.sync({ repoIds: [3] }), { repos: 1, inserted: 0, failed: 0, deferred: 0 });
 });

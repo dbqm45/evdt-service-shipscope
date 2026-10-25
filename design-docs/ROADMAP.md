@@ -82,8 +82,9 @@ korporacyjnych.
 
 ## Niezawodność usługi (przed płatnymi klientami)
 
-- [ ] Skalowanie workera: podział pracy między instancje (dziś cały pass jest pod jedną blokadą) i równoległe
-  odczyty z limitem per host.
+- [x] Skalowanie workera: każdy workspace zajmowany osobno (blokada per zadanie i workspace, `lib/tenant-claim.js`),
+  więc kilka instancji dzieli się przebiegami wdrożeń, Jiry i flag; `WORKER_CONCURRENCY` workspace'ów naraz w jednej
+  instancji i najwyżej 2 zapytania naraz do jednego hosta klienta. (#105)
 - [x] Kopie zapasowe bazy z okresowym testem odtwarzania: procedura w `server/KOPIE.pl.md` (PITR Rendera, eksporty,
   kopia poza Renderem, odtworzenie, test raz na kwartał) i `npm run verify-restore`, który sprawdza odtworzoną kopię. (#103)
 - [ ] Ustawić kopię poza Renderem (eksport co tydzień albo cron job „PostgreSQL S3 Backups”) i wpisać pierwszy test

@@ -1,4 +1,5 @@
 const { withScope } = require('./scope');
+const { withTenantClaim, eachLimited } = require('./tenant-claim');
 const { assertAdmin, roleOf, TenantNotFoundError } = require('./tenants');
 const { recordAuditEvent } = require('./audit-log');
 const { accessTokenFor, JiraNotConnectedError } = require('./jira-connections');
@@ -400,11 +401,17 @@ async function removeJiraWebhooks(pool, { tenantId, atlassian, fetch: fetchFn = 
  * `keys` limits it to the tenants a webhook delivery names (lib/webhooks.js jiraSyncKeys(): `webhook:<id>` of the
  * connection's webhook, `cloud:<cloudId>` or `site:<url>`).
  *
- * @param {{ pool: import('pg').Pool, atlassian: object, fetch?: typeof fetch, log?: (msg: string, fields?: { level?: string } & object) => void, now?: Date, clock?: () => number, keys?: string[], tenantBudgetMs?: number }} input
- * @returns {Promise<{ tenants: number, issues: number, failed: number, deferred: number }>} deferred: tenants left (partly) for a later pass
+ * Several worker instances share the work like the deployment sync (lib/tenant-claim.js): a tenant runs under its own
+ * claim, one another instance holds is skipped (`busy`), and a periodic pass leaves out a connection attempted after
+ * it began; `concurrency` tenants run side by side in this instance.
+ *
+ * @param {{ pool: import('pg').Pool, atlassian: object, fetch?: typeof fetch, log?: (msg: string, fields?: { level?: string } & object) => void, now?: Date, clock?: () => number, keys?: string[], tenantBudgetMs?: number, concurrency?: number }} input
+ * @returns {Promise<{ tenants: number, issues: number, failed: number, deferred: number, busy?: number }>} deferred: tenants left (partly) for a later pass; busy (when any): tenants another instance was syncing
  */
-async function syncAllJira({ pool, atlassian, fetch: fetchFn = fetch, log = () => {}, now = new Date(), clock = Date.now, keys = null, tenantBudgetMs = DEFAULT_TENANT_BUDGET_MS }) {
+async function syncAllJira({ pool, atlassian, fetch: fetchFn = fetch, log = () => {}, now = new Date(), clock = Date.now, keys = null, tenantBudgetMs = DEFAULT_TENANT_BUDGET_MS, concurrency = 1 }) {
     const totals = { tenants: 0, issues: 0, failed: 0, deferred: 0 };
+    let busy = 0;
+    const { rows: [{ started }] } = await pool.query('SELECT clock_timestamp() AS started');
     const wanted = keys && new Set(keys);
     const { rows: tenants } = await pool.query('SELECT id FROM tenants ORDER BY created_at');
     const work = [];
@@ -426,10 +433,21 @@ async function syncAllJira({ pool, atlassian, fetch: fetchFn = fetch, log = () =
     const waitKey = (at) => (at ? at.getTime() : -1);
     work.sort((a, b) => waitKey(a.conn.last_attempt_at) - waitKey(b.conn.last_attempt_at));
 
-    for (const { tenantId, conn } of work) {
+    await eachLimited(work, concurrency, async ({ tenantId }) => {
+        const claim = await withTenantClaim(pool, { job: 'jira', tenantId }, () => syncOne(tenantId));
+        if (!claim.claimed) busy += 1;
+    });
+    return busy ? { ...totals, busy } : totals;
+
+    async function syncOne(tenantId) {
+        // Read again under the claim: another instance may have just synced it.
+        const conn = await withScope(pool, { tenantId }, async (client) => (await client.query(
+            'SELECT last_attempt_at, rate_limited_until FROM jira_connections WHERE tenant_id = $1 AND cloud_id IS NOT NULL', [tenantId]
+        )).rows[0]);
+        if (!conn || (!wanted && conn.last_attempt_at && conn.last_attempt_at >= started)) return;
         if (conn.rate_limited_until && conn.rate_limited_until.getTime() > clock()) {
             totals.deferred += 1;
-            continue;
+            return;
         }
         totals.tenants += 1;
         try {
@@ -444,13 +462,12 @@ async function syncAllJira({ pool, atlassian, fetch: fetchFn = fetch, log = () =
             if (err.retryAt) {
                 totals.deferred += 1;
                 log(`tenant ${tenantId}: Atlassian rate limit, Jira sync paused until ${err.retryAt.toISOString()}`, { level: 'warn', tenantId, retryAt: err.retryAt });
-                continue;
+                return;
             }
             totals.failed += 1;
             log(`tenant ${tenantId}: Jira sync failed: ${err.message}`, { level: 'warn', tenantId, err });
         }
     }
-    return totals;
 }
 
 /** The current increments of the selected boards that have synced issues, newest first. */
