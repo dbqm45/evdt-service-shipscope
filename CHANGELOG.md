@@ -7,6 +7,12 @@ dashboard, not a published package), so entries are grouped by date instead. See
 ShipScope is, `CLAUDE.md` for the technical reference, and `FAQ.md` for how specific numbers/badges are
 calculated.
 
+## [0.2.24] - 2026-10-25
+
+### Added
+
+- **SHP:** read customers' flags files in an isolated, limited parser (#81)
+
 ## [0.2.23] - 2026-10-24
 
 ### Added
