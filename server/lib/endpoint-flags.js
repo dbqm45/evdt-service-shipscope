@@ -19,7 +19,7 @@ const { requestSync } = require('./webhooks');
 const { safeFetch, SafeFetchError } = require('./safe-fetch');
 const { parseFlagFile, FlagFileError } = require('./flag-file-parser');
 const { checkEndpointConfig, FlagSourceConfigError } = require('./flags-logic');
-const { recordSecretEvent } = require('./secret-audit');
+const { recordAuditEvent } = require('./audit-log');
 const { lockTenantFlags, applyObservations, recordSourceEnvError, endpointTokenAad, FlagSourceNotFoundError } = require('./flags');
 
 const ENVS = ['test', 'qa', 'prod'];
@@ -321,7 +321,7 @@ async function endpointSigning(pool, { tenantId, actorUserId, encryptionKey }) {
     if (!encryptionKey) throw new FlagSourceConfigError('Reading flags from an endpoint needs TOKEN_ENCRYPTION_KEY on the server');
     const secret = await withScope(pool, { tenantId }, async (client) => {
         await assertAdmin(client, { tenantId, userId: actorUserId });
-        await recordSecretEvent(client, { tenantId, actorUserId, kind: 'signing_secret_viewed' });
+        await recordAuditEvent(client, { tenantId, actorUserId, kind: 'signing_secret_viewed' });
         return tenantSigningSecret(client, { tenantId, encryptionKey });
     });
     return { secret, ...SIGNING_SCHEME };
@@ -343,7 +343,7 @@ async function rotateSigningSecret(pool, { tenantId, actorUserId, encryptionKey 
     await withScope(pool, { tenantId }, async (client) => {
         await assertAdmin(client, { tenantId, userId: actorUserId });
         await client.query('UPDATE tenants SET endpoint_signing_secret_enc = $2 WHERE id = $1', [tenantId, seal(encryptionKey, secret, signingSecretAad(tenantId))]);
-        await recordSecretEvent(client, { tenantId, actorUserId, kind: 'signing_secret_rotated' });
+        await recordAuditEvent(client, { tenantId, actorUserId, kind: 'signing_secret_rotated' });
     });
     return { secret, ...SIGNING_SCHEME };
 }

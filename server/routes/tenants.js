@@ -2,6 +2,7 @@ const {
     createTenantWithOwner, listMembersIfMember, removeMember, assertDeletable, deleteTenant,
 } = require('../lib/tenants');
 const { withScope } = require('../lib/scope');
+const { listAuditEvents } = require('../lib/audit-log');
 const { removeJiraWebhooks } = require('../lib/jira-sync');
 const { listDeployments, getSettings, updateSettings, MAX_LIMIT } = require('../lib/deployments');
 
@@ -105,6 +106,12 @@ function registerTenantRoutes(app, ctx) {
     }, async (request) => updateSettings(pool, {
         tenantId: request.params.tenantId, actorUserId: request.user.id, deploymentRetentionDays: request.body.deploymentRetentionDays,
     }));
+
+    // Who changed which setting, and when (lib/audit-log.js): the latest events, newest first. Admins only.
+    app.get('/tenants/:tenantId/audit-events', {
+        preHandler: requireUser,
+        schema: { params: tenantOnlyParams },
+    }, async (request) => ({ events: await listAuditEvents(pool, { tenantId: request.params.tenantId, actorUserId: request.user.id }) }));
 
     // FR-005: the tenant's deployments as the worker ingested them, newest first.
     app.get('/tenants/:tenantId/deployments', {

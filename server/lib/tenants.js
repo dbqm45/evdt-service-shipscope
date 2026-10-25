@@ -1,4 +1,5 @@
 const { setScope, withScope } = require('./scope');
+const { recordAuditEvent } = require('./audit-log');
 
 class TenantNotFoundError extends Error {}
 class AlreadyMemberError extends Error {}
@@ -70,6 +71,7 @@ async function createTenantWithOwner(pool, { name, githubUserId, githubLogin }) 
             'INSERT INTO memberships (tenant_id, user_id, role) VALUES ($1, $2, $3)',
             [tenant.id, user.id, 'admin']
         );
+        await recordAuditEvent(client, { tenantId: tenant.id, actorUserId: user.id, kind: 'workspace_created', subject: tenant.name });
 
         await client.query('COMMIT');
         return { tenant, user, membership: { tenantId: tenant.id, userId: user.id, role: 'admin' } };
@@ -183,6 +185,12 @@ async function removeMember(pool, { tenantId, actorUserId, targetUserId }) {
         if (targetRole === 'admin' && admins.length === 1) throw new LastAdminError('A tenant needs at least one admin');
 
         await client.query('DELETE FROM memberships WHERE tenant_id = $1 AND user_id = $2', [tenantId, targetUserId]);
+        if (actorUserId === targetUserId) {
+            await recordAuditEvent(client, { tenantId, actorUserId, kind: 'member_left' });
+        } else {
+            const { rows: [target] } = await client.query('SELECT github_login FROM users WHERE id = $1', [targetUserId]);
+            await recordAuditEvent(client, { tenantId, actorUserId, kind: 'member_removed', subject: target ? target.github_login : null });
+        }
     });
 }
 

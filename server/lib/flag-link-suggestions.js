@@ -7,6 +7,7 @@
 // its changed files) and the commits touching the file up to the new ref; the issue keys come from their intersection.
 const { withScope } = require('./scope');
 const { assertAdmin } = require('./tenants');
+const { recordAuditEvent } = require('./audit-log');
 const { githubGet } = require('./github-app');
 const { extractIssueKeys } = require('./deployment-logic');
 const { planLinkSuggestions } = require('./flags-logic');
@@ -83,6 +84,7 @@ async function answerLinkSuggestion(pool, { tenantId, actorUserId, key, jiraKey,
             [tenantId, key, jiraKey]
         );
         if (!row) throw new FlagNotFoundError(`No flag ${key}`);
+        await recordAuditEvent(client, { tenantId, actorUserId, kind: accept ? 'flag_link_accepted' : 'flag_link_dismissed', subject: `${key} → ${jiraKey}` });
         return { key, manualJiraKeys: row.manual_jira_keys, suggestedJiraKeys: row.suggested_jira_keys };
     });
 }

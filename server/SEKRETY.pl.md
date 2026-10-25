@@ -100,7 +100,8 @@ a środowisko pokazuje błąd i „?” na dashboardzie.
 
 Settings → Sources → „Secret activity” pokazuje log audytowy: kto pokazał lub wymienił sekret podpisu, kto ustawił
 lub usunął token endpointu i kto połączył lub odłączył Jirę. Log nigdy nie zawiera samego sekretu. Te same dane daje
-`GET /tenants/:id/secret-events`.
+`GET /tenants/:id/secret-events`. Pozostałe zmiany ustawień (członkowie, repozytoria, źródła flag, Jira) admin
+widzi razem z nimi w Settings → General → „Settings activity” (`GET /tenants/:id/audit-events`).
 
 ## Gdy coś nie działa
 
