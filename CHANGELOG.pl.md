@@ -7,6 +7,12 @@ dashboard, nie publikowany pakiet), dlatego wpisy są pogrupowane według dat. I
 ShipScope, znajdują się w `README.pl.md`, pełne techniczne odniesienie w `CLAUDE.md` (po angielsku), a
 wyjaśnienie sposobu liczenia poszczególnych wartości/badge'y w `FAQ.pl.md`.
 
+## [0.2.41] - 2026-10-25
+
+### Nowe
+
+- **SHP:** accept GitHub Actions OIDC tokens on the flags ingest (#100)
+
 ## [0.2.40] - 2026-10-25
 
 ### Nowe

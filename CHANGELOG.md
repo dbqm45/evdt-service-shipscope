@@ -7,6 +7,12 @@ dashboard, not a published package), so entries are grouped by date instead. See
 ShipScope is, `CLAUDE.md` for the technical reference, and `FAQ.md` for how specific numbers/badges are
 calculated.
 
+## [0.2.41] - 2026-10-25
+
+### Added
+
+- **SHP:** accept GitHub Actions OIDC tokens on the flags ingest (#100)
+
 ## [0.2.40] - 2026-10-25
 
 ### Added
