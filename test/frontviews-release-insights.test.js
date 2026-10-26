@@ -565,6 +565,29 @@ test('renderIntentLeadTimeChart: one bar per change with the median; empty state
     assert.ok(html('chartIntentLeadTime').includes('Changes (repo)'));
 });
 
+test('leadTimeFromReport: days from the problem report (PRB) to a change\'s first PROD; only changes with a report day', () => {
+    const { ev, run, setState, html } = loadApp();
+    const change = (key, extra) => issue(key, { pi: '@changes', sprint: null, type: 'Epic', title: `Change ${key}`, subtaskKeys: [], ...extra });
+
+    setState({
+        selectedPi: '@changes',
+        jiraIssues: [
+            change('CHG-1', { intentCreated: '2026-09-29', sourceKey: 'PRB-3', sourceReportedAt: '2026-09-14' }),
+            change('CHG-2', { intentCreated: '2026-10-01' }),
+        ],
+        deployments: [dep({ relatedIssues: ['CHG-1', 'CHG-2'], deployedAt: '2026-10-04T10:00:00Z' })],
+    });
+
+    assert.deepEqual(ev('leadTimeFromReport()').map(r => [r.key, r.source, r.days]), [['CHG-1', 'PRB-3', 20]]);
+    assert.deepEqual(ev('leadTimeFromIntent()').map(r => r.key), ['CHG-1', 'CHG-2'], 'the intent measure is unchanged');
+    run('renderReportLeadTimeChart()');
+    const out = html('chartReportLeadTime');
+    assert.ok(out.includes('CHG-1') && out.includes('20d') && out.includes('PRB-3') && out.includes('Median 20d over 1 change(s)'));
+    setState({});
+    run('renderReportLeadTimeChart()');
+    assert.ok(html('chartReportLeadTime').includes('report'));
+});
+
 test('leadTimeToProdBySprint: median per sprint, clamping and exclusions', () => {
     const { ev, setState } = loadApp();
 
@@ -659,7 +682,7 @@ test('renderInsights renders all five charts without stray commas', () => {
 
     setState(rnState({ issueDeployments: {} }));
     run('renderInsights()');
-    for (const id of ['chartSprint', 'chartLeadTime', 'chartIntentLeadTime', 'chartPriority', 'chartStaleFlags', 'chartRollbackDrift']) {
+    for (const id of ['chartSprint', 'chartLeadTime', 'chartIntentLeadTime', 'chartReportLeadTime', 'chartPriority', 'chartStaleFlags', 'chartRollbackDrift']) {
         assert.ok(html(id).length > 0, id);
         assert.ok(!/>\s*,\s*</.test(html(id)), id);
     }

@@ -14,6 +14,7 @@ created: 2026-10-20
 updated: 2026-10-23
 change: CHG-12
 source: PRB-34
+source_reported_at: 2026-10-15
 ---
 
 # Retry a failed payment without a double charge
@@ -81,8 +82,8 @@ test('buildWorkItems: a change with its tasks; a bad file is an error for its ch
         { dir: 'notes' },
     ]);
     const byKey = Object.fromEntries(items.map((i) => [i.key, i]));
-    assert.deepStrictEqual(byKey['CHG-12'], { key: 'CHG-12', kind: 'change', parent: null, title: 'Retry a failed payment without a double charge', status: 'accepted', source: 'PRB-34', path: 'docs/project/changes/CHG-12/intent.md', problem: 'Customers whose card payment fails at checkout cannot retry it — they start the order again and are sometimes charged twice.', created: '2026-10-20' });
-    assert.deepStrictEqual(byKey['TSK-57'], { key: 'TSK-57', kind: 'task', parent: 'CHG-12', title: 'Retry endpoint for a failed payment', status: 'done', source: null, path: 'docs/project/changes/CHG-12/plan.md', problem: null, created: null });
+    assert.deepStrictEqual(byKey['CHG-12'], { key: 'CHG-12', kind: 'change', parent: null, title: 'Retry a failed payment without a double charge', status: 'accepted', source: 'PRB-34', path: 'docs/project/changes/CHG-12/intent.md', problem: 'Customers whose card payment fails at checkout cannot retry it — they start the order again and are sometimes charged twice.', created: '2026-10-20', reported: '2026-10-15' });
+    assert.deepStrictEqual(byKey['TSK-57'], { key: 'TSK-57', kind: 'task', parent: 'CHG-12', title: 'Retry endpoint for a failed payment', status: 'done', source: null, path: 'docs/project/changes/CHG-12/plan.md', problem: null, created: null, reported: null });
     assert.strictEqual(byKey['TSK-60'], undefined, 'dropped tasks are not shown');
     assert.deepStrictEqual(errors.map((e) => e.change), ['CHG-13', 'CHG-15', 'CHG-16']);
     assert.match(errors[0].message, /intent\.md: change is CHG-14, not CHG-13/);
@@ -115,6 +116,8 @@ test('workItemIssues: a change is an Epic over its tasks (subtaskKeys), tasks ar
     const bare = workItemIssues(buildWorkItems([{ dir: 'CHG-13', plan: PLAN.replace('CHG-12', 'CHG-13') }]).items);
     assert.strictEqual(bare.find((i) => i.key === 'CHG-13').problem, null);
     assert.strictEqual(chg.intentCreated, '2026-10-20');
+    assert.deepStrictEqual([chg.sourceKey, chg.sourceReportedAt], ['PRB-34', '2026-10-15'], 'the problem it came from and its report day');
+    assert.strictEqual(buildWorkItems([{ dir: 'CHG-12', intent: INTENT.replace('source_reported_at: 2026-10-15', 'source_reported_at: 15.10.2026') }]).items[0].reported, null);
     assert.ok(!('intentCreated' in tsk));
     assert.strictEqual(bare.find((i) => i.key === 'CHG-13').intentCreated, null, 'no intent, no date');
     const odd = buildWorkItems([{ dir: 'CHG-12', intent: INTENT.replace('created: 2026-10-20', 'created: wczoraj') }]).items;
@@ -184,7 +187,8 @@ test('sync: changes and tasks from the default branch; unchanged folder = one re
     // A folder read by an older version of the reader (before release.yaml, migration 038) is read again.
     await rows('UPDATE tracked_repos SET work_items_version = 0');
     assert.deepStrictEqual(await read(), { read: 4, errors: 0, plans: 0 });
-    assert.strictEqual((await rows('SELECT work_items_version FROM tracked_repos'))[0].work_items_version, 3);
+    assert.strictEqual((await rows('SELECT work_items_version FROM tracked_repos'))[0].work_items_version, 4);
+    assert.strictEqual((await rows("SELECT to_char(source_reported_at, 'YYYY-MM-DD') AS d FROM work_items WHERE item_key = 'CHG-12'"))[0].d, '2026-10-15');
     assert.strictEqual((await rows("SELECT to_char(intent_created, 'YYYY-MM-DD') AS d FROM work_items WHERE item_key = 'CHG-12'"))[0].d, '2026-10-20');
     assert.match((await rows("SELECT problem FROM work_items WHERE item_key = 'CHG-12'"))[0].problem, /^Customers whose card payment fails/);
 
@@ -217,6 +221,7 @@ test('dashboard: a Changes increment without Jira; its issues; a commit naming a
     assert.deepStrictEqual(issues.find((i) => i.key === 'CHG-12').subtaskKeys, ['TSK-57', 'TSK-58', 'TSK-59']);
     assert.match(issues.find((i) => i.key === 'CHG-12').problem, /cannot retry it/, 'the change carries its intent\'s Problem');
     assert.strictEqual(issues.find((i) => i.key === 'CHG-12').intentCreated, '2026-10-20');
+    assert.strictEqual(issues.find((i) => i.key === 'CHG-12').sourceReportedAt, '2026-10-15');
 
     // Untracking the repo removes its items.
     await rows('DELETE FROM tracked_repos WHERE repo_id = 1');

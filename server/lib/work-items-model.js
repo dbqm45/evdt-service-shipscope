@@ -137,7 +137,7 @@ function checkHeader(header, { dir, artifact }) {
  * that can't be read is an error for its change only; the change is then left out.
  *
  * @param {Array<{ dir: string, intent?: string, plan?: string }>} changes the folders' files' text, as read
- * @returns {{ items: Array<{ key: string, kind: 'change'|'task', parent: string|null, title: string, status: string|null, source: string|null, path: string, problem: string|null, created: string|null }>, errors: Array<{ change: string, message: string }> }}
+ * @returns {{ items: Array<{ key: string, kind: 'change'|'task', parent: string|null, title: string, status: string|null, source: string|null, path: string, problem: string|null, created: string|null, reported: string|null }>, errors: Array<{ change: string, message: string }> }}
  */
 function buildWorkItems(changes) {
     const items = [];
@@ -152,6 +152,7 @@ function buildWorkItems(changes) {
             let source = null;
             let problem = null;
             let created = null;
+            let reported = null;
             if (intent !== undefined) {
                 const { header, body } = parseFrontMatter(intent);
                 checkHeader(header, { dir, artifact: 'intent' });
@@ -159,6 +160,8 @@ function buildWorkItems(changes) {
                 problem = intentProblem(body);
                 // The intent's own date, where the lead time from the intent starts (F5; not yet the PRB's, F3).
                 created = DATE.test(String(header.created)) ? String(header.created) : null;
+                // The day the problem it came from was reported (pdi contract 0.5.0): lead time from the report.
+                reported = DATE.test(String(header.source_reported_at)) ? String(header.source_reported_at) : null;
                 status = typeof header.status === 'string' ? header.status : null;
                 source = header.source || null;
             }
@@ -170,9 +173,9 @@ function buildWorkItems(changes) {
                 tasks = planTasks(body, [...new Set(header.tasks || [])]);
                 source = source || header.source || null;
             }
-            items.push({ key: dir, kind: 'change', parent: null, title: title || dir, status, source, path: `${base}/${intent !== undefined ? 'intent' : 'plan'}.md`, problem, created });
+            items.push({ key: dir, kind: 'change', parent: null, title: title || dir, status, source, path: `${base}/${intent !== undefined ? 'intent' : 'plan'}.md`, problem, created, reported });
             for (const t of tasks.filter((task) => task.status !== 'dropped')) {
-                items.push({ key: t.key, kind: 'task', parent: dir, title: t.title, status: t.status, source: null, path: `${base}/plan.md`, problem: null, created: null });
+                items.push({ key: t.key, kind: 'task', parent: dir, title: t.title, status: t.status, source: null, path: `${base}/plan.md`, problem: null, created: null, reported: null });
             }
         } catch (err) {
             if (!(err instanceof WorkItemFileError)) throw err;
@@ -189,7 +192,7 @@ const TASK_CATEGORY = { planned: 'new', in_progress: 'indeterminate', in_review:
  * Work items in the dashboard's issue shape, in the Changes increment: a change is an Epic whose `subtaskKeys` are its
  * tasks (so a commit naming a task counts for the change, issueKeys() in docs/app-model.js), a task a Story under it.
  *
- * @param {Array<{ key: string, kind: string, parent: string|null, title: string, status: string|null, problem?: string|null, created?: string|null }>} items
+ * @param {Array<{ key: string, kind: string, parent: string|null, title: string, status: string|null, source?: string|null, problem?: string|null, created?: string|null, reported?: string|null }>} items
  * @returns {object[]}
  */
 function workItemIssues(items) {
@@ -208,6 +211,7 @@ function workItemIssues(items) {
             return {
                 ...common, key: i.key, type: 'Epic', title: i.title, status: i.status ? i.status[0].toUpperCase() + i.status.slice(1) : null, statusCategory,
                 epicKey: null, epicTitle: null, subtaskKeys: tasks.map((t) => t.key), problem: i.problem || null, intentCreated: i.created || null,
+                sourceKey: i.source || null, sourceReportedAt: i.reported || null,
                 subtasks: tasks.length ? { done: categories.filter((c) => c === 'done').length, total: tasks.length } : null,
             };
         }

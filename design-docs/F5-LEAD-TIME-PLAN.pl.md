@@ -1,6 +1,6 @@
-# F5 — lead time od zgłoszenia (ShipScope), na razie od intencji
+# F5 — lead time od intencji i od zgłoszenia (ShipScope)
 
-Stan: 2026-10-26, w toku. Krok z planu jednego flow (dbqm45/pdi `docs/plan-jeden-flow-sdlc.md` §6, F5; tabela zmian:
+Stan: 2026-10-26. Krok z planu jednego flow (dbqm45/pdi `docs/plan-jeden-flow-sdlc.md` §6, F5; tabela zmian:
 „Lead time od zgłoszenia — Insights: PRB utworzone → wydane na prod (daty z pdi)”).
 
 ## Decyzja właściciela (2026-10-26)
@@ -24,3 +24,18 @@ pierwszego udanego wdrożenia na PROD. Miara „od PRB” dojdzie z F3, gdy pdi 
 na prawdziwym Postgresie i wersja 3. `test/frontviews-release-insights.test.js`: `leadTimeFromIntent()` (dni, przycięcie
 do 0, pominięte bez daty i bez PROD, kolejność, limit), render z medianą i pusty stan. `test/frontend-render.test.js`:
 nowy panel w `docs/index.html`. Do tego `migrate`.
+
+## Od zgłoszenia (2026-10-26, druga część)
+Decyzja właściciela: data zgłoszenia jedzie w nagłówku zmiany. Kontrakt pdi 0.5.0 (dbqm45/pdi#26) dodaje opcjonalne
+`source_reported_at` do `change.schema.json`; pdi przy przyjęciu PRB podaje ją fazie intent, tf (`decision_record.py
+change new --source-reported-at`) zapisuje ją w nagłówku `intent.md`.
+
+1. **Worker.** `buildWorkItems()` bierze `source_reported_at` (tylko `RRRR-MM-DD`), migracja
+   `043_work_item_source_reported.sql`: `work_items.source_reported_at date`; `WORK_ITEMS_VERSION` = 4.
+2. **Dane.** Zmiana w `workItemIssues()` dostaje `sourceKey` (np. `PRB-3`) i `sourceReportedAt`.
+3. **Insights.** Panel „Lead time: report → PROD” (`#chartReportLeadTime`): `leadTimeFromReport()` liczy tak samo jak
+   od intencji (wspólne `leadTimeFrom(field)`), tylko od dnia zgłoszenia; zmiany bez tej daty (starsze, pomysły bez
+   problemu) pominięte; w podpowiedzi słupka klucz zgłoszenia.
+
+Testy: `work-items.test.js` (pole z nagłówka, kolumna, wersja 4, `sourceReportedAt`), `frontviews-release-insights`
+(`leadTimeFromReport()`, render, pusty stan), `frontend-render` (panel), `migrate`.
