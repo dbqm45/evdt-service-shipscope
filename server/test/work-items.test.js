@@ -81,8 +81,8 @@ test('buildWorkItems: a change with its tasks; a bad file is an error for its ch
         { dir: 'notes' },
     ]);
     const byKey = Object.fromEntries(items.map((i) => [i.key, i]));
-    assert.deepStrictEqual(byKey['CHG-12'], { key: 'CHG-12', kind: 'change', parent: null, title: 'Retry a failed payment without a double charge', status: 'accepted', source: 'PRB-34', path: 'docs/project/changes/CHG-12/intent.md', problem: 'Customers whose card payment fails at checkout cannot retry it — they start the order again and are sometimes charged twice.' });
-    assert.deepStrictEqual(byKey['TSK-57'], { key: 'TSK-57', kind: 'task', parent: 'CHG-12', title: 'Retry endpoint for a failed payment', status: 'done', source: null, path: 'docs/project/changes/CHG-12/plan.md', problem: null });
+    assert.deepStrictEqual(byKey['CHG-12'], { key: 'CHG-12', kind: 'change', parent: null, title: 'Retry a failed payment without a double charge', status: 'accepted', source: 'PRB-34', path: 'docs/project/changes/CHG-12/intent.md', problem: 'Customers whose card payment fails at checkout cannot retry it — they start the order again and are sometimes charged twice.', created: '2026-10-20' });
+    assert.deepStrictEqual(byKey['TSK-57'], { key: 'TSK-57', kind: 'task', parent: 'CHG-12', title: 'Retry endpoint for a failed payment', status: 'done', source: null, path: 'docs/project/changes/CHG-12/plan.md', problem: null, created: null });
     assert.strictEqual(byKey['TSK-60'], undefined, 'dropped tasks are not shown');
     assert.deepStrictEqual(errors.map((e) => e.change), ['CHG-13', 'CHG-15', 'CHG-16']);
     assert.match(errors[0].message, /intent\.md: change is CHG-14, not CHG-13/);
@@ -114,6 +114,11 @@ test('workItemIssues: a change is an Epic over its tasks (subtaskKeys), tasks ar
     assert.ok(!('problem' in tsk), 'tasks carry no problem of their own');
     const bare = workItemIssues(buildWorkItems([{ dir: 'CHG-13', plan: PLAN.replace('CHG-12', 'CHG-13') }]).items);
     assert.strictEqual(bare.find((i) => i.key === 'CHG-13').problem, null);
+    assert.strictEqual(chg.intentCreated, '2026-10-20');
+    assert.ok(!('intentCreated' in tsk));
+    assert.strictEqual(bare.find((i) => i.key === 'CHG-13').intentCreated, null, 'no intent, no date');
+    const odd = buildWorkItems([{ dir: 'CHG-12', intent: INTENT.replace('created: 2026-10-20', 'created: wczoraj') }]).items;
+    assert.strictEqual(odd[0].created, null, 'only a RRRR-MM-DD date counts');
 });
 
 if (!process.env.TEST_DATABASE_URL) {
@@ -179,7 +184,8 @@ test('sync: changes and tasks from the default branch; unchanged folder = one re
     // A folder read by an older version of the reader (before release.yaml, migration 038) is read again.
     await rows('UPDATE tracked_repos SET work_items_version = 0');
     assert.deepStrictEqual(await read(), { read: 4, errors: 0, plans: 0 });
-    assert.strictEqual((await rows('SELECT work_items_version FROM tracked_repos'))[0].work_items_version, 2);
+    assert.strictEqual((await rows('SELECT work_items_version FROM tracked_repos'))[0].work_items_version, 3);
+    assert.strictEqual((await rows("SELECT to_char(intent_created, 'YYYY-MM-DD') AS d FROM work_items WHERE item_key = 'CHG-12'"))[0].d, '2026-10-20');
     assert.match((await rows("SELECT problem FROM work_items WHERE item_key = 'CHG-12'"))[0].problem, /^Customers whose card payment fails/);
 
     commit(2, { [`${DIR}/CHG-13/intent.md`]: INTENT.replace('CHG-12', 'CHG-13'), [`${DIR}/CHG-14/plan.md`]: '# no header' });
@@ -210,6 +216,7 @@ test('dashboard: a Changes increment without Jira; its issues; a commit naming a
     assert.deepStrictEqual(issues.map((i) => i.key).sort(), ['CHG-12', 'TSK-57', 'TSK-58', 'TSK-59']);
     assert.deepStrictEqual(issues.find((i) => i.key === 'CHG-12').subtaskKeys, ['TSK-57', 'TSK-58', 'TSK-59']);
     assert.match(issues.find((i) => i.key === 'CHG-12').problem, /cannot retry it/, 'the change carries its intent\'s Problem');
+    assert.strictEqual(issues.find((i) => i.key === 'CHG-12').intentCreated, '2026-10-20');
 
     // Untracking the repo removes its items.
     await rows('DELETE FROM tracked_repos WHERE repo_id = 1');

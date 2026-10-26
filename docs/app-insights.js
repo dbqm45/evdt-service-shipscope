@@ -245,6 +245,52 @@ function renderLeadTimeChart(){
     }))}`;
 }
 
+const INTENT_LEAD_TIME_MAX = 12;
+
+/** Days from a change's intent (`intentCreated`, the `created` date of its intent.md, F5) to its first successful
+ *  prod deployment (`earliestProdDeployedAt()`, so a commit naming one of its tasks counts) — the lead time "from the
+ *  idea", until pdi keeps the problems' own dates (F3). Changes of the loaded increment only (repo changes live in
+ *  "Changes (repo)"), newest first prod first, at most 12; a deploy before the intent is clamped to 0. */
+function leadTimeFromIntent(){
+    return state.jiraIssues
+        .filter(i => i.intentCreated)
+        .map(issue => {
+            const firstProdAt = earliestProdDeployedAt(issue);
+            const start = Date.parse(`${issue.intentCreated}T00:00:00Z`);
+
+            return firstProdAt === null || !Number.isFinite(start) ? null : {
+                key: issue.key,
+                title: issue.title,
+                firstProdAt,
+                days: Math.max(0, Math.floor((firstProdAt - start) / 86400000)),
+            };
+        })
+        .filter(Boolean)
+        .sort((a, b) => b.firstProdAt - a.firstProdAt)
+        .slice(0, INTENT_LEAD_TIME_MAX);
+}
+
+function renderIntentLeadTimeChart(){
+    const box = document.getElementById('chartIntentLeadTime');
+    const rows = leadTimeFromIntent();
+
+    if (!rows.length) {
+        box.innerHTML = EmptyState({ message: 'No change with an intent date on PROD here — pick “Changes (repo)” in the increment selector' });
+        return;
+    }
+
+    const values = rows.map(r => r.days).sort((a, b) => a - b);
+    const mid = Math.floor(values.length / 2);
+    const median = values.length % 2 ? values[mid] : Math.round((values[mid - 1] + values[mid]) / 2);
+    const max = Math.max(...values, 1);
+
+    box.innerHTML = html`${ChartLegend({ items: [{ cls: 'seg-deployed', label: `Median ${median}d over ${rows.length} change(s)` }] })}${rows.map(r => BarRow({
+        label: r.key,
+        valueText: `${r.days}d`,
+        segments: BarSegment({ cls: 'seg-deployed', widthPct: Math.max(r.days / max * 100, 2), title: `${r.key} ${r.title}: ${r.days}d from the intent to PROD` }),
+    }))}`;
+}
+
 /** Chart 3's data: deployments from the last 12 calendar months only, bucketed by month of `deployedAt`,
  *  counting how many carry `rollback` and how many carry a `driftBehind` that actually flags something
  *  (`commitCount` — this env fell behind an earlier one — or `untestedCommitCount` — this env has commits
@@ -312,6 +358,7 @@ function renderRollbackDriftChart(){
 function renderInsights(){
     renderSprintStatusChart();
     renderLeadTimeChart();
+    renderIntentLeadTimeChart();
     renderPriorityStatusChart();
     renderStaleFlagsChart();
     renderRollbackDriftChart();
