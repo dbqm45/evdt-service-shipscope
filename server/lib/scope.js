@@ -17,20 +17,22 @@ const RLS_TABLES = [
     'memberships', 'invitations', 'github_installations', 'tracked_repos', 'deployments', 'issue_deployments',
     'flag_sources', 'flag_source_repos', 'flag_source_envs', 'ingest_tokens', 'flags', 'flag_values', 'flag_value_history', 'jira_connections', 'jira_boards',
     'jira_pis', 'jira_issues', 'audit_events', 'endpoint_tests', 'jira_access_grants', 'release_lines', 'flag_commit_links', 'work_items', 'release_plans', 'event_subscriptions', 'event_state', 'event_outbox',
+    'service_tokens',
 ];
 
 /**
  * Sets the RLS scope for the rest of the current transaction. Must be called after BEGIN.
  *
  * @param {import('pg').PoolClient} client
- * @param {{ tenantId?: string, userId?: string, inviteTokenHash?: string, ingestTokenHash?: string }} scope
+ * @param {{ tenantId?: string, userId?: string, inviteTokenHash?: string, ingestTokenHash?: string, serviceTokenHash?: string }} scope
  * @returns {Promise<void>}
  */
-async function setScope(client, { tenantId, userId, inviteTokenHash, ingestTokenHash }) {
+async function setScope(client, { tenantId, userId, inviteTokenHash, ingestTokenHash, serviceTokenHash }) {
     if (tenantId !== undefined) await client.query("SELECT set_config('app.current_tenant_id', $1, true)", [tenantId]);
     if (userId !== undefined) await client.query("SELECT set_config('app.current_user_id', $1, true)", [userId]);
     if (inviteTokenHash !== undefined) await client.query("SELECT set_config('app.invite_token_hash', $1, true)", [inviteTokenHash]);
     if (ingestTokenHash !== undefined) await client.query("SELECT set_config('app.ingest_token_hash', $1, true)", [ingestTokenHash]);
+    if (serviceTokenHash !== undefined) await client.query("SELECT set_config('app.service_token_hash', $1, true)", [serviceTokenHash]);
 }
 
 /**
@@ -39,7 +41,7 @@ async function setScope(client, { tenantId, userId, inviteTokenHash, ingestToken
  *
  * @template T
  * @param {import('pg').Pool} pool
- * @param {{ tenantId?: string, userId?: string, inviteTokenHash?: string, ingestTokenHash?: string }} scope
+ * @param {{ tenantId?: string, userId?: string, inviteTokenHash?: string, ingestTokenHash?: string, serviceTokenHash?: string }} scope
  * @param {(client: import('pg').PoolClient) => Promise<T>} fn
  * @returns {Promise<T>}
  */

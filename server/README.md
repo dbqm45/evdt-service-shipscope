@@ -344,6 +344,32 @@ X-ShipScope-Signature: v1=<hex HMAC-SHA256(secret, "1793000000.<raw body>")>
 
 Check it in constant time, and refuse a timestamp more than a few minutes old.
 
+## Service API
+
+Other services (pdi's trace graph and outcome review, tf's control bands, a CI script) read one workspace with a
+service token: an admin creates it in Settings → General, "Service tokens" (`POST /tenants/:tenantId/service-tokens`
+`{ name, lifetimeDays }`, default 365 days, `null` = no end, at most 10). The token (`shps_…`) is shown once; only its
+SHA-256 is stored (migration `040`, `service_tokens`, RLS); creating and revoking it is in the settings activity.
+Read only; 60 requests at once, then one a second per token (429 + `Retry-After`).
+
+```
+GET /api/service/v1/items/:key                     Authorization: Bearer shps_…
+→ { key, title, type, source: "jira"|"repo", envs: { test|qa|prod: { status, uncertain, mismatch } },
+    firstProdAt, releasedOnProd }
+GET /api/service/v1/metrics?from=2026-10-01&to=2026-10-31&format=json|csv
+→ { environment: "prod", from, to, days: [{ date, deployments, failedDeployments, rollbacks,
+    leadTimeDaysMedian, leadTimeCount }] }
+```
+
+`status` is the dashboard's pill for that environment (`none`, `deployed`, `released`, `partial`,
+`deployed_code_only`), computed by the dashboard's own `docs/app-*.js` on the server (`lib/release-status.js`). An
+item is a Jira issue (its newest synced copy) or a change/task from a repo's `docs/project/changes`. Metrics are per
+UTC day for PROD over at most 400 days (default the last 90): successful and failed deployments, rollbacks, and the
+median days from a Jira issue's resolution to its first PROD deployment for the issues that reached PROD that day.
+Drift is not in the series: ShipScope keeps only its current state. The CSV has the header
+`date,deployments,failed_deployments,rollbacks,lead_time_days_median,lead_time_count` and feeds tf's control bands
+as is: `control_band.py metrics.csv --column rollbacks --baseline 30 --side upper`.
+
 ## Running locally
 
 One command, from the repo root or from `server/` (needs Node 20+ and Docker running):
