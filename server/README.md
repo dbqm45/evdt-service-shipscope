@@ -359,7 +359,24 @@ GET /api/service/v1/items/:key                     Authorization: Bearer shps_�
 GET /api/service/v1/metrics?from=2026-10-01&to=2026-10-31&format=json|csv
 → { environment: "prod", from, to, days: [{ date, deployments, failedDeployments, rollbacks,
     leadTimeDaysMedian, leadTimeCount }] }
+GET /api/service/v1/changes
+→ { changes: [{ key, title, status, problem, source, sourceReportedAt, intentCreated, subtasks, envs, firstProdAt,
+    releasedOnProd, tasks: [{ key, title, status, prod, releasedOnProd }] }] }
+GET /api/service/v1/release-plan
+→ { mode: "jira"|"repo", groups: [{ key, title, mvp, outcome, mvpReleased, problems, lines: [{ id, name, released,
+    onProdCount, items: [{ key, title, prod, onProd }] }], flags: [flagPlanStatus()] }] }
+GET /api/service/v1/flags
+→ { flags: [{ key, description, kind, itemKeys, services, prod: { state, percent, changedAt } | null,
+    envs: { env: { service: { state, rollout, changedAt, sourceName } } }, freshness, blastRadius, stale }] }
+GET /api/service/v1/environments
+→ { services: [{ name, serviceType, flagCoverage, envs: { test|qa|prod: null | { version, deployedAt, commitUrl,
+    deployedBy, rollback, drift: null | { comparedWith, files, paths, unknown, commitsBehind } } } }] }
 ```
+
+The last four (K-1) are what the dashboard shows, read by the ShipScope MCP server for Claude
+([`adapters/mcp/`](../adapters/mcp/README.md)): the changes from the repos with their tasks, the Release plan tab
+(`releasePlanModel()`), the flags panel (`flagProdExposure()`, `flagBlastRadius()`, `flagStaleWarning()`) and each
+service's latest successful deployment per environment (`currentVersion()`) with its drift.
 
 `status` is the dashboard's pill for that environment (`none`, `deployed`, `released`, `partial`,
 `deployed_code_only`), computed by the dashboard's own `docs/app-*.js` on the server (`lib/release-status.js`). An

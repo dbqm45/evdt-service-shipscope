@@ -53,6 +53,11 @@ localhost.
   `.env`, TypeScript/JavaScript read without running them by `script-objects.js`; objects or lists of flags;
   `{env}` in a pattern + `env-map` for one file per environment) or a URL and posts their state to `POST /api/flags/ingest`. Tested in
   `test/flags-adapter*.test.js` and end to end in `server/test/flags.test.js`.
+- `adapters/mcp/` is the ShipScope MCP server for Claude (K-1 of the pdi automation plan, `design-docs/K1-MCP-PLAN.pl.md`;
+  `shipscope-mcp.js` stdio over `lib.js`, Node 20+, no dependencies): newline-delimited JSON-RPC 2.0 (`initialize`,
+  `tools/list`, `tools/call`, `ping`), six read-only tools over the service API with `SHIPSCOPE_URL` (https, http only
+  for localhost, no login) and `SHIPSCOPE_TOKEN` (`shps_…`); arguments checked before any request, refusals as
+  `isError` without the token, 30 s and 2 MB per answer. Tested in `test/mcp-adapter.test.js`.
 - `scripts/` holds only tooling: the release scripts (`release.js`, `release-notes.js`, `check-commit-message.js`,
   `lib/conventional.js`, `lib/json-file.js`) and the module-boundary check.
 - `server/` is a separate dependency boundary: its own `package.json`, `node_modules/` (gitignored) and `test/`.
@@ -355,7 +360,11 @@ the web service fills once a minute (`sampleStatus()`, web.js); a day is an outa
   (a Jira issue's newest copy or a repo work item → `itemStatus()`: `issueStatusForEnv()` per environment,
   `earliestProdDeployedAt()`) and `GET /api/service/v1/metrics?from&to&format=json|csv` (PROD per UTC day:
   deployments, failed, rollbacks, median lead time Done → PROD via `leadTimes()`; ≤ 400 days, default 90; the CSV is
-  what tf's `control_band.py` reads) run the real `docs/app-*.js` in `lib/release-status.js`'s sandbox. Per-token
+  what tf's `control_band.py` reads) run the real `docs/app-*.js` in `lib/release-status.js`'s sandbox. For the MCP
+  server (K-1): `GET …/changes` (`workItemIssues()` with `itemStatuses()`, tasks under each change, newest first),
+  `…/release-plan` (`releasePlan()` = `releasePlanModel()`), `…/flags` (`flagsView()`: exposure, state per service,
+  freshness, `flagBlastRadius()`/`flagStaleWarning()`, so the sandbox also loads `app-technical-flags.js`) and
+  `…/environments` (`environmentsView()`: `currentVersion()` per service and environment with its drift). Per-token
   token bucket as for the ingest (`server/test/service-api.test.js`).
 - **Webhooks** (`lib/webhooks.js`, migration `013`) — `POST /webhooks/github` (HMAC, `GITHUB_APP_WEBHOOK_SECRET`)
   and `POST /webhooks/jira` (HS256 JWT signed with the Atlassian client secret; a token without `exp` is logged as
