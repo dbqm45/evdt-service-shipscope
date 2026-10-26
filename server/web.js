@@ -78,6 +78,7 @@ const TOKEN_PARAM = { type: 'string', pattern: TOKEN_PATTERN.source };
 const GITHUB_ID_PARAM = { type: 'string', pattern: '^[1-9][0-9]{0,14}$' };
 
 /** Domain errors from lib/ and the HTTP status each one means. */
+const { EventSubscriptionError } = require('./lib/outgoing-events');
 const ERROR_STATUS = [
     [TenantNotFoundError, 404],
     [InvitationNotFoundError, 404],
@@ -103,6 +104,7 @@ const ERROR_STATUS = [
     [JiraSiteError, 400],
     [JiraBoardError, 400],
     [AtlassianError, 502],
+    [EventSubscriptionError, 400],
 ];
 
 /** Drops the query string and masks invitation tokens, which work like passwords until accepted. */

@@ -8,6 +8,8 @@ const { resealSecrets } = require('./lib/secret-rotation');
 const { runQueuedEndpointTest } = require('./lib/endpoint-flags');
 const { handOverAccessToken } = require('./lib/jira-connections');
 const { flagSourceHealth } = require('./lib/flags');
+const { detectReleaseEvents, deliverEvents } = require('./lib/outgoing-events');
+const { safeFetch } = require('./lib/safe-fetch');
 const { pendingSyncRequests, finishSyncRequests } = require('./lib/webhooks');
 const { recordRun } = require('./lib/worker-status');
 const { createLogger, logLevel, logProcessFailures } = require('./lib/log');
@@ -28,6 +30,12 @@ const SECRETS_LOCK = 727_005;
 const ENDPOINT_TEST_LOCK = 727_006;
 const SOURCES_LOCK = 727_007;
 const SOURCES_INTERVAL_MS = 5 * 60_000; // the flag sources' totals for GET /metrics
+// Outgoing events (G1.5, lib/outgoing-events.js): looked for every 5 minutes, delivered every minute, each by one
+// instance at a time (a delivery must not go out twice).
+const EVENTS_LOCK = 727_008;
+const EVENT_DELIVERY_LOCK = 727_009;
+const EVENTS_INTERVAL_MS = 5 * 60_000;
+const EVENT_DELIVERY_INTERVAL_MS = 60_000;
 const ENDPOINT_TEST_INTERVAL_MS = 2_000; // an admin waits on these in Settings
 const JIRA_TOKEN_INTERVAL_MS = 1_000; // the web service waits on these, a page in Settings with it
 
@@ -274,6 +282,40 @@ async function secretsTick(pool, encryptionKey, logger = defaultLogger, deps = {
 }
 
 /** Counts every tenant's flag sources by origin and freshness (lib/flags.js) for GET /metrics, every 5 minutes. */
+/** Release events for every tenant with a subscription (lib/outgoing-events.js detectReleaseEvents()). */
+async function eventsTick(pool, logger = defaultLogger, deps = { detectReleaseEvents }) {
+    await runJob(pool, {
+        job: 'events', lock: EVENTS_LOCK, logger, deps,
+        run: async () => {
+            const log = syncLogger(logger.child({ job: 'events' }));
+            const totals = { tenants: 0, events: 0, queued: 0, failed: 0 };
+            const { rows } = await pool.query('SELECT id FROM tenants ORDER BY created_at');
+            for (const { id: tenantId } of rows) {
+                try {
+                    const r = await deps.detectReleaseEvents(pool, { tenantId, log });
+                    if (r.events || r.queued) totals.tenants += 1;
+                    totals.events += r.events;
+                    totals.queued += r.queued;
+                } catch (err) {
+                    totals.failed += 1;
+                    log(`tenant ${tenantId}: release events not looked for: ${err.message}`, { level: 'warn', tenantId, err });
+                }
+            }
+            return totals;
+        },
+        summary: (r) => `release events: ${r.events} in ${r.tenants} tenant(s), ${r.queued} queued, ${r.failed} failed`,
+    });
+}
+
+/** Delivers the queued events that are due (lib/outgoing-events.js deliverEvents()), signed, through safeFetch(). */
+async function eventDeliveryTick(pool, encryptionKey, logger = defaultLogger, deps = { deliverEvents, fetchImpl: safeFetch }) {
+    await runJob(pool, {
+        job: 'event-delivery', lock: EVENT_DELIVERY_LOCK, logger, deps,
+        run: () => deps.deliverEvents(pool, { encryptionKey, fetchImpl: deps.fetchImpl, log: syncLogger(logger.child({ job: 'event-delivery' })) }),
+        summary: (r) => `events delivered: ${r.delivered}, ${r.retried} to retry, ${r.failed} given up`,
+    });
+}
+
 async function sourcesTick(pool, logger = defaultLogger, deps = { flagSourceHealth }) {
     await runJob(pool, {
         job: 'sources', lock: SOURCES_LOCK, logger, deps,
@@ -335,6 +377,11 @@ if (require.main === module) {
     cleanupTick(pool);
     timers.push(setInterval(() => sourcesTick(pool), SOURCES_INTERVAL_MS));
     sourcesTick(pool);
+    if (encryptionKey) {
+        // Events are signed with the workspace's signing secret, sealed by TOKEN_ENCRYPTION_KEY.
+        timers.push(setInterval(() => eventsTick(pool), EVENTS_INTERVAL_MS));
+        timers.push(setInterval(() => eventDeliveryTick(pool, encryptionKey), EVENT_DELIVERY_INTERVAL_MS));
+    }
 
     process.on('SIGTERM', () => {
         defaultLogger.info('worker stopping (SIGTERM)');
@@ -343,4 +390,4 @@ if (require.main === module) {
     });
 }
 
-module.exports = { heartbeatTick, runExclusive, syncIntervalMinutes, tenantBudgetSeconds, syncTick, jiraTick, flagsTick, secretsTick, endpointTestTick, jiraTokenTick, webhookTick, sourcesTick, cleanupTick };
+module.exports = { heartbeatTick, runExclusive, syncIntervalMinutes, tenantBudgetSeconds, syncTick, jiraTick, flagsTick, secretsTick, endpointTestTick, jiraTokenTick, webhookTick, sourcesTick, cleanupTick, eventsTick, eventDeliveryTick };

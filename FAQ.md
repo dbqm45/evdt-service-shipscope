@@ -371,6 +371,11 @@ Plan against reality, per Epic (lines from Jira) or per change (a plan from a re
   above its lines; tf checks this when the plan is written.
 
 Lines are read from every synced issue, not one PI, so the PI selector is hidden on this tab.
+
+The same model sends events, when an admin subscribes an address in Settings → General ("Outgoing events"):
+`release.stage_changed` when a planned flag moves to another stage on PROD, and `feature.released` with `release`
+when a line becomes released (R1 = the MVP is with users). The first look only records the current state, so
+nothing from before the subscription is sent.
 (`releasePlanModel()`, `flagPlanStatus()` in `docs/app-model.js`; `docs/app-release-plan.js`.)
 
 ## Delivery summary tab

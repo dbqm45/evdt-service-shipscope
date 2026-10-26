@@ -181,6 +181,9 @@ Feature flags:
 | `PUT /tenants/:tenantId/flag-sources/:sourceId` | session + admin | Body `{ name, kind, priority, repoIds, staleAfterMinutes? }` (or the older `repoId`): rename, change the kind, the precedence, the services it covers or how long a full confirmation stays fresh (left out = unchanged, `null` = the kind's default: runtime a day, build never); for an endpoint source also `endpoint` and `endpointToken` (left out = unchanged, `null` removes the token). A complete message confirms each environment it covers; a refused one newer than that makes it `error`. |
 | `POST /tenants/:tenantId/flag-endpoint-test` | session + admin | Body `{ "endpoint": { ... }, "endpointToken"?: "..." \| null, "sourceId"?: uuid }`: reads the endpoint per environment now, saved or not (without `endpointToken`, a saved source's own token), and returns only what was parsed: `{ envs: [{ env, host, flags? \| error? }] }`, never the answer itself. 10 per workspace, then one every 6 s (429 + `Retry-After`). |
 | `POST /tenants/:tenantId/flag-endpoint-signing/rotate` | session + admin | Replaces the workspace's signing secret with a new random one and returns it like the route below, once more readable there. The old secret stops at once: until the customer's endpoint has the new one, it refuses ShipScope's reads, which show as errors and keep the flags. |
+| `GET /tenants/:tenantId/event-subscriptions` | session + admin | Outgoing events (G1.5, `lib/outgoing-events.js`): `{ subscriptions: [{ id, url, types, createdAt, lastDeliveredAt, lastError, lastErrorAt, pending }] }`. |
+| `POST /tenants/:tenantId/event-subscriptions` | session + admin | Body `{ "url": "https://…", "types": ["release.stage_changed", "feature.released"] }` (a public https address, `checkUrl()`; at most 5 per workspace; else 400). `201 { subscription }`. Audited. |
+| `DELETE /tenants/:tenantId/event-subscriptions/:subscriptionId` | session + admin | Removes it and what waits for it; 404 when unknown. Audited. |
 | `GET /tenants/:tenantId/audit-events` | session + admin | The workspace's audit log, newest first (at most 100): `{ events: [{ at, kind, subject, actor }] }`, `kind` one of `AUDIT_EVENT_KINDS` in `lib/audit-log.js` (the secret events below plus members, invitations, GitHub accounts, repositories, flag sources and tokens, flag details, Jira's site, boards and flag convention, retention); `subject` what changed, `actor` a GitHub login. Never a secret or a token. |
 | `GET /tenants/:tenantId/secret-events` | session + admin | The audit log of the workspace's secrets, newest first (at most 100): `{ events: [{ at, kind, subject, actor }] }`, `kind` one of `signing_secret_viewed`, `signing_secret_rotated`, `endpoint_token_set`, `endpoint_token_removed`, `jira_connected`, `jira_disconnected`; `subject` the source or Jira site, `actor` a GitHub login. Never a secret. |
 | `GET /tenants/:tenantId/flag-endpoint-test/:testId` | session + admin | The result of a "Test" the worker ran because the stored token is sealed for it (the POST answered `202 { pending: true, testId }`): `{ status: "pending" }` or `{ status: "done", envs }`, kept a day. |
@@ -308,11 +311,38 @@ not stripped or coerced).
   `github_installations` and `tracked_repos` (migration `004`), `deployments` and `issue_deployments`
   (migration `005`), `flag_sources`, `ingest_tokens`, `flags`, `flag_values` and `flag_value_history` (migration
   `008`), `jira_connections` (migration `009`), `jira_boards`, `jira_pis` and `jira_issues` (migration `010`),
-  `release_lines` and `flag_commit_links` (migration `036`), `work_items` (migration `037`), `release_plans` (migration `038`) and the rest of `RLS_TABLES` in `lib/scope.js` are
+  `release_lines` and `flag_commit_links` (migration `036`), `work_items` (migration `037`), `release_plans` (migration `038`),
+  `event_subscriptions`, `event_state` and `event_outbox` (migration `039`) and the rest of `RLS_TABLES` in `lib/scope.js` are
   tenant-scoped the same way. An ingest request carries no session: like an invitation, it can read
   exactly the one `ingest_tokens` row whose hash it holds (`app.ingest_token_hash`), then works under that row's
   tenant, one ingest per tenant at a time (a transaction advisory lock).
   An unscoped query fails closed: zero rows, or an RLS error for a write.
+
+## Outgoing events
+
+A workspace's admin subscribes https addresses (Settings → General, "Outgoing events") to two events of the pdi
+contract 0.4.0 (`server/schemas/event.v0.4.0.schema.json`, a pinned copy; each event is checked against it before it
+is queued):
+
+- `release.stage_changed` `{ change, release, flag, from_stage?, to_stage, rollout }`: a flag of a repo plan
+  (`release.yaml`) moved to another rollout stage on PROD;
+- `feature.released` `{ change, release, tasks, released_at, environment: "prod" }`: every item of a release line is
+  with users on PROD (`release: "R1"` = the MVP).
+
+The worker's `events` job (every 5 minutes, one instance at a time) runs the Release plan tab's model
+(`docs/app-model.js` in a `vm`, `lib/release-status.js`) for each tenant with a subscription and compares it with
+`event_state`; the first look at a change only records it. `event-delivery` (every minute) POSTs what is due through
+`safeFetch()` and retries a failure after 1, 2, 4… minutes up to an hour, at most 10 times. Receivers deduplicate by
+the event's `id` and check the signature, made with the workspace's signing secret (the one endpoint requests carry,
+Settings → Sources; replaced with `POST …/flag-endpoint-signing/rotate`):
+
+```
+X-ShipScope-Timestamp: 1793000000
+X-ShipScope-Event: feature.released
+X-ShipScope-Signature: v1=<hex HMAC-SHA256(secret, "1793000000.<raw body>")>
+```
+
+Check it in constant time, and refuse a timestamp more than a few minutes old.
 
 ## Running locally
 

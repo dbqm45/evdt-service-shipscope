@@ -124,92 +124,103 @@ function shortRef(ref) {
 async function buildDashboardData(pool, { tenantId, actorUserId }) {
     return withScope(pool, { tenantId }, async (client) => {
         if (!(await roleOf(client, { tenantId, userId: actorUserId }))) throw new TenantNotFoundError('Tenant not found');
-
-        const { rows: repos } = await client.query(
-            'SELECT repo_id, full_name, last_synced_at, drift, flag_stance, service_role FROM tracked_repos WHERE tenant_id = $1 ORDER BY created_at, full_name',
-            [tenantId]
-        );
-        const names = componentNames(repos);
-        const { rows: deployments } = await client.query(
-            'SELECT * FROM deployments WHERE tenant_id = $1 ORDER BY deployed_at DESC, deployment_id DESC',
-            [tenantId]
-        );
-        const { rows: facts } = await client.query(
-            'SELECT issue_key, environment, repo_id, first_deployed_at, commit_url FROM issue_deployments WHERE tenant_id = $1',
-            [tenantId]
-        );
-
-        const issueDeployments = {};
-        for (const f of facts) {
-            const byEnv = (issueDeployments[f.issue_key] ||= {});
-            const byComponent = (byEnv[f.environment] ||= {});
-            byComponent[names.get(Number(f.repo_id))] = { deployedAt: f.first_deployed_at.toISOString(), commitUrl: f.commit_url };
-        }
-
-        // Drift belongs on each environment's latest successful record, where currentVersion() finds it
-        // (rows are newest first, so the first success per repo/environment is that record).
-        const driftByRepo = new Map(repos.map((r) => [Number(r.repo_id), r.drift?.envs || {}]));
-        const seen = new Set();
-        const records = deployments.map((row) => {
-            const record = toLegacyRecord(row, names.get(Number(row.repo_id)));
-            const key = `${row.repo_id}/${row.environment}`;
-            if (row.status === 'success' && !seen.has(key)) {
-                seen.add(key);
-                const drift = driftByRepo.get(Number(row.repo_id))[row.environment];
-                if (drift) record.driftBehind = drift;
-            }
-            return record;
-        });
-
-        const { jiraIndex, issueStatusIndex } = await readDashboardJira(client, { tenantId });
-        // Work items from the repos (F1): their own increment, their keys in the status index, links to their files.
-        const workItems = await readWorkItems(client, tenantId);
-        const releasePlan = await readReleasePlan(client, tenantId, workItems);
-        const workItemUrls = {};
-        if (workItems.length) {
-            jiraIndex.pis.push({ pi: CHANGES_KEY, kind: 'change', label: CHANGES_LABEL, file: 'changes.json', sprints: [] });
-            if (!jiraIndex.currentPi) jiraIndex.currentPi = CHANGES_KEY;
-            for (const issue of workItemIssues(workItems)) {
-                if (!issueStatusIndex[issue.key]) issueStatusIndex[issue.key] = { pi: CHANGES_KEY, statusCategory: issue.statusCategory };
-            }
-            for (const w of workItems) workItemUrls[w.key] = w.url;
-        }
-        const { flagsMeta, flagStates, flagStatesByComponent, flagFreshness, flagStateHistory, coveredComponents } = await readDashboardFlags(client, {
-            tenantId, componentOf: (repoId) => names.get(repoId),
-        });
-
-        // Where an issue key links to: the tenant's own Jira site, or nowhere until Jira is connected (the dashboard
-        // then shows keys unlinked rather than pointing them at somebody else's Jira).
-        const { rows: [jira] } = await client.query('SELECT site_url FROM jira_connections WHERE tenant_id = $1 AND cloud_id IS NOT NULL', [tenantId]);
-        const jiraBrowseUrl = jira && /^https:\/\/[^/\s]+/.test(jira.site_url || '') ? `${jira.site_url.replace(/\/+$/, '')}/browse` : null;
-
-        const synced = repos.map((r) => r.last_synced_at).filter(Boolean).sort((a, b) => b - a);
-        return {
-            deployments: records,
-            flagsMeta,
-            flagStates,
-            flagStatesByComponent,
-            flagFreshness,
-            flagStateHistory,
-            jiraIndex,
-            issueStatusIndex,
-            issueDeployments,
-            componentsOrder: repos.map((r) => ({
-                name: names.get(Number(r.repo_id)),
-                description: r.full_name,
-                // The admin's role for the repo (migration 025): FE/BE, as the file-based components.json had it.
-                serviceType: r.service_role === 'frontend' ? 'FE' : r.service_role === 'backend' ? 'BE' : null,
-                featureFlagsIncluded: null,
-                application: null,
-                // ADR-003: tracked (a source covers it), none (declared: no flags) or unknown (nobody said).
-                flagCoverage: coveredComponents.has(names.get(Number(r.repo_id))) ? 'tracked' : r.flag_stance === 'none' ? 'none' : 'unknown',
-            })),
-            lastSyncedAt: synced.length ? synced[0].toISOString() : null,
-            jiraBrowseUrl,
-            releasePlan,
-            workItemUrls,
-        };
+        return readDashboardData(client, { tenantId });
     });
 }
 
-module.exports = { buildDashboardData };
+/**
+ * The dashboard data of one tenant, without a member check: for the worker (lib/release-status.js), which acts for the
+ * tenant itself. Same shape as buildDashboardData().
+ *
+ * @param {import('pg').PoolClient} client inside withScope()
+ * @param {{ tenantId: string }} input
+ * @returns {Promise<object>}
+ */
+async function readDashboardData(client, { tenantId }) {
+    const { rows: repos } = await client.query(
+        'SELECT repo_id, full_name, last_synced_at, drift, flag_stance, service_role FROM tracked_repos WHERE tenant_id = $1 ORDER BY created_at, full_name',
+        [tenantId]
+    );
+    const names = componentNames(repos);
+    const { rows: deployments } = await client.query(
+        'SELECT * FROM deployments WHERE tenant_id = $1 ORDER BY deployed_at DESC, deployment_id DESC',
+        [tenantId]
+    );
+    const { rows: facts } = await client.query(
+        'SELECT issue_key, environment, repo_id, first_deployed_at, commit_url FROM issue_deployments WHERE tenant_id = $1',
+        [tenantId]
+    );
+
+    const issueDeployments = {};
+    for (const f of facts) {
+        const byEnv = (issueDeployments[f.issue_key] ||= {});
+        const byComponent = (byEnv[f.environment] ||= {});
+        byComponent[names.get(Number(f.repo_id))] = { deployedAt: f.first_deployed_at.toISOString(), commitUrl: f.commit_url };
+    }
+
+    // Drift belongs on each environment's latest successful record, where currentVersion() finds it
+    // (rows are newest first, so the first success per repo/environment is that record).
+    const driftByRepo = new Map(repos.map((r) => [Number(r.repo_id), r.drift?.envs || {}]));
+    const seen = new Set();
+    const records = deployments.map((row) => {
+        const record = toLegacyRecord(row, names.get(Number(row.repo_id)));
+        const key = `${row.repo_id}/${row.environment}`;
+        if (row.status === 'success' && !seen.has(key)) {
+            seen.add(key);
+            const drift = driftByRepo.get(Number(row.repo_id))[row.environment];
+            if (drift) record.driftBehind = drift;
+        }
+        return record;
+    });
+
+    const { jiraIndex, issueStatusIndex } = await readDashboardJira(client, { tenantId });
+    // Work items from the repos (F1): their own increment, their keys in the status index, links to their files.
+    const workItems = await readWorkItems(client, tenantId);
+    const releasePlan = await readReleasePlan(client, tenantId, workItems);
+    const workItemUrls = {};
+    if (workItems.length) {
+        jiraIndex.pis.push({ pi: CHANGES_KEY, kind: 'change', label: CHANGES_LABEL, file: 'changes.json', sprints: [] });
+        if (!jiraIndex.currentPi) jiraIndex.currentPi = CHANGES_KEY;
+        for (const issue of workItemIssues(workItems)) {
+            if (!issueStatusIndex[issue.key]) issueStatusIndex[issue.key] = { pi: CHANGES_KEY, statusCategory: issue.statusCategory };
+        }
+        for (const w of workItems) workItemUrls[w.key] = w.url;
+    }
+    const { flagsMeta, flagStates, flagStatesByComponent, flagFreshness, flagStateHistory, coveredComponents } = await readDashboardFlags(client, {
+        tenantId, componentOf: (repoId) => names.get(repoId),
+    });
+
+    // Where an issue key links to: the tenant's own Jira site, or nowhere until Jira is connected (the dashboard
+    // then shows keys unlinked rather than pointing them at somebody else's Jira).
+    const { rows: [jira] } = await client.query('SELECT site_url FROM jira_connections WHERE tenant_id = $1 AND cloud_id IS NOT NULL', [tenantId]);
+    const jiraBrowseUrl = jira && /^https:\/\/[^/\s]+/.test(jira.site_url || '') ? `${jira.site_url.replace(/\/+$/, '')}/browse` : null;
+
+    const synced = repos.map((r) => r.last_synced_at).filter(Boolean).sort((a, b) => b - a);
+    return {
+        deployments: records,
+        flagsMeta,
+        flagStates,
+        flagStatesByComponent,
+        flagFreshness,
+        flagStateHistory,
+        jiraIndex,
+        issueStatusIndex,
+        issueDeployments,
+        componentsOrder: repos.map((r) => ({
+            name: names.get(Number(r.repo_id)),
+            description: r.full_name,
+            // The admin's role for the repo (migration 025): FE/BE, as the file-based components.json had it.
+            serviceType: r.service_role === 'frontend' ? 'FE' : r.service_role === 'backend' ? 'BE' : null,
+            featureFlagsIncluded: null,
+            application: null,
+            // ADR-003: tracked (a source covers it), none (declared: no flags) or unknown (nobody said).
+            flagCoverage: coveredComponents.has(names.get(Number(r.repo_id))) ? 'tracked' : r.flag_stance === 'none' ? 'none' : 'unknown',
+        })),
+        lastSyncedAt: synced.length ? synced[0].toISOString() : null,
+        jiraBrowseUrl,
+        releasePlan,
+        workItemUrls,
+    };
+}
+
+module.exports = { buildDashboardData, readDashboardData };

@@ -117,15 +117,17 @@ function readBody(res, maxBytes) {
 }
 
 /**
- * A GET of a customer's https address under the rules above.
+ * A GET of a customer's https address under the rules above, or a POST (`method`, `body`: an outgoing event, G1.5)
+ * under the same rules.
  *
  * @param {string} rawUrl
- * @param {{ headers?: Record<string, string>, timeoutMs?: number, maxBytes?: number, port?: number, lookup?: Function, request?: Function, ca?: string }} [options]
+ * @param {{ method?: 'GET'|'POST', body?: string, headers?: Record<string, string>, timeoutMs?: number, maxBytes?: number, port?: number, lookup?: Function, request?: Function, ca?: string }} [options]
  *   `lookup`, `request`, `port` and `ca` exist for tests (a local server); production passes none of them
  * @returns {Promise<{ status: number, headers: object, contentType: string, body: string, address: string }>}
  * @throws {SafeFetchError} with a message fit to show the admin (no response body in it)
  */
-async function safeFetch(rawUrl, { headers = {}, timeoutMs = DEFAULTS.timeoutMs, maxBytes = DEFAULTS.maxBytes, port = DEFAULTS.port, lookup = dns.lookup, request = https.request, ca } = {}) {
+async function safeFetch(rawUrl, { method = 'GET', body = null, headers = {}, timeoutMs = DEFAULTS.timeoutMs, maxBytes = DEFAULTS.maxBytes, port = DEFAULTS.port, lookup = dns.lookup, request = https.request, ca } = {}) {
+    if (method !== 'GET' && method !== 'POST') throw new SafeFetchError('Only GET or POST requests are sent');
     const url = checkUrl(rawUrl, { port });
     const host = url.hostname.replace(/^\[|\]$/g, '');
     const deadline = Date.now() + timeoutMs;
@@ -142,12 +144,16 @@ async function safeFetch(rawUrl, { headers = {}, timeoutMs = DEFAULTS.timeoutMs,
             reject(err instanceof SafeFetchError ? err : new SafeFetchError(`Could not reach ${host} (${err.code || 'connection failed'})`));
         };
         const req = request({
-            method: 'GET',
+            method,
             host,
             servername: net.isIP(host) ? undefined : host,
             port,
             path: `${url.pathname}${url.search}`,
-            headers: { accept: 'application/json, application/yaml, text/plain;q=0.8', 'accept-encoding': 'gzip, deflate, br', 'user-agent': 'ShipScope', ...headers },
+            headers: {
+                accept: 'application/json, application/yaml, text/plain;q=0.8', 'accept-encoding': 'gzip, deflate, br', 'user-agent': 'ShipScope',
+                ...(body !== null ? { 'content-length': String(Buffer.byteLength(body)) } : {}),
+                ...headers,
+            },
             // The connection goes to the address checked above, never to what a second lookup might answer.
             lookup: (hostname, opts, cb) => (opts && opts.all ? cb(null, [pinned]) : cb(null, pinned.address, pinned.family)),
             agent: false,
@@ -167,7 +173,7 @@ async function safeFetch(rawUrl, { headers = {}, timeoutMs = DEFAULTS.timeoutMs,
         });
         const timer = setTimeout(() => fail(new SafeFetchError(`${host} did not answer within ${Math.round(timeoutMs / 1000)} s`)), remaining());
         req.on('error', fail);
-        req.end();
+        req.end(body !== null ? body : undefined);
     });
 }
 

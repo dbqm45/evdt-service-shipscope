@@ -132,3 +132,27 @@ test('jiraTick runs the Jira sync without a global lock, logs its outcome (busy 
     assert.match(lines[0].msg, /jira sync done: 2 tenants, 30 issues, 1 failed, 1 left for the next pass, 2 tenant\(s\) busy in another instance/);
     assert.deepStrictEqual([lines[1].msg, lines[1].err.message], ['jira failed', 'db down']);
 });
+
+test('eventsTick looks at every tenant and goes on past a failing one; eventDeliveryTick delivers through its fetch', async () => {
+    const { eventsTick, eventDeliveryTick } = require('../worker');
+    const { logger, lines } = memoryLogger();
+    const { runs, recordRun } = recorder();
+    const pool = { ...lockPool(true).pool, query: async () => ({ rows: [{ id: 't1' }, { id: 't2' }] }) };
+    const seen = [];
+    await eventsTick(pool, logger, {
+        recordRun,
+        detectReleaseEvents: async (p, { tenantId }) => {
+            seen.push(tenantId);
+            if (tenantId === 't1') throw new Error('boom');
+            return { events: 2, queued: 3 };
+        },
+    });
+    assert.deepStrictEqual(seen, ['t1', 't2']);
+    assert.match(lines.at(-1).msg, /release events: 2 in 1 tenant\(s\), 3 queued, 1 failed/);
+    const fetchImpl = async () => ({ status: 200 });
+    let used = null;
+    await eventDeliveryTick(lockPool(true).pool, Buffer.alloc(32), logger, { recordRun, fetchImpl, deliverEvents: async (p, input) => { used = input.fetchImpl; return { delivered: 1, retried: 0, failed: 0 }; } });
+    assert.strictEqual(used, fetchImpl);
+    assert.match(lines.at(-1).msg, /events delivered: 1, 0 to retry, 0 given up/);
+    assert.deepStrictEqual(runs.map((r) => r.job), ['events', 'event-delivery']);
+});

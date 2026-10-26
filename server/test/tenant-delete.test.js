@@ -90,6 +90,9 @@ async function populatedTenant({ pool, app, as }, owner, name, { jira = false } 
         await c.query("INSERT INTO flag_commit_links (tenant_id, flag_key, item_key, repo_id) VALUES ($1, 'newCheckout', 'ABC-1', 1)", [tenantId]);
         await c.query("INSERT INTO work_items (tenant_id, item_key, kind, repo_id, title, path, ref) SELECT $1, 'CHG-12', 'change', repo_id, 'x', 'p', 'r' FROM tracked_repos WHERE tenant_id = $1 LIMIT 1", [tenantId]);
         await c.query("INSERT INTO release_plans (tenant_id, change_key, repo_id, plan, ref) SELECT $1, 'CHG-12', repo_id, '{}', 'r' FROM tracked_repos WHERE tenant_id = $1 LIMIT 1", [tenantId]);
+        const { rows: [sub] } = await c.query("INSERT INTO event_subscriptions (tenant_id, url, types) VALUES ($1, 'https://pdi.acme.io/h', '{feature.released}') RETURNING id", [tenantId]);
+        await c.query("INSERT INTO event_outbox (tenant_id, subscription_id, event) VALUES ($1, $2, '{}')", [tenantId, sub.id]);
+        await c.query("INSERT INTO event_state (tenant_id, kind, subject) VALUES ($1, 'seen', 'CHG-12')", [tenantId]);
     });
     return tenantId;
 }
