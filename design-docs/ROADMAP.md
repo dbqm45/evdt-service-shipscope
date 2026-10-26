@@ -88,7 +88,9 @@ korporacyjnych.
   - [x] Tryb repo: `changes/CHG-n/release.yaml` przez Contents API (ten sam sync co elementy z F1), walidowany
     przypiętą kopią schematu z kontraktu pdi 0.4.0, z widocznym błędem syncu przy złym pliku; złamana spójność
     planu (MVP spoza linii, TSK w kilku liniach) jest wyświetlana, nie poprawiana.
-  - [ ] Zdarzenia `release.stage_changed` i `feature.released` z polem `release` (G1.5, po wychodzących webhookach z F5).
+  - [x] Zdarzenia `release.stage_changed` i `feature.released` z polem `release` (G1.5, `design-docs/G1.5-PLAN.pl.md`):
+    subskrypcje adresów w Settings → General, kolejka i podpisana dostawa z ponowieniami (pierwsze wychodzące
+    webhooki z F5, tylko te dwa zdarzenia). Część pdi (skrzynka bramek, ocena skutku MVP) jest w repo pdi.
 - [ ] Wysyłanie flag do panelu Jiry przez jej Feature Flags API (wymaga aplikacji Forge).
 
 ## Niezawodność usługi (przed płatnymi klientami)

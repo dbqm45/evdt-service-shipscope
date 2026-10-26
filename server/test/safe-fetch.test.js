@@ -107,3 +107,16 @@ test('no redirects; limits on size after decompression and on time; the certific
     await assert.rejects(get('/slow', { timeoutMs: 300 }), /did not answer within/);
     await assert.rejects(get('/flags', { ca: undefined }), /Could not reach flags.example.com/, 'a certificate nobody vouches for');
 });
+
+test('POST (outgoing events): the method, a JSON body with its length, the caller\'s headers; the same address rules', async () => {
+    routes['/events'] = (req, res) => {
+        let body = '';
+        req.on('data', (c) => { body += c; });
+        req.on('end', () => res.end(JSON.stringify({ method: req.method, type: req.headers['content-type'], length: req.headers['content-length'], sig: req.headers['x-shipscope-signature'], body })));
+    };
+    const { get } = local();
+    const res = await get('/events', { method: 'POST', body: '{"type":"feature.released"}', headers: { 'content-type': 'application/json', 'x-shipscope-signature': 'v1=abc' } });
+    assert.deepStrictEqual(JSON.parse(res.body), { method: 'POST', type: 'application/json', length: '27', sig: 'v1=abc', body: '{"type":"feature.released"}' });
+    await assert.rejects(safeFetch('https://10.0.0.1/events', { method: 'POST', body: '{}' }), /private or reserved/);
+    await assert.rejects(get('/events', { method: 'DELETE' }), /GET or POST/);
+});

@@ -424,8 +424,34 @@ function renderSidebar({ page, tenant, admin, counts, steps, hidden = false }){
 
 const MEMBER_HINT = 'You are a member: only admins can change settings.';
 
-/** @param {{ workspace: { settings: object }|null, admin: boolean }} props */
-function renderGeneral({ workspace, admin, auditEvents = null }){
+const EVENT_TYPE_LABELS = [['release.stage_changed', 'a planned flag moves to another rollout stage on PROD'], ['feature.released', 'every item of a release line is with users on PROD']];
+
+/** Outgoing events (G1.5, admins): the addresses that get release events, their delivery state, and a form. */
+function EventSubscriptions(subs){
+    if (subs === null) {
+        return '';
+    }
+    if (subs && subs.error) {
+        return Card({ title: 'Outgoing events', body: html`<p class="settings-error">${subs.error}</p>` });
+    }
+    const rows = subs.map((s) => html`<li><strong class="mono">${s.url}</strong> <span class="settings-row-meta">${s.types.join(', ')}${s.pending ? ` · ${s.pending} waiting` : ''}${s.lastDeliveredAt ? html` · last delivered ${fmtDateTime(s.lastDeliveredAt)}` : ''}</span>
+        ${s.lastError ? html`<div class="settings-error">${s.lastError}</div>` : ''}
+        <button type="button" class="btn-link btn" data-action="remove-event-subscription" data-subscription-id="${s.id}">remove</button></li>`);
+    return Card({
+        title: 'Outgoing events',
+        body: html`<p class="settings-hint">ShipScope posts release events (pdi contract 0.4.0) to these https addresses, signed with this workspace's signing secret
+            (Settings → Sources): <span class="mono">X-ShipScope-Signature: v1=HMAC-SHA256(secret, "&lt;timestamp&gt;.&lt;body&gt;")</span>. A failed delivery is tried again for a few hours.</p>
+            ${rows.length ? html`<ul class="settings-list">${rows}</ul>` : html`<p class="settings-hint">No address yet.</p>`}
+            <form class="settings-form" data-action="add-event-subscription">
+                <label>Address <input name="url" type="url" required maxlength="500" placeholder="https://pdi.example.com/hooks/shipscope"></label>
+                ${EVENT_TYPE_LABELS.map(([type, label]) => html`<label class="inline"><input type="checkbox" name="types" value="${type}" checked> <span class="mono">${type}</span>: ${label}</label>`)}
+                <button type="submit" class="btn">Subscribe</button>
+            </form>`,
+    });
+}
+
+/** @param {{ workspace: { settings: object }|null, admin: boolean, auditEvents?: object[]|null|{ error: string }, eventSubscriptions?: object[]|null|{ error: string } }} props */
+function renderGeneral({ workspace, admin, auditEvents = null, eventSubscriptions = null }){
     const page = (body) => Page({ id: 'general', section: 'workspace', title: 'General', hint: admin ? 'How long ShipScope keeps this workspace\'s history.' : MEMBER_HINT, body });
     if (!workspace) {
         return page(html`<p class="settings-loading">Loading…</p>`);
@@ -439,7 +465,7 @@ function renderGeneral({ workspace, admin, auditEvents = null }){
                 <label>Keep deployment history (days, 7–730) <input name="deploymentRetentionDays" type="number" min="7" max="730" required value="${days}"></label>
                 <button type="submit" class="btn">Save</button></form>`
             : html`<p class="settings-hint">Deployment history is kept for ${days} days.</p>`,
-    })}${admin ? AuditEvents(auditEvents) : ''}`);
+    })}${admin ? EventSubscriptions(eventSubscriptions) : ''}${admin ? AuditEvents(auditEvents) : ''}`);
 }
 
 /** @param {{ workspace: { members: object[], invitations: object[]|null }|null, admin: boolean, meId: string, once: object }} props */
@@ -1096,7 +1122,7 @@ const AUDIT_EVENT_LABELS = {
     flag_source_created: 'added the flag source', flag_source_updated: 'changed the flag source', flag_source_deleted: 'deleted the flag source',
     ingest_token_created: 'created a token for', ingest_token_revoked: 'revoked a token of',
     flag_details_changed: 'edited the flag', flag_link_accepted: 'linked the suggested issue', flag_link_dismissed: 'dismissed the suggested issue',
-    jira_site_selected: 'chose the Jira site', jira_flag_link_changed: 'set how Jira names flags:', jira_release_link_changed: 'set how Jira names release lines:', jira_boards_changed: 'chose the Jira boards',
+    jira_site_selected: 'chose the Jira site', jira_flag_link_changed: 'set how Jira names flags:', jira_release_link_changed: 'set how Jira names release lines:', event_subscription_added: 'subscribed an address to events:', event_subscription_removed: 'removed the event subscription of', jira_boards_changed: 'chose the Jira boards',
     jira_board_changed: 'changed the increments of the board',
 };
 
@@ -1303,7 +1329,7 @@ function renderSettings(){
     const repos = (s.github && s.github.repos) || [];
     const pages = {
         'getting-started': () => renderGettingStarted({ steps }),
-        general: () => renderGeneral({ workspace: s.workspace, admin, auditEvents: s.auditEvents }),
+        general: () => renderGeneral({ workspace: s.workspace, admin, auditEvents: s.auditEvents, eventSubscriptions: s.eventSubscriptions }),
         members: () => renderMembers({ workspace: s.workspace, admin, meId: s.me && s.me.user.id, once: s.once }),
         github: () => renderGitHub({ enabled: s.features.githubApp, webhooks: s.features.githubWebhooks, github: s.github, installationRepos: s.installationRepos, admin, picker: s.trackPicker, editing: s.editingRepo, sources: s.flags, wizard: s.codeWizard }),
         jira: () => renderJira({ enabled: s.features.jira, webhooks: s.features.jiraWebhooks, jira: s.jira, boards: s.boards, admin, flagFields: s.flagFields }),
@@ -1338,12 +1364,15 @@ function rerender(){
 
 const loaders = {
     async workspace(){
-        const [settings, { members }, invitations] = await Promise.all([
+        const [settings, { members }, invitations, eventSubscriptions] = await Promise.all([
             api('GET', tenantPath('/settings')),
             api('GET', tenantPath('/members')),
             isAdmin() ? api('GET', tenantPath('/invitations')).then((r) => r.invitations) : Promise.resolve(null),
+            // Outgoing events (G1.5), on General with the other workspace settings.
+            isAdmin() ? api('GET', tenantPath('/event-subscriptions')).then((r) => r.subscriptions, (err) => ({ error: err.message })) : Promise.resolve(null),
         ]);
         settingsState.workspace = { settings, members, invitations };
+        settingsState.eventSubscriptions = eventSubscriptions;
     },
     async github(){
         if (settingsState.features.githubApp) {
@@ -1379,6 +1408,7 @@ const loaders = {
             ? await api('GET', tenantPath('/audit-events')).then((r) => r.events, (err) => ({ error: err.message }))
             : null;
     },
+
 };
 
 /** Reloads sections (all by default), each failing on its own: one broken section never blanks the others. */
@@ -1444,6 +1474,18 @@ const actions = {
         await api('DELETE', tenantPath(''), { confirmName });
         location.assign('/');
         return null;
+    },
+    'add-event-subscription': async (form) => {
+        const values = formValues(form);
+        await api('POST', tenantPath('/event-subscriptions'), { url: values.url.trim(), types: values.types || [] });
+        return { section: 'workspace', ok: 'Subscribed; release events go to it from now on (the first look only records the current state).' };
+    },
+    'remove-event-subscription': async (el, data) => {
+        if (!confirmed('Stop sending events to this address? What is still waiting for it is dropped.')) {
+            return null;
+        }
+        await api('DELETE', tenantPath(`/event-subscriptions/${data.subscriptionId}`));
+        return { section: 'workspace', ok: 'Removed.' };
     },
     'remove-member': async (el, data) => {
         if (!confirmed(data.self ? 'Leave this workspace?' : 'Remove this member from the workspace?')) {

@@ -3,6 +3,8 @@ const {
 } = require('../lib/tenants');
 const { withScope } = require('../lib/scope');
 const { listAuditEvents } = require('../lib/audit-log');
+const { listSubscriptions, addSubscription, removeSubscription, MAX_SUBSCRIPTIONS } = require('../lib/outgoing-events');
+const { EVENT_TYPES } = require('../lib/release-events-model');
 const { removeJiraWebhooks } = require('../lib/jira-sync');
 const { listDeployments, getSettings, updateSettings, MAX_LIMIT } = require('../lib/deployments');
 
@@ -112,6 +114,38 @@ function registerTenantRoutes(app, ctx) {
         preHandler: requireUser,
         schema: { params: tenantOnlyParams },
     }, async (request) => ({ events: await listAuditEvents(pool, { tenantId: request.params.tenantId, actorUserId: request.user.id }) }));
+
+    // Outgoing events (G1.5, lib/outgoing-events.js): addresses that get release.stage_changed / feature.released,
+    // signed with the workspace's signing secret. Admins only.
+    app.get('/tenants/:tenantId/event-subscriptions', {
+        preHandler: requireUser,
+        schema: { params: tenantOnlyParams },
+    }, async (request) => ({ subscriptions: await listSubscriptions(pool, { tenantId: request.params.tenantId, actorUserId: request.user.id }) }));
+
+    app.post('/tenants/:tenantId/event-subscriptions', {
+        preHandler: requireUser,
+        schema: {
+            params: tenantOnlyParams,
+            body: {
+                type: 'object', required: ['url', 'types'], additionalProperties: false,
+                properties: {
+                    url: { type: 'string', minLength: 1, maxLength: 500 },
+                    types: { type: 'array', minItems: 1, maxItems: EVENT_TYPES.length, items: { type: 'string', maxLength: 50 } },
+                },
+            },
+        },
+    }, async (request, reply) => reply.code(201).send({
+        subscription: await addSubscription(pool, { tenantId: request.params.tenantId, actorUserId: request.user.id, url: request.body.url, types: request.body.types }),
+        maxSubscriptions: MAX_SUBSCRIPTIONS,
+    }));
+
+    app.delete('/tenants/:tenantId/event-subscriptions/:subscriptionId', {
+        preHandler: requireUser,
+        schema: { params: { type: 'object', required: ['tenantId', 'subscriptionId'], properties: { tenantId: UUID_PARAM, subscriptionId: UUID_PARAM } } },
+    }, async (request, reply) => {
+        const removed = await removeSubscription(pool, { tenantId: request.params.tenantId, actorUserId: request.user.id, id: request.params.subscriptionId });
+        return removed ? reply.code(204).send() : reply.code(404).send({ error: 'No such subscription' });
+    });
 
     // FR-005: the tenant's deployments as the worker ingested them, newest first.
     app.get('/tenants/:tenantId/deployments', {

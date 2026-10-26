@@ -80,6 +80,8 @@ services:
       paths:
         - server/**
         - adapters/flags/*.js
+        # The dashboard's release model, which the worker runs to send release events (lib/release-status.js).
+        - docs/app-*.js
     envVars:
       - key: NODE_VERSION
         value: "22"

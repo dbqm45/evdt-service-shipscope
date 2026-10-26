@@ -102,7 +102,7 @@ changelog entry by hand outside a `chore(release)` PR.
 
 Deployed to Render per `context/foundation/infrastructure.md`: `render.yaml` builds both the Web Service and the
 Background Worker from the repo root (`npm ci --prefix server`, `node server/web.js`), not `rootDir: server`, which
-would hide `docs/` from the Web Service. Migrations (`server/migrations/001`–`038`, applied by the hand-rolled
+would hide `docs/` from the Web Service. Migrations (`server/migrations/001`–`039`, applied by the hand-rolled
 `lib/migrate.js`) run as each service's `preDeployCommand` under an advisory lock (`test/render-blueprint.test.js`).
 Dependencies, all in `server/package.json`: `pg`, `fastify`, `@fastify/cookie`. Fastify runs with
 `removeAdditional: false, coerceTypes: false`: unknown fields and wrong types are a 400, never silently fixed.
@@ -118,7 +118,7 @@ New rules go into the pure file; the I/O file orchestrates.
 
 **Tenant isolation (RLS).** Every query on an RLS table — the list is `RLS_TABLES` in `lib/scope.js` (memberships,
 invitations, github_installations, tracked_repos, deployments, issue_deployments, flag_sources, flag_source_repos, flag_source_envs, ingest_tokens, flags,
-flag_values, flag_value_history, jira_connections, jira_boards, jira_pis, jira_issues, audit_events, endpoint_tests, jira_access_grants, release_lines, flag_commit_links, work_items, release_plans) — must run inside
+flag_values, flag_value_history, jira_connections, jira_boards, jira_pis, jira_issues, audit_events, endpoint_tests, jira_access_grants, release_lines, flag_commit_links, work_items, release_plans, event_subscriptions, event_state, event_outbox) — must run inside
 `withScope()`, which sets `app.current_tenant_id`/`app.current_user_id` with transaction-local
 `set_config(..., true)`. An unscoped read returns zero rows; an unscoped write is an RLS error.
 `lib/withscope-guard.js` (`server/test/withscope-guard.test.js`) fails on any `pool.query(...)` in `server/lib/`
@@ -328,6 +328,22 @@ the web service fills once a minute (`sampleStatus()`, web.js); a day is an outa
   prefers); `GET …/jira-issues?pi=@changes` answers `workItemIssues()`: a change as an Epic whose `subtaskKeys` are its
   tasks (so a commit naming a task counts for the change), tasks as Stories under it (`server/test/work-items.test.js`,
   `dashboard-contract.test.js`). The ingest's `flags[].itemKeys` (any work item key) is merged with `jiraKeys`.
+- **Outgoing events (G1.5)** — `lib/outgoing-events.js` (migration `039`, three RLS tables): admins subscribe a
+  public https address (`checkUrl()`, at most 5, audited `event_subscription_added`/`_removed`;
+  `GET/POST/DELETE …/event-subscriptions`, Settings → General `EventSubscriptions()`) to `release.stage_changed`
+  and/or `feature.released`. The worker's `eventsTick()` (every 5 minutes, `EVENTS_LOCK`) calls
+  `detectReleaseEvents()` per tenant with a subscription: `readDashboardData()` (`buildDashboardData()` without the
+  member check) → `releaseGroups()` (`lib/release-status.js`: the real `docs/app-*.js` in a `vm`, so release status
+  has one implementation; `render.yaml` redeploys the worker on `docs/app-*.js`) → `planReleaseEvents()`
+  (`lib/release-events-model.js`, pure: the first look at a change is its baseline, a planned flag's new stage =
+  `release.stage_changed` with the line of its tasks, a line newly `released` = `feature.released` with `release`)
+  against `event_state`; each event in the contract's envelope (`eventEnvelope()`) is checked by `checkEvent()`
+  against the pinned `schemas/event.v0.4.0.schema.json` before it is queued in `event_outbox`.
+  `eventDeliveryTick()` (every minute, `EVENT_DELIVERY_LOCK`) → `deliverEvents()`: a `safeFetch()` POST (its
+  `method`/`body` options) with `X-ShipScope-Timestamp`/`-Event`/`-Signature: v1=HMAC-SHA256(workspace signing secret,
+  "<timestamp>.<body>")` (`eventSignature()`), retried after 1, 2, 4… minutes up to an hour, given up after 10
+  attempts; the subscription keeps `last_error` (`server/test/release-events.test.js`). Both run only with
+  `TOKEN_ENCRYPTION_KEY`.
 - **Webhooks** (`lib/webhooks.js`, migration `013`) — `POST /webhooks/github` (HMAC, `GITHUB_APP_WEBHOOK_SECRET`)
   and `POST /webhooks/jira` (HS256 JWT signed with the Atlassian client secret; a token without `exp` is logged as
   `jira webhook token without exp` and accepted unless `JIRA_WEBHOOK_REQUIRE_EXP=1`, since Atlassian does not

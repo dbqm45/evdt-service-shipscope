@@ -51,6 +51,19 @@ test('settings page: General, Members and Danger zone -- admins invite and remov
     assert.ok(!/deploymentRetentionDays/.test(memberGeneral));
     assert.match(str(ui.renderGeneral({ workspace: null, admin: true })), /Loading/);
 
+    // G1.5: outgoing events, for admins: the subscriptions with their state, a form, the signing secret it uses.
+    const subs = [{ id: 's1', url: 'https://pdi.acme.io/hooks', types: ['feature.released'], lastError: 'pdi.acme.io answered HTTP 500', lastDeliveredAt: null, pending: 2 }];
+    const withEvents = str(ui.renderGeneral({ workspace, admin: true, eventSubscriptions: subs }));
+    assert.match(withEvents, /Outgoing events/);
+    assert.match(withEvents, /https:\/\/pdi\.acme\.io\/hooks/);
+    assert.match(withEvents, /2 waiting/);
+    assert.match(withEvents, /settings-error">pdi\.acme\.io answered HTTP 500/);
+    assert.match(withEvents, /data-action="remove-event-subscription" data-subscription-id="s1"/);
+    assert.match(withEvents, /data-action="add-event-subscription"/);
+    assert.match(withEvents, /name="types" value="release\.stage_changed" checked/);
+    assert.match(withEvents, /signing secret/);
+    assert.ok(!/Outgoing events/.test(str(ui.renderGeneral({ workspace, admin: false, eventSubscriptions: subs }))), 'admins only');
+
     const admin = str(ui.renderMembers({ workspace, admin: true, meId: 'u1', once: {} }));
     assert.match(admin, /id="members" data-section="workspace"/);
     assert.match(admin, /data-action="remove-member" data-user-id="u1" data-self="1">Leave/);
@@ -687,6 +700,13 @@ test('settings page: actions send what the API expects, then reload their sectio
     delete global.location;
     delete global.confirm;
 
+    calls.length = 0;
+    await ui.runAction('add-event-subscription', form([['url', ' https://pdi.acme.io/hooks '], ['types', 'release.stage_changed', false], ['types', 'feature.released', true]], {}, 'general'));
+    assert.deepStrictEqual(calls.filter((c) => c.method === 'POST')[0], { method: 'POST', url: `${base}/event-subscriptions`, body: { url: 'https://pdi.acme.io/hooks', types: ['feature.released'] } });
+    global.confirm = () => true;
+    await ui.runAction('remove-event-subscription', button({ subscriptionId: 's1' }, 'general'));
+    delete global.confirm;
+    assert.ok(calls.some((c) => c.method === 'DELETE' && c.url === `${base}/event-subscriptions/s1`));
     calls.length = 0;
     await ui.runAction('save-flag-link', form([['type', 'label'], ['prefix', ' flag: '], ['id', 'customfield_1']]));
     await ui.runAction('save-flag-link', form([['type', 'field'], ['prefix', 'flag:'], ['id', 'customfield_10050']]));
