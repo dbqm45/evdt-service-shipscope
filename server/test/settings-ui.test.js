@@ -64,6 +64,21 @@ test('settings page: General, Members and Danger zone -- admins invite and remov
     assert.match(withEvents, /signing secret/);
     assert.ok(!/Outgoing events/.test(str(ui.renderGeneral({ workspace, admin: false, eventSubscriptions: subs }))), 'admins only');
 
+    // F5: service tokens, for admins: listed without the token, a form, revoke; a new token shown once.
+    const tokens = [{ id: 't1', name: '<b>pdi</b>', createdAt: '2026-10-26T10:00:00Z', expiresAt: '2027-10-26T10:00:00Z', lastUsedAt: null }];
+    const withTokens = str(ui.renderGeneral({ workspace, admin: true, serviceTokens: tokens, once: {} }));
+    assert.match(withTokens, /Service tokens/);
+    assert.match(withTokens, /&lt;b&gt;pdi&lt;\/b&gt;/, 'the name is escaped');
+    assert.match(withTokens, /never used/);
+    assert.match(withTokens, /data-action="revoke-service-token" data-token-id="t1"/);
+    assert.match(withTokens, /data-action="create-service-token"/);
+    assert.match(withTokens, /name="lifetimeDays"/);
+    assert.match(withTokens, /\/api\/service\/v1\/items\//);
+    const fresh = str(ui.renderGeneral({ workspace, admin: true, serviceTokens: tokens, once: { serviceToken: 'shps_abc' } }));
+    assert.match(fresh, /Service token — shown only once[\s\S]*shps_abc/);
+    assert.ok(!/Service tokens/.test(str(ui.renderGeneral({ workspace, admin: false, serviceTokens: tokens, once: {} }))), 'admins only');
+    assert.match(str(ui.renderGeneral({ workspace, admin: true, serviceTokens: { error: 'boom' }, once: {} })), /settings-error">boom/);
+
     const admin = str(ui.renderMembers({ workspace, admin: true, meId: 'u1', once: {} }));
     assert.match(admin, /id="members" data-section="workspace"/);
     assert.match(admin, /data-action="remove-member" data-user-id="u1" data-self="1">Leave/);

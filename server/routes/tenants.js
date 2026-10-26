@@ -4,6 +4,7 @@ const {
 const { withScope } = require('../lib/scope');
 const { listAuditEvents } = require('../lib/audit-log');
 const { listSubscriptions, addSubscription, removeSubscription, MAX_SUBSCRIPTIONS } = require('../lib/outgoing-events');
+const { MAX_TOKENS: MAX_SERVICE_TOKENS, createServiceToken, listServiceTokens, revokeServiceToken } = require('../lib/service-api');
 const { EVENT_TYPES } = require('../lib/release-events-model');
 const { removeJiraWebhooks } = require('../lib/jira-sync');
 const { listDeployments, getSettings, updateSettings, MAX_LIMIT } = require('../lib/deployments');
@@ -145,6 +146,36 @@ function registerTenantRoutes(app, ctx) {
     }, async (request, reply) => {
         const removed = await removeSubscription(pool, { tenantId: request.params.tenantId, actorUserId: request.user.id, id: request.params.subscriptionId });
         return removed ? reply.code(204).send() : reply.code(404).send({ error: 'No such subscription' });
+    });
+
+    // F5: read-only tokens for other services (pdi, tf); the token is in the 201 answer only.
+    app.get('/tenants/:tenantId/service-tokens', {
+        preHandler: requireUser,
+        schema: { params: tenantOnlyParams },
+    }, async (request) => ({ tokens: await listServiceTokens(pool, { tenantId: request.params.tenantId, actorUserId: request.user.id }), maxTokens: MAX_SERVICE_TOKENS }));
+
+    app.post('/tenants/:tenantId/service-tokens', {
+        preHandler: requireUser,
+        schema: {
+            params: tenantOnlyParams,
+            body: {
+                type: 'object', required: ['name'], additionalProperties: false,
+                properties: {
+                    name: { type: 'string', minLength: 1, maxLength: 100 },
+                    lifetimeDays: { type: ['integer', 'null'], minimum: 1, maximum: 730 },
+                },
+            },
+        },
+    }, async (request, reply) => reply.code(201).send({
+        token: await createServiceToken(pool, { tenantId: request.params.tenantId, actorUserId: request.user.id, name: request.body.name, ...(request.body.lifetimeDays !== undefined && { lifetimeDays: request.body.lifetimeDays }) }),
+    }));
+
+    app.delete('/tenants/:tenantId/service-tokens/:tokenId', {
+        preHandler: requireUser,
+        schema: { params: { type: 'object', required: ['tenantId', 'tokenId'], properties: { tenantId: UUID_PARAM, tokenId: UUID_PARAM } } },
+    }, async (request, reply) => {
+        const removed = await revokeServiceToken(pool, { tenantId: request.params.tenantId, actorUserId: request.user.id, id: request.params.tokenId });
+        return removed ? reply.code(204).send() : reply.code(404).send({ error: 'No such token' });
     });
 
     // FR-005: the tenant's deployments as the worker ingested them, newest first.

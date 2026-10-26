@@ -93,6 +93,7 @@ async function populatedTenant({ pool, app, as }, owner, name, { jira = false } 
         const { rows: [sub] } = await c.query("INSERT INTO event_subscriptions (tenant_id, url, types) VALUES ($1, 'https://pdi.acme.io/h', '{feature.released}') RETURNING id", [tenantId]);
         await c.query("INSERT INTO event_outbox (tenant_id, subscription_id, event) VALUES ($1, $2, '{}')", [tenantId, sub.id]);
         await c.query("INSERT INTO event_state (tenant_id, kind, subject) VALUES ($1, 'seen', 'CHG-12')", [tenantId]);
+        await c.query("INSERT INTO service_tokens (tenant_id, name, token_hash) VALUES ($1, 'pdi', md5(random()::text))", [tenantId]);
     });
     return tenantId;
 }

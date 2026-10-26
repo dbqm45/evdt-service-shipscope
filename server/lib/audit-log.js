@@ -14,7 +14,7 @@ const AUDIT_EVENT_KINDS = [
     'invitation_created', 'invitation_revoked', 'member_joined', 'member_removed', 'member_left',
     'github_linked', 'github_unlinked', 'repo_tracked', 'repo_untracked', 'repo_settings_changed', 'repo_environments_changed',
     'repo_flag_stance_changed', 'repo_role_changed',
-    'flag_source_created', 'flag_source_updated', 'flag_source_deleted', 'ingest_token_created', 'ingest_token_revoked',
+    'flag_source_created', 'flag_source_updated', 'flag_source_deleted', 'ingest_token_created', 'ingest_token_revoked', 'service_token_created', 'service_token_revoked',
     'flag_details_changed', 'flag_link_accepted', 'flag_link_dismissed',
     'jira_site_selected', 'jira_flag_link_changed', 'jira_release_link_changed', 'event_subscription_added', 'event_subscription_removed', 'jira_boards_changed', 'jira_board_changed',
 ];

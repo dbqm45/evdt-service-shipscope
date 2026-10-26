@@ -102,15 +102,15 @@ changelog entry by hand outside a `chore(release)` PR.
 
 Deployed to Render per `context/foundation/infrastructure.md`: `render.yaml` builds both the Web Service and the
 Background Worker from the repo root (`npm ci --prefix server`, `node server/web.js`), not `rootDir: server`, which
-would hide `docs/` from the Web Service. Migrations (`server/migrations/001`–`039`, applied by the hand-rolled
+would hide `docs/` from the Web Service. Migrations (`server/migrations/001`–`040`, applied by the hand-rolled
 `lib/migrate.js`) run as each service's `preDeployCommand` under an advisory lock (`test/render-blueprint.test.js`).
 Dependencies, all in `server/package.json`: `pg`, `fastify`, `@fastify/cookie`. Fastify runs with
 `removeAdditional: false, coerceTypes: false`: unknown fields and wrong types are a 400, never silently fixed.
 
 **Structure.** `web.js` is bootstrap only (Fastify instance, cookie plugin, the `ERROR_STATUS` table mapping domain
 errors to HTTP codes, shared constants) and registers one plugin per area from `server/routes/`: `health`, `auth`,
-`tenants`, `invitations`, `github`, `jira`, `flags`, `dashboard` (dashboard, settings UI, `/api/features`),
-`webhooks`. `server/test/web-routes-characterization.test.js` pins the route table. Business rules live in
+`tenants`, `invitations`, `github`, `jira`, `flags`, `service` (F5 service API), `dashboard` (dashboard, settings UI,
+`/api/features`), `webhooks`. `server/test/web-routes-characterization.test.js` pins the route table. Business rules live in
 `server/lib/`, with pure rules split from I/O: `deployment-logic.js` (vs. `deployment-sync.js`), `jira-model.js`
 (rhythms, increments, `planBoardIncrements()`, `buildJiraIndex()`, issue mapping; vs. `jira-sync.js`),
 `flags-logic.js` (payload check, `planIngestWrites()`, `pickWinningValues()`, `visibleFlagsMeta()`; vs. `flags.js`).
@@ -118,7 +118,7 @@ New rules go into the pure file; the I/O file orchestrates.
 
 **Tenant isolation (RLS).** Every query on an RLS table — the list is `RLS_TABLES` in `lib/scope.js` (memberships,
 invitations, github_installations, tracked_repos, deployments, issue_deployments, flag_sources, flag_source_repos, flag_source_envs, ingest_tokens, flags,
-flag_values, flag_value_history, jira_connections, jira_boards, jira_pis, jira_issues, audit_events, endpoint_tests, jira_access_grants, release_lines, flag_commit_links, work_items, release_plans, event_subscriptions, event_state, event_outbox) — must run inside
+flag_values, flag_value_history, jira_connections, jira_boards, jira_pis, jira_issues, audit_events, endpoint_tests, jira_access_grants, release_lines, flag_commit_links, work_items, release_plans, event_subscriptions, event_state, event_outbox, service_tokens) — must run inside
 `withScope()`, which sets `app.current_tenant_id`/`app.current_user_id` with transaction-local
 `set_config(..., true)`. An unscoped read returns zero rows; an unscoped write is an RLS error.
 `lib/withscope-guard.js` (`server/test/withscope-guard.test.js`) fails on any `pool.query(...)` in `server/lib/`
@@ -344,6 +344,15 @@ the web service fills once a minute (`sampleStatus()`, web.js); a day is an outa
   "<timestamp>.<body>")` (`eventSignature()`), retried after 1, 2, 4… minutes up to an hour, given up after 10
   attempts; the subscription keeps `last_error` (`server/test/release-events.test.js`). Both run only with
   `TOKEN_ENCRYPTION_KEY`.
+- **Service API (F5)** — `lib/service-api.js`, `routes/service.js` (migration `040`, `service_tokens`, RLS, read
+  through its own policy like `ingest_tokens`: `app.service_token_hash`): admins create read-only tokens per workspace
+  (`GET/POST/DELETE …/service-tokens`, `shps_…` shown once, SHA-256 stored, at most 10, default 365 days or no end,
+  audited `service_token_created`/`_revoked`; Settings → General `ServiceTokens()`). `GET /api/service/v1/items/:key`
+  (a Jira issue's newest copy or a repo work item → `itemStatus()`: `issueStatusForEnv()` per environment,
+  `earliestProdDeployedAt()`) and `GET /api/service/v1/metrics?from&to&format=json|csv` (PROD per UTC day:
+  deployments, failed, rollbacks, median lead time Done → PROD via `leadTimes()`; ≤ 400 days, default 90; the CSV is
+  what tf's `control_band.py` reads) run the real `docs/app-*.js` in `lib/release-status.js`'s sandbox. Per-token
+  token bucket as for the ingest (`server/test/service-api.test.js`).
 - **Webhooks** (`lib/webhooks.js`, migration `013`) — `POST /webhooks/github` (HMAC, `GITHUB_APP_WEBHOOK_SECRET`)
   and `POST /webhooks/jira` (HS256 JWT signed with the Atlassian client secret; a token without `exp` is logged as
   `jira webhook token without exp` and accepted unless `JIRA_WEBHOOK_REQUIRE_EXP=1`, since Atlassian does not

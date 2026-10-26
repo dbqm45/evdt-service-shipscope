@@ -450,8 +450,32 @@ function EventSubscriptions(subs){
     });
 }
 
-/** @param {{ workspace: { settings: object }|null, admin: boolean, auditEvents?: object[]|null|{ error: string }, eventSubscriptions?: object[]|null|{ error: string } }} props */
-function renderGeneral({ workspace, admin, auditEvents = null, eventSubscriptions = null }){
+/** Service tokens (F5, admins): read-only tokens other services (pdi, tf) use for the service API; a new one shown once. */
+function ServiceTokens(tokens, once){
+    if (tokens === null) {
+        return '';
+    }
+    if (tokens && tokens.error) {
+        return Card({ title: 'Service tokens', body: html`<p class="settings-error">${tokens.error}</p>` });
+    }
+    const rows = tokens.map((t) => html`<li><strong>${t.name}</strong> <span class="settings-row-meta">created ${fmtDateTime(t.createdAt)} · ${t.expiresAt ? html`expires ${fmtDateTime(t.expiresAt)}` : 'never expires'} · ${t.lastUsedAt ? html`last used ${fmtDateTime(t.lastUsedAt)}` : 'never used'}</span>
+        <button type="button" class="btn-link btn" data-action="revoke-service-token" data-token-id="${t.id}">revoke</button></li>`);
+    return Card({
+        title: 'Service tokens',
+        body: html`${once && once.serviceToken ? SecretBox({ label: 'Service token — shown only once', value: once.serviceToken, note: 'Give it to the service (pdi, tf); ShipScope keeps only its hash.' }) : ''}
+            <p class="settings-hint">Read-only access for other services: an item's status per environment (<span class="mono">GET /api/service/v1/items/&lt;key&gt;</span>)
+            and PROD metrics per day (<span class="mono">GET /api/service/v1/metrics?format=csv</span>), with <span class="mono">Authorization: Bearer &lt;token&gt;</span>.</p>
+            ${rows.length ? html`<ul class="settings-list">${rows}</ul>` : html`<p class="settings-hint">No token yet.</p>`}
+            <form class="settings-form" data-action="create-service-token">
+                <label>Name <input name="name" required maxlength="100" placeholder="pdi"></label>
+                <label>Valid for (days, empty = no end) <input name="lifetimeDays" type="number" min="1" max="730" value="365"></label>
+                <button type="submit" class="btn">Create token</button>
+            </form>`,
+    });
+}
+
+/** @param {{ workspace: { settings: object }|null, admin: boolean, auditEvents?: object[]|null|{ error: string }, eventSubscriptions?: object[]|null|{ error: string }, serviceTokens?: object[]|null|{ error: string }, once?: object }} props */
+function renderGeneral({ workspace, admin, auditEvents = null, eventSubscriptions = null, serviceTokens = null, once = {} }){
     const page = (body) => Page({ id: 'general', section: 'workspace', title: 'General', hint: admin ? 'How long ShipScope keeps this workspace\'s history.' : MEMBER_HINT, body });
     if (!workspace) {
         return page(html`<p class="settings-loading">Loading…</p>`);
@@ -465,7 +489,7 @@ function renderGeneral({ workspace, admin, auditEvents = null, eventSubscription
                 <label>Keep deployment history (days, 7–730) <input name="deploymentRetentionDays" type="number" min="7" max="730" required value="${days}"></label>
                 <button type="submit" class="btn">Save</button></form>`
             : html`<p class="settings-hint">Deployment history is kept for ${days} days.</p>`,
-    })}${admin ? EventSubscriptions(eventSubscriptions) : ''}${admin ? AuditEvents(auditEvents) : ''}`);
+    })}${admin ? EventSubscriptions(eventSubscriptions) : ''}${admin ? ServiceTokens(serviceTokens, once) : ''}${admin ? AuditEvents(auditEvents) : ''}`);
 }
 
 /** @param {{ workspace: { members: object[], invitations: object[]|null }|null, admin: boolean, meId: string, once: object }} props */
@@ -1122,7 +1146,7 @@ const AUDIT_EVENT_LABELS = {
     flag_source_created: 'added the flag source', flag_source_updated: 'changed the flag source', flag_source_deleted: 'deleted the flag source',
     ingest_token_created: 'created a token for', ingest_token_revoked: 'revoked a token of',
     flag_details_changed: 'edited the flag', flag_link_accepted: 'linked the suggested issue', flag_link_dismissed: 'dismissed the suggested issue',
-    jira_site_selected: 'chose the Jira site', jira_flag_link_changed: 'set how Jira names flags:', jira_release_link_changed: 'set how Jira names release lines:', event_subscription_added: 'subscribed an address to events:', event_subscription_removed: 'removed the event subscription of', jira_boards_changed: 'chose the Jira boards',
+    jira_site_selected: 'chose the Jira site', jira_flag_link_changed: 'set how Jira names flags:', jira_release_link_changed: 'set how Jira names release lines:', event_subscription_added: 'subscribed an address to events:', event_subscription_removed: 'removed the event subscription of', service_token_created: 'created the service token', service_token_revoked: 'revoked the service token', jira_boards_changed: 'chose the Jira boards',
     jira_board_changed: 'changed the increments of the board',
 };
 
@@ -1329,7 +1353,7 @@ function renderSettings(){
     const repos = (s.github && s.github.repos) || [];
     const pages = {
         'getting-started': () => renderGettingStarted({ steps }),
-        general: () => renderGeneral({ workspace: s.workspace, admin, auditEvents: s.auditEvents, eventSubscriptions: s.eventSubscriptions }),
+        general: () => renderGeneral({ workspace: s.workspace, admin, auditEvents: s.auditEvents, eventSubscriptions: s.eventSubscriptions, serviceTokens: s.serviceTokens, once: s.once }),
         members: () => renderMembers({ workspace: s.workspace, admin, meId: s.me && s.me.user.id, once: s.once }),
         github: () => renderGitHub({ enabled: s.features.githubApp, webhooks: s.features.githubWebhooks, github: s.github, installationRepos: s.installationRepos, admin, picker: s.trackPicker, editing: s.editingRepo, sources: s.flags, wizard: s.codeWizard }),
         jira: () => renderJira({ enabled: s.features.jira, webhooks: s.features.jiraWebhooks, jira: s.jira, boards: s.boards, admin, flagFields: s.flagFields }),
@@ -1364,15 +1388,18 @@ function rerender(){
 
 const loaders = {
     async workspace(){
-        const [settings, { members }, invitations, eventSubscriptions] = await Promise.all([
+        const [settings, { members }, invitations, eventSubscriptions, serviceTokens] = await Promise.all([
             api('GET', tenantPath('/settings')),
             api('GET', tenantPath('/members')),
             isAdmin() ? api('GET', tenantPath('/invitations')).then((r) => r.invitations) : Promise.resolve(null),
             // Outgoing events (G1.5), on General with the other workspace settings.
             isAdmin() ? api('GET', tenantPath('/event-subscriptions')).then((r) => r.subscriptions, (err) => ({ error: err.message })) : Promise.resolve(null),
+            // Service tokens (F5), also on General.
+            isAdmin() ? api('GET', tenantPath('/service-tokens')).then((r) => r.tokens, (err) => ({ error: err.message })) : Promise.resolve(null),
         ]);
         settingsState.workspace = { settings, members, invitations };
         settingsState.eventSubscriptions = eventSubscriptions;
+        settingsState.serviceTokens = serviceTokens;
     },
     async github(){
         if (settingsState.features.githubApp) {
@@ -1479,6 +1506,20 @@ const actions = {
         const values = formValues(form);
         await api('POST', tenantPath('/event-subscriptions'), { url: values.url.trim(), types: values.types || [] });
         return { section: 'workspace', ok: 'Subscribed; release events go to it from now on (the first look only records the current state).' };
+    },
+    'create-service-token': async (form) => {
+        const values = formValues(form);
+        const days = String(values.lifetimeDays || '').trim();
+        const { token } = await api('POST', tenantPath('/service-tokens'), { name: values.name.trim(), lifetimeDays: days ? Number(days) : null });
+        settingsState.once = { serviceToken: token.token };
+        return { section: 'workspace' };
+    },
+    'revoke-service-token': async (el, data) => {
+        if (!confirmed('Revoke this token? A service using it loses access at once.')) {
+            return null;
+        }
+        await api('DELETE', tenantPath(`/service-tokens/${data.tokenId}`));
+        return { section: 'workspace', ok: 'Token revoked.' };
     },
     'remove-event-subscription': async (el, data) => {
         if (!confirmed('Stop sending events to this address? What is still waiting for it is dropped.')) {

@@ -35,6 +35,8 @@ const { registerDashboardRoutes } = require('./routes/dashboard');
 const { registerWebhookRoutes } = require('./routes/webhooks');
 const { registerGitHubRoutes } = require('./routes/github');
 const { registerJiraRoutes } = require('./routes/jira');
+const { registerServiceRoutes, ServiceRateLimitError } = require('./routes/service');
+const { ServiceTokenError, ServiceAuthError, ServiceRequestError, ServiceNotFoundError } = require('./lib/service-api');
 
 const SESSION_COOKIE = 'sid';
 // FR-004: GitHub App installation round trip's last leg lives in both routes/github.js (sets it) and
@@ -105,6 +107,11 @@ const ERROR_STATUS = [
     [JiraBoardError, 400],
     [AtlassianError, 502],
     [EventSubscriptionError, 400],
+    [ServiceTokenError, 400],
+    [ServiceAuthError, 401],
+    [ServiceRequestError, 400],
+    [ServiceNotFoundError, 404],
+    [ServiceRateLimitError, 429],
 ];
 
 /** Drops the query string and masks invitation tokens, which work like passwords until accepted. */
@@ -243,6 +250,7 @@ function buildApp({ pool, auth, githubApp = null, atlassian = null, fetch: fetch
     registerTenantRoutes(app, ctx);
     registerInvitationRoutes(app, ctx);
     registerFlagRoutes(app, ctx);
+    registerServiceRoutes(app, ctx);
     registerDashboardRoutes(app, ctx);
     registerWebhookRoutes(app, ctx);
     if (githubApp) registerGitHubRoutes(app, ctx);
