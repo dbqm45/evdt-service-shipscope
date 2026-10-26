@@ -541,13 +541,16 @@ function DeliveryStat({ value, label, tone = '' }){
     return html`<div class="dn-stat"><span class="${classNames('dn-stat-value', tone && `dn-tone-${tone}`)}">${value}</span><span class="dn-stat-label">${label}</span></div>`;
 }
 
-/** A shipped item: linked title, type and key tags; on the right its PROD `pill` and first-prod date. */
-function DeliveryItem({ href, title, type, issueKey, pill, dateText = '' }){
+/** A shipped item: linked title, the intent's Problem (`description`), type and key tags, folded `tasks` keys; on the
+ *  right its PROD `pill` and first-prod date. */
+function DeliveryItem({ href, title, type, issueKey, pill, dateText = '', description = '', tasks = [] }){
     return html`
             <div class="dn-item">
               <div class="dn-item-main">
                 ${ExternalLink({ href, cls: 'dn-item-title', children: title })}
+                ${description ? html`<p class="dn-item-desc">${description}</p>` : ''}
                 <div class="dn-item-tags">${Tag({ text: type, cls: 'dn-type' })}${Tag({ text: issueKey, cls: 'mono' })}</div>
+                ${tasks.length ? html`<div class="dn-item-tasks"><span class="dn-item-tasks-label">Tasks</span>${tasks.map(k => Tag({ text: k, cls: 'mono' }))}</div>` : ''}
               </div>
               <div class="dn-item-side">${pill}${dateText ? html`<span class="dn-item-date">on prod ${dateText}</span>` : ''}</div>
             </div>`;

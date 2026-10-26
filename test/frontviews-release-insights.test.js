@@ -247,6 +247,55 @@ test('releaseNotesMarkdown: the selected sprint as headings and lists, keys link
     assert.equal(run('releaseNotesMarkdown()'), '');
 });
 
+function changesState(problem = 'Customers cannot retry a failed payment.') {
+    const common = { pi: '@changes', sprint: null, status: 'Accepted', statusCategory: 'indeterminate' };
+    return {
+        selectedPi: '@changes', jiraIndex: { currentPi: '@changes', pis: [{ pi: '@changes', kind: 'change', label: 'Changes (repo)', sprints: [] }] },
+        jiraIssues: [
+            issue('CHG-12', { ...common, type: 'Epic', title: `Retry ${EVIL}`, problem, subtaskKeys: ['TSK-57', 'TSK-58'], epicKey: null }),
+            issue('TSK-57', { ...common, title: 'Retry endpoint', epicKey: 'CHG-12', subtaskKeys: [] }),
+            issue('TSK-58', { ...common, title: 'Idempotency key', epicKey: 'CHG-12', subtaskKeys: [] }),
+            issue('CHG-13', { ...common, type: 'Epic', title: 'No intent', problem: null, subtaskKeys: ['TSK-60'], epicKey: null }),
+            issue('TSK-60', { ...common, title: 'Export to CSV', epicKey: 'CHG-13', subtaskKeys: [] }),
+        ],
+        deployments: [dep({ relatedIssues: ['TSK-57', 'TSK-58', 'TSK-60'], deployedAt: ago(0, 2) })],
+        workItemUrls: { 'CHG-12': 'https://github.com/acme/pay/blob/abc/docs/project/changes/CHG-12/intent.md' },
+    };
+}
+
+test('releaseNotesModel: a change with an intent is one item, titled and described by it, its tasks folded in', () => {
+    const { ev, setState } = loadApp();
+
+    setState(changesState());
+    const { reason, groups } = ev("releaseNotesModel({ app: '', type: '' })");
+    const items = groups[0].sprints[0].items;
+
+    assert.equal(reason, null);
+    assert.deepEqual(items.map(i => i.issue.key), ['CHG-12', 'CHG-13', 'TSK-60'], 'tasks of a change without an intent stay on their own');
+    assert.deepEqual(items[0].tasks.map(t => t.key), ['TSK-57', 'TSK-58']);
+    assert.equal(items[0].issue.problem, 'Customers cannot retry a failed payment.');
+    assert.equal(items[1].tasks, undefined);
+});
+
+test('renderReleaseNotes and Markdown: the intent\'s Problem under the change, then its tasks; escaped', () => {
+    const { run, setState, el, html } = loadApp();
+
+    setState(changesState(`Payments ${EVIL} fail`));
+    notesFilters(el);
+    run('renderReleaseNotes()');
+    const out = html('releaseNotesBody');
+
+    assert.ok(!out.includes(EVIL) && out.includes('Payments &lt;img'));
+    assert.match(out, /class="dn-item-desc">Payments &lt;img/);
+    assert.match(out, /dn-item-tasks[^>]*>[\s\S]*TSK-57[\s\S]*TSK-58/);
+    assert.ok(out.includes('href="https://github.com/acme/pay/blob/abc/docs/project/changes/CHG-12/intent.md"'));
+    const md = run('releaseNotesMarkdown()');
+
+    assert.ok(md.includes(`- [CHG-12](https://github.com/acme/pay/blob/abc/docs/project/changes/CHG-12/intent.md) Retry ${EVIL} (`));
+    assert.ok(md.includes(`\n  Payments ${EVIL} fail\n  Tasks: TSK-57, TSK-58\n`));
+    assert.ok(!md.includes('\n- TSK-57'), 'a folded task is not listed again');
+});
+
 test('renderReleaseNotes: sprint with only unreleased items is omitted, and PI with none too', () => {
     const { run, setState, el, html } = loadApp();
 

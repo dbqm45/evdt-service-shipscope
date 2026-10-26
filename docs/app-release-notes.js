@@ -1,6 +1,8 @@
 /**
  * Delivery summary (the code keeps the old name, Release Notes): real (non-fallback-stub) Jira issues released to
  * prod (`issueIsReleasedToProd()`), as a list of sprints on the left and the selected sprint on the right —
+ * a change from a repo whose intent.md has a Problem (`issue.problem`) is one item, titled and described by its intent,
+ * with its released tasks folded in (F5, release notes in the problem's words) —
  * figures, then "Features & improvements" and "Bug fixes". Narrowed by the Service (application, via
  * `state.componentsOrder`) and Type filters. Purely derived from `state` — no data file or request of its own
  * beyond what loadData() already fetches.
@@ -25,11 +27,17 @@ function notesSprintKey(pi, sprint){
  * @param {{ app: string, type: string }} filters
  * @returns {{ reason: string|null, groups: Array<{ pi: string, isCurrent: boolean, features: number, bugs: number,
  *   sprints: Array<{ key: string, pi: string, sprint: string, isCurrent: boolean, items: object[], features: object[], bugs: object[], lastProdAt: number|null }> }> }}
+ *   (an item: `{ issue, level, prodAt, tasks? }`; `tasks` — `[{ key, title, level }]` — only on a change with an intent)
  */
 function releaseNotesModel({ app, type }){
     const realPi = state.jiraIssues.filter(i => isRealPi(i.pi));
     const filtered = realPi.filter(i => (!app || applicationsForIssue(i).includes(app)) && (!type || i.type === type));
-    const released = filtered.filter(issueIsReleasedToProd);
+    const releasedAll = filtered.filter(issueIsReleasedToProd);
+    // A change with an intent speaks for its tasks: they are listed under it, not on their own.
+    const withIntent = new Set(releasedAll.filter(i => typeof i.problem === 'string' && i.problem).map(i => i.key));
+    const released = releasedAll.filter(i => !withIntent.has(i.epicKey));
+    const tasksOf = key => releasedAll.filter(i => i.epicKey === key)
+        .map(t => ({ key: t.key, title: t.title, level: issueStatusForEnv(t, ENVIRONMENT.PROD).level }));
     let reason = null;
 
     if (!state.jiraIssues.length) {
@@ -58,6 +66,7 @@ function releaseNotesModel({ app, type }){
                 issue,
                 level: issueStatusForEnv(issue, ENVIRONMENT.PROD).level,
                 prodAt: earliestProdDeployedAt(issue),
+                ...(withIntent.has(issue.key) ? { tasks: tasksOf(issue.key) } : {}),
             }));
             const times = items.map(i => i.prodAt).filter(t => t !== null);
 
@@ -143,9 +152,11 @@ function renderReleaseNotes(){
 
     // The PROD pill stays on every row: issueIsReleasedToProd folds `released` (a flag confirms it is visible) and
     // `deployed_code_only` (code shipped, no flag to confirm against) together, and nothing else here tells them apart.
-    const itemHtml = ({ issue, level, prodAt }) => DeliveryItem({
+    const itemHtml = ({ issue, level, prodAt, tasks }) => DeliveryItem({
         href: jiraIssueUrl(issue.key),
         title: issue.title,
+        description: tasks ? issue.problem : '',
+        tasks: (tasks || []).map(t => t.key),
         type: issue.type,
         issueKey: issue.key,
         pill: StatusPill({ cls: statusClass(level), label: statusLabel(level), title: statusLabelTooltip(level) }),
@@ -175,7 +186,8 @@ function renderReleaseNotes(){
 
 /**
  * The selected sprint as Markdown, for pasting into a release announcement: a heading, then one list per
- * section, each item with its Jira key (linked when Jira is connected), title, PROD status and first prod date.
+ * section, each item with its Jira key (linked when Jira is connected), title, PROD status and first prod date; a
+ * change with an intent has its Problem and its tasks on the lines below it.
  *
  * @returns {string} '' when there is nothing to copy
  */
@@ -190,11 +202,12 @@ function releaseNotesMarkdown(){
         return '';
     }
 
-    const line = ({ issue, level, prodAt }) => {
+    const line = ({ issue, level, prodAt, tasks }) => {
         const url = jiraIssueUrl(issue.key);
         const key = isSafeHttpsUrl(url) ? `[${issue.key}](${url})` : issue.key;
+        const head = `- ${key} ${issue.title} (${statusLabel(level)}${prodAt ? `, on prod ${fmtDateShort(prodAt)}` : ''})`;
 
-        return `- ${key} ${issue.title} (${statusLabel(level)}${prodAt ? `, on prod ${fmtDateShort(prodAt)}` : ''})`;
+        return tasks ? [head, `  ${issue.problem}`, ...(tasks.length ? [`  Tasks: ${tasks.map(t => t.key).join(', ')}`] : [])].join('\n') : head;
     };
     const section = (label, items) => (items.length ? [`### ${label}`, '', ...items.map(line), ''] : []);
 
