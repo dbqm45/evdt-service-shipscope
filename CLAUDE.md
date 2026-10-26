@@ -102,7 +102,7 @@ changelog entry by hand outside a `chore(release)` PR.
 
 Deployed to Render per `context/foundation/infrastructure.md`: `render.yaml` builds both the Web Service and the
 Background Worker from the repo root (`npm ci --prefix server`, `node server/web.js`), not `rootDir: server`, which
-would hide `docs/` from the Web Service. Migrations (`server/migrations/001`–`040`, applied by the hand-rolled
+would hide `docs/` from the Web Service. Migrations (`server/migrations/001`–`041`, applied by the hand-rolled
 `lib/migrate.js`) run as each service's `preDeployCommand` under an advisory lock (`test/render-blueprint.test.js`).
 Dependencies, all in `server/package.json`: `pg`, `fastify`, `@fastify/cookie`. Fastify runs with
 `removeAdditional: false, coerceTypes: false`: unknown fields and wrong types are a 400, never silently fixed.
@@ -318,7 +318,9 @@ the web service fills once a minute (`sampleStatus()`, web.js); a day is an outa
   request); else its tree and each `<CHG>/intent.md`/`plan.md` (Contents API at that sha, 256 KB, 200 changes), and the
   repo's rows of `work_items` (RLS; `kind` change/task, `parent_key`, cascade from `tracked_repos`) replaced in one
   transaction. Parsing is pure (`lib/work-items-model.js`): `parseFrontMatter()` (tf's simple YAML), `checkHeader()`
-  (`change` = folder, `source`/`tasks` keys), the title = intent's first `# ` heading, `planTasks()` (the first body
+  (`change` = folder, `source`/`tasks` keys), the title = intent's first `# ` heading, `intentProblem()` = its
+  `## Problem` section as one line (≤ 600, without tf's `<…>` placeholders; `work_items.problem`, migration `041`,
+  `WORK_ITEMS_VERSION` 2; a change's `problem` in `workItemIssues()`), `planTasks()` (the first body
   line naming a task: table cells or list text, a task.schema.json status; `dropped` left out). A bad file is recorded
   in `tracked_repos.work_items_error` (Settings → GitHub, "changes folder: N problems") and only its change is left
   out; a GitHub failure keeps the stored items; a rate limit is rethrown. `tracked_repos.work_items_version`
@@ -524,7 +526,9 @@ sprint: day/month of `lastProdAt`, name, "current", "N items · M bug fixes"; `d
 sprint's panel (`selectedNotesSprint`, the newest when unset or filtered out): PROD badge, "Current sprint · last on
 prod", four figures (items on prod / released to users = `released` / code deployed, no flag = `deployed_code_only` /
 bugs fixed), "Features & improvements" and "Bug fixes". Each item: title (the link), type and key tags, PROD pill
-and first prod date (`earliestProdDeployedAt()`, omitted when unknown). "Copy as Markdown" (`data-copy-notes`) puts
+and first prod date (`earliestProdDeployedAt()`, omitted when unknown). A change from a repo with an intent's Problem
+(`issue.problem`, F5) is one item, titled and described by its intent, with its released tasks folded in (`tasks`,
+listed under it, not on their own; `DeliveryItem({ description, tasks })`, and in the Markdown on the lines below it). "Copy as Markdown" (`data-copy-notes`) puts
 `releaseNotesMarkdown()` on the clipboard. A PI switch calls `resetReleaseNotesFilters()`. Unreleased issues are not
 shown; empty with fallback stubs.
 

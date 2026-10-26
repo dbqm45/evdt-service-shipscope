@@ -14,6 +14,7 @@ const TASK_STATUSES = ['planned', 'in_progress', 'in_review', 'done', 'dropped']
 const MAX_CHANGES = 200;
 const MAX_TASKS_PER_CHANGE = 100;
 const TITLE_MAX = 300;
+const PROBLEM_MAX = 600;
 
 class WorkItemFileError extends Error {}
 
@@ -98,6 +99,26 @@ function firstHeading(body) {
     return m ? clean(m[1]).slice(0, TITLE_MAX) : null;
 }
 
+/**
+ * The text of intent.md's `## Problem` section as one line, for the release notes (F5): up to the next `## ` heading,
+ * without HTML comments and without the `<…>` placeholder lines of tf's template, at most 600 characters.
+ *
+ * @param {string} body intent.md after its header
+ * @returns {string|null} null without the section or with only the template's placeholder
+ */
+function intentProblem(body) {
+    const lines = String(body).replace(/<!--[\s\S]*?-->/g, '').split('\n');
+    const start = lines.findIndex((l) => /^##\s+problem\s*$/i.test(l.trim()));
+    if (start < 0) return null;
+    const end = lines.findIndex((l, i) => i > start && /^#{1,2}\s/.test(l));
+    const text = lines.slice(start + 1, end < 0 ? undefined : end)
+        .map((l) => l.trim())
+        .filter((l) => l && !/^<[^>]*>$/.test(l))
+        .join(' ');
+    const one = clean(text);
+    return one ? one.slice(0, PROBLEM_MAX) : null;
+}
+
 /** The header of one artifact, checked against its folder (change.schema.json's fields this reads). */
 function checkHeader(header, { dir, artifact }) {
     if (header.change !== dir) throw new WorkItemFileError(`change is ${header.change || 'missing'}, not ${dir}`);
@@ -115,7 +136,7 @@ function checkHeader(header, { dir, artifact }) {
  * that can't be read is an error for its change only; the change is then left out.
  *
  * @param {Array<{ dir: string, intent?: string, plan?: string }>} changes the folders' files' text, as read
- * @returns {{ items: Array<{ key: string, kind: 'change'|'task', parent: string|null, title: string, status: string|null, source: string|null, path: string }>, errors: Array<{ change: string, message: string }> }}
+ * @returns {{ items: Array<{ key: string, kind: 'change'|'task', parent: string|null, title: string, status: string|null, source: string|null, path: string, problem: string|null }>, errors: Array<{ change: string, message: string }> }}
  */
 function buildWorkItems(changes) {
     const items = [];
@@ -128,10 +149,12 @@ function buildWorkItems(changes) {
             let title = null;
             let status = null;
             let source = null;
+            let problem = null;
             if (intent !== undefined) {
                 const { header, body } = parseFrontMatter(intent);
                 checkHeader(header, { dir, artifact: 'intent' });
                 title = firstHeading(body);
+                problem = intentProblem(body);
                 status = typeof header.status === 'string' ? header.status : null;
                 source = header.source || null;
             }
@@ -143,9 +166,9 @@ function buildWorkItems(changes) {
                 tasks = planTasks(body, [...new Set(header.tasks || [])]);
                 source = source || header.source || null;
             }
-            items.push({ key: dir, kind: 'change', parent: null, title: title || dir, status, source, path: `${base}/${intent !== undefined ? 'intent' : 'plan'}.md` });
+            items.push({ key: dir, kind: 'change', parent: null, title: title || dir, status, source, path: `${base}/${intent !== undefined ? 'intent' : 'plan'}.md`, problem });
             for (const t of tasks.filter((task) => task.status !== 'dropped')) {
-                items.push({ key: t.key, kind: 'task', parent: dir, title: t.title, status: t.status, source: null, path: `${base}/plan.md` });
+                items.push({ key: t.key, kind: 'task', parent: dir, title: t.title, status: t.status, source: null, path: `${base}/plan.md`, problem: null });
             }
         } catch (err) {
             if (!(err instanceof WorkItemFileError)) throw err;
@@ -162,7 +185,7 @@ const TASK_CATEGORY = { planned: 'new', in_progress: 'indeterminate', in_review:
  * Work items in the dashboard's issue shape, in the Changes increment: a change is an Epic whose `subtaskKeys` are its
  * tasks (so a commit naming a task counts for the change, issueKeys() in docs/app-model.js), a task a Story under it.
  *
- * @param {Array<{ key: string, kind: string, parent: string|null, title: string, status: string|null }>} items
+ * @param {Array<{ key: string, kind: string, parent: string|null, title: string, status: string|null, problem?: string|null }>} items
  * @returns {object[]}
  */
 function workItemIssues(items) {
@@ -180,7 +203,7 @@ function workItemIssues(items) {
             const statusCategory = tasks.length && categories.every((c) => c === 'done') ? 'done' : categories.some((c) => c !== 'new') ? 'indeterminate' : 'new';
             return {
                 ...common, key: i.key, type: 'Epic', title: i.title, status: i.status ? i.status[0].toUpperCase() + i.status.slice(1) : null, statusCategory,
-                epicKey: null, epicTitle: null, subtaskKeys: tasks.map((t) => t.key),
+                epicKey: null, epicTitle: null, subtaskKeys: tasks.map((t) => t.key), problem: i.problem || null,
                 subtasks: tasks.length ? { done: categories.filter((c) => c === 'done').length, total: tasks.length } : null,
             };
         }
@@ -208,4 +231,4 @@ function checkReleasePlan(doc, { dir, schema }) {
     return doc;
 }
 
-module.exports = { checkReleasePlan, WORK_ITEM_KEY, CHANGES_DIR, CHANGES_KEY, CHANGES_LABEL, TASK_STATUSES, MAX_CHANGES, WorkItemFileError, parseFrontMatter, planTasks, buildWorkItems, workItemIssues };
+module.exports = { checkReleasePlan, WORK_ITEM_KEY, CHANGES_DIR, CHANGES_KEY, CHANGES_LABEL, TASK_STATUSES, MAX_CHANGES, WorkItemFileError, parseFrontMatter, planTasks, intentProblem, buildWorkItems, workItemIssues };

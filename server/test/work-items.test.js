@@ -3,7 +3,7 @@
 // increment of their own, "Changes (repo)", where a commit naming a task counts for its change.
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { parseFrontMatter, planTasks, buildWorkItems, workItemIssues, WorkItemFileError, CHANGES_KEY } = require('../lib/work-items-model');
+const { parseFrontMatter, planTasks, buildWorkItems, workItemIssues, intentProblem, WorkItemFileError, CHANGES_KEY } = require('../lib/work-items-model');
 
 const INTENT = `---
 artifact: intent
@@ -18,7 +18,12 @@ source: PRB-34
 
 # Retry a failed payment without a double charge
 
-Problem…
+## Problem
+Customers whose card payment fails at checkout
+cannot retry it — they start the order again and are sometimes charged twice.
+
+## Warianty
+| Wariant | Za | Przeciw |
 `;
 const PLAN = `---
 artifact: plan
@@ -76,14 +81,23 @@ test('buildWorkItems: a change with its tasks; a bad file is an error for its ch
         { dir: 'notes' },
     ]);
     const byKey = Object.fromEntries(items.map((i) => [i.key, i]));
-    assert.deepStrictEqual(byKey['CHG-12'], { key: 'CHG-12', kind: 'change', parent: null, title: 'Retry a failed payment without a double charge', status: 'accepted', source: 'PRB-34', path: 'docs/project/changes/CHG-12/intent.md' });
-    assert.deepStrictEqual(byKey['TSK-57'], { key: 'TSK-57', kind: 'task', parent: 'CHG-12', title: 'Retry endpoint for a failed payment', status: 'done', source: null, path: 'docs/project/changes/CHG-12/plan.md' });
+    assert.deepStrictEqual(byKey['CHG-12'], { key: 'CHG-12', kind: 'change', parent: null, title: 'Retry a failed payment without a double charge', status: 'accepted', source: 'PRB-34', path: 'docs/project/changes/CHG-12/intent.md', problem: 'Customers whose card payment fails at checkout cannot retry it — they start the order again and are sometimes charged twice.' });
+    assert.deepStrictEqual(byKey['TSK-57'], { key: 'TSK-57', kind: 'task', parent: 'CHG-12', title: 'Retry endpoint for a failed payment', status: 'done', source: null, path: 'docs/project/changes/CHG-12/plan.md', problem: null });
     assert.strictEqual(byKey['TSK-60'], undefined, 'dropped tasks are not shown');
     assert.deepStrictEqual(errors.map((e) => e.change), ['CHG-13', 'CHG-15', 'CHG-16']);
     assert.match(errors[0].message, /intent\.md: change is CHG-14, not CHG-13/);
     assert.match(errors[1].message, /intent\.md: no YAML header/);
     assert.match(errors[2].message, /plan\.md: tasks/);
     assert.ok(!items.some((i) => i.key === 'CHG-13' || i.key === 'CHG-15'));
+});
+
+test('intentProblem: the Problem section as one line; the tf template, a missing section and comments give nothing', () => {
+    assert.strictEqual(intentProblem(parseFrontMatter(INTENT).body),
+        'Customers whose card payment fails at checkout cannot retry it — they start the order again and are sometimes charged twice.');
+    assert.strictEqual(intentProblem('# T\n\n## Problem\n<Czyj problem, w jakiej sytuacji, skąd wiemy (zgłoszenie, dane, rozmowa).>\n\n## Warianty\n'), null);
+    assert.strictEqual(intentProblem('# T\n\n## Warianty\nA\n'), null);
+    assert.strictEqual(intentProblem('## problem\n<!-- note -->\nShort.\n'), 'Short.');
+    assert.strictEqual(intentProblem(`## Problem\n${'x'.repeat(700)}\n`).length, 600);
 });
 
 test('workItemIssues: a change is an Epic over its tasks (subtaskKeys), tasks are Stories under it, in the Changes increment', () => {
@@ -96,6 +110,10 @@ test('workItemIssues: a change is an Epic over its tasks (subtaskKeys), tasks ar
         ['Story', 'CHG-12', 'Retry a failed payment without a double charge', 'In progress', 'indeterminate', null, [], []]);
     assert.strictEqual(issues.find((i) => i.key === 'TSK-57').statusCategory, 'done');
     assert.strictEqual(issues.find((i) => i.key === 'TSK-59').statusCategory, 'new');
+    assert.match(chg.problem, /^Customers whose card payment fails/);
+    assert.ok(!('problem' in tsk), 'tasks carry no problem of their own');
+    const bare = workItemIssues(buildWorkItems([{ dir: 'CHG-13', plan: PLAN.replace('CHG-12', 'CHG-13') }]).items);
+    assert.strictEqual(bare.find((i) => i.key === 'CHG-13').problem, null);
 });
 
 if (!process.env.TEST_DATABASE_URL) {
@@ -161,7 +179,8 @@ test('sync: changes and tasks from the default branch; unchanged folder = one re
     // A folder read by an older version of the reader (before release.yaml, migration 038) is read again.
     await rows('UPDATE tracked_repos SET work_items_version = 0');
     assert.deepStrictEqual(await read(), { read: 4, errors: 0, plans: 0 });
-    assert.strictEqual((await rows('SELECT work_items_version FROM tracked_repos'))[0].work_items_version, 1);
+    assert.strictEqual((await rows('SELECT work_items_version FROM tracked_repos'))[0].work_items_version, 2);
+    assert.match((await rows("SELECT problem FROM work_items WHERE item_key = 'CHG-12'"))[0].problem, /^Customers whose card payment fails/);
 
     commit(2, { [`${DIR}/CHG-13/intent.md`]: INTENT.replace('CHG-12', 'CHG-13'), [`${DIR}/CHG-14/plan.md`]: '# no header' });
     assert.deepStrictEqual(await read(), { read: 1, errors: 1, plans: 0 });
@@ -190,6 +209,7 @@ test('dashboard: a Changes increment without Jira; its issues; a commit naming a
     const issues = (await api(`/jira-issues?pi=${encodeURIComponent(CHANGES_KEY)}`)).json();
     assert.deepStrictEqual(issues.map((i) => i.key).sort(), ['CHG-12', 'TSK-57', 'TSK-58', 'TSK-59']);
     assert.deepStrictEqual(issues.find((i) => i.key === 'CHG-12').subtaskKeys, ['TSK-57', 'TSK-58', 'TSK-59']);
+    assert.match(issues.find((i) => i.key === 'CHG-12').problem, /cannot retry it/, 'the change carries its intent\'s Problem');
 
     // Untracking the repo removes its items.
     await rows('DELETE FROM tracked_repos WHERE repo_id = 1');

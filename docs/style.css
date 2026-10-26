@@ -706,6 +706,9 @@ select option { background:var(--panel-2); color:var(--text); padding:6px 12px; 
 .dn-item-title { color:var(--nd-fg-1); text-decoration:none; font-size:var(--text-title); }
 a.dn-item-title:hover { color:var(--accent-blue); text-decoration:underline; }
 .dn-item-tags { display:flex; gap:8px; flex-wrap:wrap; }
+.dn-item-desc { margin:0; color:var(--nd-fg-2); font-size:var(--text-md); line-height:1.45; }
+.dn-item-tasks { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+.dn-item-tasks-label { color:var(--nd-fg-4); font-size:var(--text-md); }
 .dn-type { text-transform:uppercase; letter-spacing:.06em; font-weight:600; color:var(--nd-fg-2); }
 .dn-item-side { display:flex; flex-direction:column; align-items:flex-end; gap:8px; flex:none; }
 .dn-item-date { font-size:var(--text-md); font-family:var(--font-mono); color:var(--nd-fg-4); white-space:nowrap; }
