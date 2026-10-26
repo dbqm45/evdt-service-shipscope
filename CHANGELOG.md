@@ -7,6 +7,12 @@ dashboard, not a published package), so entries are grouped by date instead. See
 ShipScope is, `CLAUDE.md` for the technical reference, and `FAQ.md` for how specific numbers/badges are
 calculated.
 
+## [0.2.53] - 2026-10-26
+
+### Added
+
+- **SHP:** lead time from a change's intent to PROD in Insights (F5) (#112)
+
 ## [0.2.52] - 2026-10-26
 
 ### Added
