@@ -7,6 +7,12 @@ dashboard, nie publikowany pakiet), dlatego wpisy są pogrupowane według dat. I
 ShipScope, znajdują się w `README.pl.md`, pełne techniczne odniesienie w `CLAUDE.md` (po angielsku), a
 wyjaśnienie sposobu liczenia poszczególnych wartości/badge'y w `FAQ.pl.md`.
 
+## [0.2.55] - 2026-10-26
+
+### Nowe
+
+- **SHP:** MCP server for Claude over the service API (K-1) (#114)
+
 ## [0.2.54] - 2026-10-26
 
 ### Nowe
