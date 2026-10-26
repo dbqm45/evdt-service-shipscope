@@ -510,6 +510,61 @@ test('earliestProdDeployedAt takes the minimum across live deployments and the n
     assert.equal(ev("earliestProdDeployedAt({ key: 'K-9', subtaskKeys: ['K-1', 'K-2'] })"), t(30), 'its sub-tasks\' deployments count');
 });
 
+test('leadTimeFromIntent: days from the intent to a change\'s first PROD, newest first, clamped, at most 12', () => {
+    const { ev, setState } = loadApp();
+    const change = (key, intentCreated, extra = {}) => issue(key, { pi: '@changes', sprint: null, type: 'Epic', title: `Change ${key}`, intentCreated, subtaskKeys: [], ...extra });
+
+    setState({
+        selectedPi: '@changes',
+        jiraIssues: [
+            change('CHG-1', '2026-09-29', { subtaskKeys: ['TSK-1'] }),
+            change('CHG-2', '2026-10-08'),
+            change('CHG-3', '2026-10-30'),
+            change('CHG-4', null),
+            change('CHG-5', '2026-09-01'),
+            issue('K-9', { created: '2026-01-01' }),
+        ],
+        deployments: [
+            dep({ id: 1, relatedIssues: ['TSK-1'], deployedAt: '2026-10-04T10:00:00Z' }),
+            dep({ id: 2, relatedIssues: ['CHG-2', 'CHG-3', 'CHG-4', 'K-9'], deployedAt: '2026-10-08T12:00:00Z' }),
+        ],
+    });
+    const rows = ev('leadTimeFromIntent()');
+
+    assert.deepEqual(rows.map(r => [r.key, r.days]), [['CHG-2', 0], ['CHG-3', 0], ['CHG-1', 5]],
+        'a task\'s deploy counts for its change; a deploy before the intent is 0; no date or no PROD is left out');
+    assert.equal(rows[2].title, 'Change CHG-1');
+
+    setState({
+        selectedPi: '@changes',
+        jiraIssues: Array.from({ length: 14 }, (_, n) => change(`CHG-${n + 10}`, '2026-09-01')),
+        deployments: [dep({ relatedIssues: Array.from({ length: 14 }, (_, n) => `CHG-${n + 10}`), deployedAt: '2026-10-01T00:00:00Z' })],
+    });
+    assert.equal(ev('leadTimeFromIntent()').length, 12);
+});
+
+test('renderIntentLeadTimeChart: one bar per change with the median; empty state says what to pick', () => {
+    const { run, setState, html } = loadApp();
+
+    setState({
+        selectedPi: '@changes',
+        jiraIssues: [
+            issue('CHG-1', { pi: '@changes', type: 'Epic', title: EVIL, intentCreated: '2026-09-29', subtaskKeys: [] }),
+            issue('CHG-2', { pi: '@changes', type: 'Epic', title: 'B', intentCreated: '2026-09-20', subtaskKeys: [] }),
+        ],
+        deployments: [dep({ relatedIssues: ['CHG-1', 'CHG-2'], deployedAt: '2026-10-04T10:00:00Z' })],
+    });
+    run('renderIntentLeadTimeChart()');
+    const out = html('chartIntentLeadTime');
+
+    assert.ok(out.includes('CHG-1') && out.includes('5d') && out.includes('14d'));
+    assert.ok(out.includes('Median 10d over 2 change(s)'));
+    assert.ok(!out.includes(EVIL));
+    setState({});
+    run('renderIntentLeadTimeChart()');
+    assert.ok(html('chartIntentLeadTime').includes('Changes (repo)'));
+});
+
 test('leadTimeToProdBySprint: median per sprint, clamping and exclusions', () => {
     const { ev, setState } = loadApp();
 
@@ -604,7 +659,7 @@ test('renderInsights renders all five charts without stray commas', () => {
 
     setState(rnState({ issueDeployments: {} }));
     run('renderInsights()');
-    for (const id of ['chartSprint', 'chartLeadTime', 'chartPriority', 'chartStaleFlags', 'chartRollbackDrift']) {
+    for (const id of ['chartSprint', 'chartLeadTime', 'chartIntentLeadTime', 'chartPriority', 'chartStaleFlags', 'chartRollbackDrift']) {
         assert.ok(html(id).length > 0, id);
         assert.ok(!/>\s*,\s*</.test(html(id)), id);
     }
