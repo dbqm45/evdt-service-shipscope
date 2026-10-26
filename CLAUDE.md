@@ -102,7 +102,7 @@ changelog entry by hand outside a `chore(release)` PR.
 
 Deployed to Render per `context/foundation/infrastructure.md`: `render.yaml` builds both the Web Service and the
 Background Worker from the repo root (`npm ci --prefix server`, `node server/web.js`), not `rootDir: server`, which
-would hide `docs/` from the Web Service. Migrations (`server/migrations/001`–`041`, applied by the hand-rolled
+would hide `docs/` from the Web Service. Migrations (`server/migrations/001`–`043`, applied by the hand-rolled
 `lib/migrate.js`) run as each service's `preDeployCommand` under an advisory lock (`test/render-blueprint.test.js`).
 Dependencies, all in `server/package.json`: `pg`, `fastify`, `@fastify/cookie`. Fastify runs with
 `removeAdditional: false, coerceTypes: false`: unknown fields and wrong types are a 400, never silently fixed.
@@ -320,7 +320,9 @@ the web service fills once a minute (`sampleStatus()`, web.js); a day is an outa
   transaction. Parsing is pure (`lib/work-items-model.js`): `parseFrontMatter()` (tf's simple YAML), `checkHeader()`
   (`change` = folder, `source`/`tasks` keys), the title = intent's first `# ` heading, `intentProblem()` = its
   `## Problem` section as one line (≤ 600, without tf's `<…>` placeholders; `work_items.problem`, migration `041`,
-  `WORK_ITEMS_VERSION` 2; a change's `problem` in `workItemIssues()`), `planTasks()` (the first body
+  `WORK_ITEMS_VERSION` 2; a change's `problem` in `workItemIssues()`), the header's `created` and
+  `source_reported_at` (pdi contract 0.5.0; only `YYYY-MM-DD`, migrations `042`/`043`, `WORK_ITEMS_VERSION` 4; a
+  change's `intentCreated`, `sourceKey`, `sourceReportedAt`), `planTasks()` (the first body
   line naming a task: table cells or list text, a task.schema.json status; `dropped` left out). A bad file is recorded
   in `tracked_repos.work_items_error` (Settings → GitHub, "changes folder: N problems") and only its change is left
   out; a GitHub failure keeps the stored items; a rate limit is rethrown. `tracked_repos.work_items_version`
@@ -551,3 +553,7 @@ sprint on prod (`sprintReleaseStatusBreakdown()`, labels from `sprintLabelFor()`
 (`priorityReleaseStatusBreakdown()`, `PRIORITY_ORDER` = Blocker/Critical/Major/Medium/Minor, issues without one
 excluded); stale flags by days on in prod (`staleFlagDaysBreakdown()`); rollbacks and drift per month for the last
 12 months (`rollbackDriftByMonth()`). The last two are cross-time, not PI-scoped, so untagged hotfixes still show.
+Lead time of repo changes to their first PROD (`leadTimeFrom(field)`, newest 12, median in the legend): from the
+intent (`leadTimeFromIntent()`, `#chartIntentLeadTime`) and from the problem report it came from
+(`leadTimeFromReport()`, `#chartReportLeadTime`, the PRB key in the tooltip); both read the loaded increment, so they
+show changes under "Changes (repo)".

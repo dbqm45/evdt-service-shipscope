@@ -14,9 +14,9 @@ const MAX_FILE_BYTES = 256 * 1024;
 const ARTIFACT = new RegExp(`^${CHANGES_DIR}/([^/]+)/(intent\\.md|plan\\.md|release\\.yaml)$`);
 const ARTIFACT_FIELD = { 'intent.md': 'intent', 'plan.md': 'plan', 'release.yaml': 'release' };
 // What a read understands (tracked_repos.work_items_version, migration 038): 1 = work items and release.yaml, 2 = the
-// intent's Problem (migration 041), 3 = the intent's date (migration 042). A folder read by an older version is read
-// again even when no commit touched it.
-const WORK_ITEMS_VERSION = 3;
+// intent's Problem (migration 041), 3 = the intent's date (migration 042), 4 = the report day of its problem (migration
+// 043). A folder read by an older version is read again even when no commit touched it.
+const WORK_ITEMS_VERSION = 4;
 const ERROR_MAX = 1000;
 
 /** A file's text at a commit; null when it is too big or not a file. */
@@ -101,12 +101,13 @@ async function refreshWorkItems({ pool, token, tenantId, repo, fetch: fetchFn = 
         await client.query('DELETE FROM work_items WHERE tenant_id = $1 AND repo_id = $2 AND NOT (item_key = ANY($3))', [tenantId, repoId, items.map((i) => i.key)]);
         for (const i of items) {
             await client.query(
-                `INSERT INTO work_items (tenant_id, item_key, kind, parent_key, repo_id, title, status, source_key, path, ref, problem, intent_created, synced_at)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, now())
+                `INSERT INTO work_items (tenant_id, item_key, kind, parent_key, repo_id, title, status, source_key, path, ref, problem, intent_created, source_reported_at, synced_at)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, now())
                  ON CONFLICT (tenant_id, item_key) DO UPDATE SET kind = EXCLUDED.kind, parent_key = EXCLUDED.parent_key, repo_id = EXCLUDED.repo_id,
                      title = EXCLUDED.title, status = EXCLUDED.status, source_key = EXCLUDED.source_key, path = EXCLUDED.path, ref = EXCLUDED.ref,
-                     problem = EXCLUDED.problem, intent_created = EXCLUDED.intent_created, synced_at = now()`,
-                [tenantId, i.key, i.kind, i.parent, repoId, i.title, i.status, i.source, i.path, ref, i.problem, i.created]
+                     problem = EXCLUDED.problem, intent_created = EXCLUDED.intent_created,
+                     source_reported_at = EXCLUDED.source_reported_at, synced_at = now()`,
+                [tenantId, i.key, i.kind, i.parent, repoId, i.title, i.status, i.source, i.path, ref, i.problem, i.created, i.reported]
             );
         }
         await client.query('DELETE FROM release_plans WHERE tenant_id = $1 AND repo_id = $2 AND NOT (change_key = ANY($3))', [tenantId, repoId, plans.map((p) => p.change)]);
@@ -131,17 +132,18 @@ async function refreshWorkItems({ pool, token, tenantId, repo, fetch: fetchFn = 
  *
  * @param {import('pg').PoolClient} client inside withScope()
  * @param {string} tenantId
- * @returns {Promise<Array<{ key: string, kind: string, parent: string|null, title: string, status: string|null, problem: string|null, created: string|null, url: string }>>}
+ * @returns {Promise<Array<{ key: string, kind: string, parent: string|null, title: string, status: string|null, problem: string|null, created: string|null, source: string|null, reported: string|null, url: string }>>}
  */
 async function readWorkItems(client, tenantId) {
     const { rows } = await client.query(
-        `SELECT w.item_key, w.kind, w.parent_key, w.title, w.status, w.problem, to_char(w.intent_created, 'YYYY-MM-DD') AS created, w.path, w.ref, r.full_name
+        `SELECT w.item_key, w.kind, w.parent_key, w.title, w.status, w.problem, to_char(w.intent_created, 'YYYY-MM-DD') AS created, w.source_key,
+                to_char(w.source_reported_at, 'YYYY-MM-DD') AS reported, w.path, w.ref, r.full_name
          FROM work_items w JOIN tracked_repos r ON r.tenant_id = w.tenant_id AND r.repo_id = w.repo_id
          WHERE w.tenant_id = $1 ORDER BY w.item_key`,
         [tenantId]
     );
     return rows.map((r) => ({
-        key: r.item_key, kind: r.kind, parent: r.parent_key, title: r.title, status: r.status, problem: r.problem, created: r.created,
+        key: r.item_key, kind: r.kind, parent: r.parent_key, title: r.title, status: r.status, problem: r.problem, created: r.created, source: r.source_key, reported: r.reported,
         url: `https://github.com/${r.full_name}/blob/${r.ref}/${r.path}`,
     }));
 }

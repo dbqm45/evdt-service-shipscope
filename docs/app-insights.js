@@ -247,20 +247,20 @@ function renderLeadTimeChart(){
 
 const INTENT_LEAD_TIME_MAX = 12;
 
-/** Days from a change's intent (`intentCreated`, the `created` date of its intent.md, F5) to its first successful
- *  prod deployment (`earliestProdDeployedAt()`, so a commit naming one of its tasks counts) — the lead time "from the
- *  idea", until pdi keeps the problems' own dates (F3). Changes of the loaded increment only (repo changes live in
- *  "Changes (repo)"), newest first prod first, at most 12; a deploy before the intent is clamped to 0. */
-function leadTimeFromIntent(){
+/** Days from a start date on a change to its first successful prod deployment (`earliestProdDeployedAt()`, so a commit
+ *  naming one of its tasks counts). Changes of the loaded increment only (repo changes live in "Changes (repo)"),
+ *  newest first prod first, at most 12; a deploy before the start is clamped to 0. */
+function leadTimeFrom(field){
     return state.jiraIssues
-        .filter(i => i.intentCreated)
+        .filter(i => i[field])
         .map(issue => {
             const firstProdAt = earliestProdDeployedAt(issue);
-            const start = Date.parse(`${issue.intentCreated}T00:00:00Z`);
+            const start = Date.parse(`${issue[field]}T00:00:00Z`);
 
             return firstProdAt === null || !Number.isFinite(start) ? null : {
                 key: issue.key,
                 title: issue.title,
+                source: issue.sourceKey || null,
                 firstProdAt,
                 days: Math.max(0, Math.floor((firstProdAt - start) / 86400000)),
             };
@@ -270,12 +270,22 @@ function leadTimeFromIntent(){
         .slice(0, INTENT_LEAD_TIME_MAX);
 }
 
-function renderIntentLeadTimeChart(){
-    const box = document.getElementById('chartIntentLeadTime');
-    const rows = leadTimeFromIntent();
+/** From the change's intent (`intentCreated`, the `created` date of its intent.md, F5) — "from the idea". */
+function leadTimeFromIntent(){
+    return leadTimeFrom('intentCreated');
+}
+
+/** From the report of the problem it came from (`sourceReportedAt`, `source_reported_at` in its intent.md header, pdi
+ *  contract 0.5.0) — "from the report"; changes without that day (older ones, ideas without a problem) are left out. */
+function leadTimeFromReport(){
+    return leadTimeFrom('sourceReportedAt');
+}
+
+function renderLeadTimeFrom(boxId, rows, { empty, from }){
+    const box = document.getElementById(boxId);
 
     if (!rows.length) {
-        box.innerHTML = EmptyState({ message: 'No change with an intent date on PROD here — pick “Changes (repo)” in the increment selector' });
+        box.innerHTML = EmptyState({ message: empty });
         return;
     }
 
@@ -287,8 +297,22 @@ function renderIntentLeadTimeChart(){
     box.innerHTML = html`${ChartLegend({ items: [{ cls: 'seg-deployed', label: `Median ${median}d over ${rows.length} change(s)` }] })}${rows.map(r => BarRow({
         label: r.key,
         valueText: `${r.days}d`,
-        segments: BarSegment({ cls: 'seg-deployed', widthPct: Math.max(r.days / max * 100, 2), title: `${r.key} ${r.title}: ${r.days}d from the intent to PROD` }),
+        segments: BarSegment({ cls: 'seg-deployed', widthPct: Math.max(r.days / max * 100, 2), title: `${r.key}${r.source ? ` (${r.source})` : ''} ${r.title}: ${r.days}d from ${from} to PROD` }),
     }))}`;
+}
+
+function renderIntentLeadTimeChart(){
+    renderLeadTimeFrom('chartIntentLeadTime', leadTimeFromIntent(), {
+        empty: 'No change with an intent date on PROD here — pick “Changes (repo)” in the increment selector',
+        from: 'the intent',
+    });
+}
+
+function renderReportLeadTimeChart(){
+    renderLeadTimeFrom('chartReportLeadTime', leadTimeFromReport(), {
+        empty: 'No change with a problem report date on PROD here — pick “Changes (repo)”; changes accepted from a pdi report carry it',
+        from: 'the report',
+    });
 }
 
 /** Chart 3's data: deployments from the last 12 calendar months only, bucketed by month of `deployedAt`,
@@ -359,6 +383,7 @@ function renderInsights(){
     renderSprintStatusChart();
     renderLeadTimeChart();
     renderIntentLeadTimeChart();
+    renderReportLeadTimeChart();
     renderPriorityStatusChart();
     renderStaleFlagsChart();
     renderRollbackDriftChart();

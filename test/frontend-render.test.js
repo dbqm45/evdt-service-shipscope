@@ -54,7 +54,7 @@ test('Insights charts render several rows without stray commas and escape hostil
     seed(ctx);
     vm.runInContext('renderInsights()', ctx);
 
-    for (const id of ['chartSprint', 'chartPriority', 'chartStaleFlags', 'chartLeadTime', 'chartIntentLeadTime', 'chartRollbackDrift']) {
+    for (const id of ['chartSprint', 'chartPriority', 'chartStaleFlags', 'chartLeadTime', 'chartIntentLeadTime', 'chartReportLeadTime', 'chartRollbackDrift']) {
         const out = html(id);
 
         assert.ok(!out.includes(EVIL), `${id} contains an unescaped payload`);
