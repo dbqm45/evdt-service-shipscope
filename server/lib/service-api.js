@@ -8,7 +8,7 @@ const { recordAuditEvent } = require('./audit-log');
 const { readDashboardData } = require('./dashboard-data');
 const { readWorkItems } = require('./work-items');
 const { workItemIssues, WORK_ITEM_KEY } = require('./work-items-model');
-const { itemStatus, leadTimes } = require('./release-status');
+const { itemStatus, itemStatuses, leadTimes, releasePlan, flagsView, environmentsView } = require('./release-status');
 
 const TOKEN_PREFIX = 'shps_';
 const TOKEN_PATTERN = /^shps_[A-Za-z0-9_-]{43}$/;
@@ -199,6 +199,68 @@ async function serviceMetrics(pool, { token, from, to, now = new Date() }) {
     });
 }
 
+const keyNumber = (key) => Number(String(key).split('-').pop()) || 0;
+
+/**
+ * The repos' changes (F1 work items) with their problem, source, tasks and status per environment, newest first.
+ *
+ * @param {import('pg').Pool} pool
+ * @param {{ token: string, now?: Date }} input
+ * @returns {Promise<{ changes: Array<{ key: string, title: string, status: string|null, problem: string|null, source: string|null, sourceReportedAt: string|null, intentCreated: string|null, subtasks: object|null, envs: object, firstProdAt: string|null, releasedOnProd: boolean, tasks: Array<{ key: string, title: string, status: string|null, prod: string, releasedOnProd: boolean }> }> }>}
+ * @throws {ServiceAuthError}
+ */
+async function serviceChanges(pool, { token, now = new Date() }) {
+    return withServiceToken(pool, { token, now }, async (client, tenantId) => {
+        const issues = workItemIssues(await readWorkItems(client, tenantId));
+        const data = await readDashboardData(client, { tenantId });
+        const status = itemStatuses(data, issues, { now });
+        const changes = issues.filter((i) => i.type === 'Epic').sort((a, b) => keyNumber(b.key) - keyNumber(a.key) || a.key.localeCompare(b.key));
+        return {
+            changes: changes.map((c) => ({
+                key: c.key, title: c.title, status: c.status, problem: c.problem, source: c.sourceKey, sourceReportedAt: c.sourceReportedAt,
+                intentCreated: c.intentCreated, subtasks: c.subtasks, ...status[c.key],
+                tasks: issues.filter((i) => i.epicKey === c.key).map((i) => ({ key: i.key, title: i.title, status: i.status, prod: status[i.key].envs.prod.status, releasedOnProd: status[i.key].releasedOnProd })),
+            })),
+        };
+    });
+}
+
+/**
+ * The release plan as the Release plan tab shows it (repo plans and Jira lines).
+ *
+ * @param {import('pg').Pool} pool
+ * @param {{ token: string, now?: Date }} input
+ * @returns {Promise<ReturnType<typeof releasePlan>>}
+ * @throws {ServiceAuthError}
+ */
+async function serviceReleasePlan(pool, { token, now = new Date() }) {
+    return withServiceToken(pool, { token, now }, async (client, tenantId) => releasePlan(await readDashboardData(client, { tenantId }), { now }));
+}
+
+/**
+ * The workspace's flags as the flags panel knows them.
+ *
+ * @param {import('pg').Pool} pool
+ * @param {{ token: string, now?: Date }} input
+ * @returns {Promise<{ flags: ReturnType<typeof flagsView> }>}
+ * @throws {ServiceAuthError}
+ */
+async function serviceFlags(pool, { token, now = new Date() }) {
+    return withServiceToken(pool, { token, now }, async (client, tenantId) => ({ flags: flagsView(await readDashboardData(client, { tenantId }), { now }) }));
+}
+
+/**
+ * Each tracked service's latest successful deployment per environment, with drift.
+ *
+ * @param {import('pg').Pool} pool
+ * @param {{ token: string, now?: Date }} input
+ * @returns {Promise<{ services: ReturnType<typeof environmentsView> }>}
+ * @throws {ServiceAuthError}
+ */
+async function serviceEnvironments(pool, { token, now = new Date() }) {
+    return withServiceToken(pool, { token, now }, async (client, tenantId) => ({ services: environmentsView(await readDashboardData(client, { tenantId }), { now }) }));
+}
+
 /**
  * The metrics as CSV with a header, the shape tf's control_band.py reads (`--column rollbacks`); an empty cell where
  * a day has no lead time.
@@ -214,4 +276,5 @@ function metricsCsv({ days }) {
 module.exports = {
     MAX_TOKENS, ServiceTokenError, ServiceAuthError, ServiceRequestError, ServiceNotFoundError,
     createServiceToken, listServiceTokens, revokeServiceToken, serviceItemStatus, serviceMetrics, metricsCsv,
+    serviceChanges, serviceReleasePlan, serviceFlags, serviceEnvironments,
 };

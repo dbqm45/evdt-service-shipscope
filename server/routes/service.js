@@ -2,7 +2,7 @@
 // (`Authorization: Bearer shps_…`). Read only; the token names its workspace.
 const crypto = require('crypto');
 const { createLimiter } = require('../lib/request-limiter');
-const { serviceItemStatus, serviceMetrics, metricsCsv } = require('../lib/service-api');
+const { serviceItemStatus, serviceMetrics, metricsCsv, serviceChanges, serviceReleasePlan, serviceFlags, serviceEnvironments } = require('../lib/service-api');
 
 // Per token, as for the flag ingest: a burst, then one a second.
 const SERVICE_RATE_LIMIT = { capacity: 60, refillPerSecond: 1 };
@@ -50,6 +50,12 @@ function registerServiceRoutes(app, ctx) {
         if (request.query.format === 'csv') return reply.type('text/csv; charset=utf-8').send(metricsCsv(metrics));
         return metrics;
     });
+
+    // What the dashboard shows, for a conversation in Claude (K-1, adapters/mcp/): read only, no parameters.
+    const views = { changes: serviceChanges, 'release-plan': serviceReleasePlan, flags: serviceFlags, environments: serviceEnvironments };
+    for (const [path, view] of Object.entries(views)) {
+        app.get(`/api/service/v1/${path}`, async (request) => view(pool, { token: tokenOf(request) }));
+    }
 }
 
 module.exports = { registerServiceRoutes, ServiceRateLimitError, SERVICE_RATE_LIMIT };

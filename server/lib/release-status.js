@@ -7,8 +7,8 @@ const path = require('path');
 const vm = require('vm');
 
 // What the models need at run time, in docs/index.html order (app-technical.js holds issueIsReleasedToProd(),
-// app-insights.js earliestProdDeployedAt()).
-const SCRIPTS = ['app-html', 'app-icons', 'app-core', 'app-components', 'app-data', 'app-model', 'app-technical', 'app-insights'];
+// app-technical-flags.js flagStaleWarning()/flagBlastRadius(), app-insights.js earliestProdDeployedAt()).
+const SCRIPTS = ['app-html', 'app-icons', 'app-core', 'app-components', 'app-data', 'app-model', 'app-technical', 'app-technical-flags', 'app-insights'];
 const DOCS = path.join(__dirname, '..', '..', 'docs');
 
 const stubElement = () => ({
@@ -127,4 +127,115 @@ function leadTimes(data, issues, options = {}) {
         }));`);
 }
 
-module.exports = { releaseGroups, itemStatus, leadTimes };
+/**
+ * Several items' status at once (one sandbox): per environment, the first PROD deployment and whether it is with users.
+ *
+ * @param {object} data what readDashboardData() returns
+ * @param {object[]} issues items in the jira-issues shape
+ * @param {{ now?: Date, docsDir?: string }} [options]
+ * @returns {Record<string, { envs: Record<'test'|'qa'|'prod', { status: string, uncertain: object[], mismatch: object[] }>, firstProdAt: string|null, releasedOnProd: boolean }>}
+ */
+function itemStatuses(data, issues, options = {}) {
+    return evaluate({ ...data, jiraIssues: issues }, options, `
+        const out = {};
+        for (const issue of state.jiraIssues) {
+            const envs = {};
+            for (const env of ['test', 'qa', 'prod']) {
+                const s = issueStatusForEnv(issue, env);
+                envs[env] = { status: s.level, uncertain: s.uncertain || [], mismatch: s.mismatch || [] };
+            }
+            const first = earliestProdDeployedAt(issue);
+            out[issue.key] = { envs, firstProdAt: first === null ? null : new Date(first).toISOString(), releasedOnProd: issueIsReleasedToProd(issue) };
+        }
+        return JSON.stringify(out);`);
+}
+
+/**
+ * The Release plan tab's model (releasePlanModel()), its items cut to key, title, PROD level and whether with users.
+ *
+ * @param {object} data what readDashboardData() returns
+ * @param {{ now?: Date, docsDir?: string }} [options]
+ * @returns {{ mode: string, groups: Array<{ key: string, title: string, mvp: string, outcome: string|null, mvpReleased: boolean, problems: string[], lines: Array<{ id: string, name: string|null, released: boolean, onProdCount: number, items: Array<{ key: string, title: string, prod: string, onProd: boolean }> }>, flags: object[] }> }}
+ */
+function releasePlan(data, options = {}) {
+    return evaluate(data, options, `
+        const model = releasePlanModel();
+        return JSON.stringify({
+            mode: model.mode,
+            groups: model.groups.map(g => ({
+                key: g.key, title: g.title, mvp: g.mvp, outcome: g.outcome, mvpReleased: g.mvpReleased, problems: g.problems || [],
+                lines: g.lines.map(l => ({ id: l.id, name: l.name, released: l.released, onProdCount: l.onProdCount,
+                    items: l.items.map(i => ({ key: i.key, title: i.title, prod: i.prodLevel, onProd: i.onProd })) })),
+                flags: g.flags,
+            })),
+        });`);
+}
+
+/**
+ * Every flag as the Technical view's flags panel knows it: what it is, its items, PROD exposure (flagProdExposure()),
+ * its state per environment and service (flagStatesByComponent), the freshness of the services it covers, and the
+ * panel's warnings (flagBlastRadius(), flagStaleWarning()). Key order.
+ *
+ * @param {object} data what readDashboardData() returns
+ * @param {{ now?: Date, docsDir?: string }} [options]
+ * @returns {Array<{ key: string, description: string, kind: 'build'|'runtime', itemKeys: string[], services: string[], prod: object|null, envs: object, freshness: object, blastRadius: string[]|null, stale: object|null }>}
+ */
+function flagsView(data, options = {}) {
+    return evaluate(data, options, `
+        return JSON.stringify(Object.keys(state.flagsMeta).sort().map(key => {
+            const meta = state.flagsMeta[key];
+            const byEnv = (state.flagStatesByComponent && state.flagStatesByComponent[key]) || {};
+            const envs = {};
+            const services = new Set(meta.components || []);
+            for (const [env, byComponent] of Object.entries(byEnv)) {
+                envs[env] = {};
+                for (const [component, v] of Object.entries(byComponent)) {
+                    services.add(component);
+                    envs[env][component] = { state: v.state, rollout: typeof v.rollout === 'number' ? v.rollout : null, changedAt: v.changedAt || null, sourceName: v.sourceName || null };
+                }
+            }
+            const freshness = {};
+            for (const component of services) {
+                if (state.flagFreshness && state.flagFreshness[component]) freshness[component] = state.flagFreshness[component];
+            }
+            return {
+                key, description: meta.description || '', kind: meta.source === 'build' ? 'build' : 'runtime',
+                itemKeys: meta.jiraKeys || [], services: [...services].sort(), prod: flagProdExposure(key), envs, freshness,
+                blastRadius: flagBlastRadius(meta), stale: flagStaleWarning(meta, key),
+            };
+        }));`);
+}
+
+/**
+ * Per tracked repo (componentsOrder) and environment: the latest successful deployment (currentVersion()) with its
+ * version, time, commit, whether it was a rollback, and its drift against the previous stage, or null when never
+ * deployed there.
+ *
+ * @param {object} data what readDashboardData() returns
+ * @param {{ now?: Date, docsDir?: string }} [options]
+ * @returns {Array<{ name: string, serviceType: string|null, flagCoverage: string, envs: Record<'test'|'qa'|'prod', null|{ version: string|null, deployedAt: string, commitUrl: string|null, deployedBy: string|null, rollback: boolean, drift: null|{ comparedWith: string|null, files: number|null, paths: string[], unknown: boolean, commitsBehind: number|null } }> }>}
+ */
+function environmentsView(data, options = {}) {
+    return evaluate(data, options, `
+        const driftOf = (d) => {
+            if (!d || !(d.diff || d.commitCount || d.untestedCommitCount)) return null;
+            const diff = d.diff || {};
+            return {
+                comparedWith: d.behindEnv || d.untestedIn || null,
+                files: typeof diff.files === 'number' ? diff.files : null,
+                paths: diff.paths || [],
+                unknown: !!diff.unknown,
+                commitsBehind: typeof d.commitCount === 'number' ? d.commitCount : null,
+            };
+        };
+        return JSON.stringify((state.componentsOrder || []).map(c => {
+            const envs = {};
+            for (const env of ['test', 'qa', 'prod']) {
+                const d = currentVersion(c.name, env);
+                envs[env] = d ? { version: d.version || null, deployedAt: new Date(d.deployedAt).toISOString(), commitUrl: d.commitUrl || null, deployedBy: d.deployedBy || null, rollback: !!d.rollback, drift: driftOf(d.driftBehind) } : null;
+            }
+            return { name: c.name, serviceType: c.serviceType || null, flagCoverage: c.flagCoverage || 'unknown', envs };
+        }));`);
+}
+
+module.exports = { releaseGroups, itemStatus, itemStatuses, leadTimes, releasePlan, flagsView, environmentsView };
