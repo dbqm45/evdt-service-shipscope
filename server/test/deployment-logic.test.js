@@ -96,3 +96,17 @@ test('buildDeploymentPlan: keeps log_url only when it is a run of the repository
     const { plan } = buildDeploymentPlan(deployments, statusesById, { now: Date.parse('2026-10-16T12:00:00Z'), stuckMaxAgeHours: 48, fullName: 'acme/web' });
     assert.deepStrictEqual(plan.map((p) => p.workflowRunUrl), ['https://github.com/acme/web/actions/runs/7', null]);
 });
+
+test('firstCommitDates (G3): each key\'s earliest author date among the commits; a missing or bad date is left out', () => {
+    const { firstCommitDates } = require('../lib/deployment-logic');
+    assert.deepStrictEqual(firstCommitDates([
+        { commit: { message: 'feat: retry\n\nChange: TSK-57', author: { date: '2026-10-03T10:00:00Z' } } },
+        { commit: { message: 'fix: TSK-57 and TSK-58', author: { date: '2026-10-01T09:30:00Z' } } },
+        { commit: { message: 'TSK-58 tests', author: { date: '2026-10-02T00:00:00+02:00' } } },
+        { commit: { message: 'TSK-59 no date' } },
+        { commit: { message: 'TSK-60 bad date', author: { date: 'yesterday' } } },
+        { commit: null },
+        'not a commit',
+    ]), { 'TSK-57': '2026-10-01T09:30:00.000Z', 'TSK-58': '2026-10-01T09:30:00.000Z' });
+    assert.deepStrictEqual(firstCommitDates(undefined), {});
+});

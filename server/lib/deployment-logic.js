@@ -206,7 +206,31 @@ function flagLinksFromMessages(messages) {
     return out;
 }
 
+/**
+ * Each issue key's earliest commit author date among a deployment's commits (G3, design-docs/G3-FLOW-TIME-PLAN.pl.md).
+ * Commits come from GitHub (compare or commit API), so every field is checked; a commit without a valid date counts for
+ * nothing.
+ *
+ * @param {Array<{ commit?: { message?: string, author?: { date?: string } } }>|undefined} commits
+ * @returns {Object<string, string>} key -> ISO date
+ */
+function firstCommitDates(commits) {
+    const out = {};
+    for (const c of Array.isArray(commits) ? commits : []) {
+        const commit = c && typeof c === 'object' ? c.commit : null;
+        if (!commit || typeof commit !== 'object' || typeof commit.message !== 'string') continue;
+        const raw = commit.author && typeof commit.author.date === 'string' ? commit.author.date : null;
+        const time = raw ? Date.parse(raw) : NaN;
+        if (Number.isNaN(time)) continue;
+        for (const key of extractIssueKeys(commit.message)) {
+            if (!out[key] || time < Date.parse(out[key])) out[key] = new Date(time).toISOString();
+        }
+    }
+    return out;
+}
+
 module.exports = {
+    firstCommitDates,
     flagLinksFromMessages,
     mapEnvironment,
     environmentFor,

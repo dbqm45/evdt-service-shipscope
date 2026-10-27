@@ -10,6 +10,7 @@ const { readWorkItems } = require('./work-items');
 const { workItemIssues, WORK_ITEM_KEY } = require('./work-items-model');
 const { pdiLayer } = require('./pdi-layer');
 const { itemStatus, itemStatuses, leadTimes, releasePlan, flagsView, environmentsView } = require('./release-status');
+const { flowTimes, flowSummary } = require('./flow-model');
 
 const TOKEN_PREFIX = 'shps_';
 const TOKEN_PATTERN = /^shps_[A-Za-z0-9_-]{43}$/;
@@ -187,11 +188,8 @@ const median = (values) => {
  * @throws {ServiceAuthError|ServiceRequestError}
  */
 async function serviceMetrics(pool, { token, from, to, now = new Date() }) {
-    const end = to ? parseDay(to, 'to') : new Date(`${now.toISOString().slice(0, 10)}T00:00:00Z`);
-    const start = from ? parseDay(from, 'from') : new Date(end.getTime() - (DEFAULT_RANGE_DAYS - 1) * DAY_MS);
-    if (start > end) throw new ServiceRequestError('from must not be after to');
+    const { start, end } = serviceRange({ from, to, now });
     const span = Math.round((end - start) / DAY_MS) + 1;
-    if (span > MAX_RANGE_DAYS) throw new ServiceRequestError(`At most ${MAX_RANGE_DAYS} days at a time`);
     return withServiceToken(pool, { token, now }, async (client, tenantId) => {
         const data = await readDashboardData(client, { tenantId });
         const { rows } = await client.query('SELECT DISTINCT ON (key) data FROM jira_issues WHERE tenant_id = $1 ORDER BY key, synced_at DESC', [tenantId]);
@@ -218,6 +216,39 @@ async function serviceMetrics(pool, { token, from, to, now = new Date() }) {
             to: end.toISOString().slice(0, 10),
             days: [...days.values()].map(({ lead, ...day }) => ({ ...day, leadTimeDaysMedian: median(lead), leadTimeCount: lead.length })),
         };
+    });
+}
+
+/** The range of `/metrics` and `/flow`: YYYY-MM-DD in UTC, the last DEFAULT_RANGE_DAYS by default, at most MAX_RANGE_DAYS. */
+function serviceRange({ from, to, now }) {
+    const end = to ? parseDay(to, 'to') : new Date(`${now.toISOString().slice(0, 10)}T00:00:00Z`);
+    const start = from ? parseDay(from, 'from') : new Date(end.getTime() - (DEFAULT_RANGE_DAYS - 1) * DAY_MS);
+    if (start > end) throw new ServiceRequestError('from must not be after to');
+    if (Math.round((end - start) / DAY_MS) + 1 > MAX_RANGE_DAYS) throw new ServiceRequestError(`At most ${MAX_RANGE_DAYS} days at a time`);
+    return { start, end };
+}
+
+/**
+ * Flow time (G3 step 1, design-docs/G3-FLOW-TIME-PLAN.pl.md): the items that first reached PROD in the range, from
+ * their first commit, and the repo changes delivered in it (every slice on PROD), with medians. What tf and pdi
+ * calibrate the automatic forecast with.
+ *
+ * @param {import('pg').Pool} pool
+ * @param {{ token: string, from?: string, to?: string, now?: Date }} input
+ * @returns {Promise<{ from: string, to: string } & ReturnType<typeof flowTimes>>}
+ * @throws {ServiceAuthError|ServiceRequestError}
+ */
+async function serviceFlow(pool, { token, from, to, now = new Date() }) {
+    const { start, end } = serviceRange({ from, to, now });
+    const until = new Date(end.getTime() + DAY_MS);
+    const inRange = (at) => new Date(at) >= start && new Date(at) < until;
+    return withServiceToken(pool, { token, now }, async (client, tenantId) => {
+        const { rows: facts } = await client.query('SELECT issue_key, environment, first_deployed_at, first_commit_at FROM issue_deployments WHERE tenant_id = $1', [tenantId]);
+        const { rows: workItems } = await client.query('SELECT item_key, kind, parent_key, status FROM work_items WHERE tenant_id = $1', [tenantId]);
+        const all = flowTimes({ facts, workItems });
+        const items = all.items.filter((i) => inRange(i.firstProdAt));
+        const changes = all.changes.filter((c) => inRange(c.deliveredAt));
+        return { from: start.toISOString().slice(0, 10), to: end.toISOString().slice(0, 10), items, changes, summary: flowSummary(items, changes) };
     });
 }
 
@@ -296,6 +327,7 @@ function metricsCsv({ days }) {
 }
 
 module.exports = {
+    serviceFlow,
     MAX_TOKENS, ServiceTokenError, ServiceAuthError, ServiceRequestError, ServiceNotFoundError,
     createServiceToken, insertServiceToken, withServiceToken, listServiceTokens, revokeServiceToken, serviceItemStatus, serviceMetrics, metricsCsv,
     serviceChanges, serviceReleasePlan, serviceFlags, serviceEnvironments,
