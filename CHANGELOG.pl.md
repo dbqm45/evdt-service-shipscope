@@ -7,6 +7,12 @@ dashboard, nie publikowany pakiet), dlatego wpisy są pogrupowane według dat. I
 ShipScope, znajdują się w `README.pl.md`, pełne techniczne odniesienie w `CLAUDE.md` (po angielsku), a
 wyjaśnienie sposobu liczenia poszczególnych wartości/badge'y w `FAQ.pl.md`.
 
+## [0.2.59] - 2026-10-27
+
+### Nowe
+
+- **SHP:** remove the pdi layer's data 30 days after a disconnect (#118)
+
 ## [0.2.58] - 2026-10-27
 
 ### Nowe

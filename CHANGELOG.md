@@ -7,6 +7,12 @@ dashboard, not a published package), so entries are grouped by date instead. See
 ShipScope is, `CLAUDE.md` for the technical reference, and `FAQ.md` for how specific numbers/badges are
 calculated.
 
+## [0.2.59] - 2026-10-27
+
+### Added
+
+- **SHP:** remove the pdi layer's data 30 days after a disconnect (#118)
+
 ## [0.2.58] - 2026-10-27
 
 ### Added
