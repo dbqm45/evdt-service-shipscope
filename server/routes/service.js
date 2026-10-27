@@ -3,6 +3,7 @@
 const crypto = require('crypto');
 const { createLimiter } = require('../lib/request-limiter');
 const { serviceItemStatus, serviceMetrics, metricsCsv, serviceChanges, serviceReleasePlan, serviceFlags, serviceEnvironments } = require('../lib/service-api');
+const { serviceConnection } = require('../lib/pdi-connection');
 
 // Per token, as for the flag ingest: a burst, then one a second.
 const SERVICE_RATE_LIMIT = { capacity: 60, refillPerSecond: 1 };
@@ -52,7 +53,7 @@ function registerServiceRoutes(app, ctx) {
     });
 
     // What the dashboard shows, for a conversation in Claude (K-1, adapters/mcp/): read only, no parameters.
-    const views = { changes: serviceChanges, 'release-plan': serviceReleasePlan, flags: serviceFlags, environments: serviceEnvironments };
+    const views = { connection: serviceConnection, changes: serviceChanges, 'release-plan': serviceReleasePlan, flags: serviceFlags, environments: serviceEnvironments };
     for (const [path, view] of Object.entries(views)) {
         app.get(`/api/service/v1/${path}`, async (request) => view(pool, { token: tokenOf(request) }));
     }

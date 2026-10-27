@@ -107,7 +107,7 @@ changelog entry by hand outside a `chore(release)` PR.
 
 Deployed to Render per `context/foundation/infrastructure.md`: `render.yaml` builds both the Web Service and the
 Background Worker from the repo root (`npm ci --prefix server`, `node server/web.js`), not `rootDir: server`, which
-would hide `docs/` from the Web Service. Migrations (`server/migrations/001`–`043`, applied by the hand-rolled
+would hide `docs/` from the Web Service. Migrations (`server/migrations/001`–`044`, applied by the hand-rolled
 `lib/migrate.js`) run as each service's `preDeployCommand` under an advisory lock (`test/render-blueprint.test.js`).
 Dependencies, all in `server/package.json`: `pg`, `fastify`, `@fastify/cookie`. Fastify runs with
 `removeAdditional: false, coerceTypes: false`: unknown fields and wrong types are a 400, never silently fixed.
@@ -123,7 +123,7 @@ New rules go into the pure file; the I/O file orchestrates.
 
 **Tenant isolation (RLS).** Every query on an RLS table — the list is `RLS_TABLES` in `lib/scope.js` (memberships,
 invitations, github_installations, tracked_repos, deployments, issue_deployments, flag_sources, flag_source_repos, flag_source_envs, ingest_tokens, flags,
-flag_values, flag_value_history, jira_connections, jira_boards, jira_pis, jira_issues, audit_events, endpoint_tests, jira_access_grants, release_lines, flag_commit_links, work_items, release_plans, event_subscriptions, event_state, event_outbox, service_tokens) — must run inside
+flag_values, flag_value_history, jira_connections, jira_boards, jira_pis, jira_issues, audit_events, endpoint_tests, jira_access_grants, release_lines, flag_commit_links, work_items, release_plans, event_subscriptions, event_state, event_outbox, service_tokens, pdi_connections) — must run inside
 `withScope()`, which sets `app.current_tenant_id`/`app.current_user_id` with transaction-local
 `set_config(..., true)`. An unscoped read returns zero rows; an unscoped write is an RLS error.
 `lib/withscope-guard.js` (`server/test/withscope-guard.test.js`) fails on any `pool.query(...)` in `server/lib/`
@@ -366,6 +366,18 @@ the web service fills once a minute (`sampleStatus()`, web.js); a day is an outa
   freshness, `flagBlastRadius()`/`flagStaleWarning()`, so the sandbox also loads `app-technical-flags.js`) and
   `…/environments` (`environmentsView()`: `currentVersion()` per service and environment with its drift). Per-token
   token bucket as for the ingest (`server/test/service-api.test.js`).
+- **Connection with pdi** (`lib/pdi-connection.js`, migration `044`, `pdi_connections`, RLS; design-docs/PDI-CONNECTION-PLAN.pl.md,
+  step 1 of the decision "ShipScope bez pdi i z pdi"; this step hides nothing yet): Settings → Integrations → pdi
+  (`renderPdi()`); `POST …/pdi-connection { receiverUrl }` (admin, 409 when active) creates in one transaction a
+  service token "pdi" (`insertServiceToken()`), an event subscription to `<receiverUrl>/events/shipscope` with its own
+  sealed secret (`event_subscriptions.signing_secret_enc`, `subscriptionSigningSecret()`, AAD
+  `subscriptionSecretAad()`; re-sealed by `secretsTick()`, tried by the restore check) and the connection; the answer
+  carries `PDI_SHIPSCOPE_URL/TOKEN/SIGNING_SECRET` once. State (`judgePdiConnection()`, pure,
+  `lib/pdi-connection-model.js`): `none`/`pending`/`connected`/`degraded`/`disconnected` from the token's
+  `last_used_at` (pdi reads `GET /api/service/v1/connection`) and the last contact with pdi (a delivered event, or the
+  signed ping `GET <receiver>/events/shipscope`, `X-ShipScope-Event: ping`, from the worker's `pdiPingTick()` hourly
+  and Settings' Test). `DELETE` revokes the token and the subscription. Audited `pdi_connected`/`pdi_disconnected`
+  (`server/test/pdi-connection.test.js`).
 - **Webhooks** (`lib/webhooks.js`, migration `013`) — `POST /webhooks/github` (HMAC, `GITHUB_APP_WEBHOOK_SECRET`)
   and `POST /webhooks/jira` (HS256 JWT signed with the Atlassian client secret; a token without `exp` is logged as
   `jira webhook token without exp` and accepted unless `JIRA_WEBHOOK_REQUIRE_EXP=1`, since Atlassian does not
@@ -385,7 +397,7 @@ the web service fills once a minute (`sampleStatus()`, web.js); a day is an outa
   `docs/app-html.js`). `settings.js` is a classic script on `html` with pure `render*` pages and `data-action`
   buttons/forms calling the JSON routes (which enforce roles), tested in `server/test/settings-ui.test.js`. One page
   at a time by hash (`PAGES`, `pageFromHash()`: `#general`, `#members`, `#github`, `#jira`, `#flags`, `#sources`,
-  `#danger` for admins, `#getting-started`; old `#workspace` = General), beside a sidebar (`renderSidebar()`: the
+  `#pdi`, `#danger` for admins, `#getting-started`; old `#workspace` = General), beside a sidebar (`renderSidebar()`: the
   workspace, the pages with counts, amber/red when a checklist step waits on the admin or has a problem, and the
   admins' Setup card). GitHub lists installations as cards and tracked repositories as a table; "Track repository"
   opens a picker over every installation's repositories, the pencil opens a row's card (`RepoFlagsCard()` below its

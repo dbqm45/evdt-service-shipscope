@@ -42,19 +42,32 @@ async function createServiceToken(pool, { tenantId, actorUserId, name, lifetimeD
     if (lifetimeDays !== null && (!Number.isInteger(lifetimeDays) || lifetimeDays < 1 || lifetimeDays > MAX_LIFETIME_DAYS)) {
         throw new ServiceTokenError(`A token lives 1–${MAX_LIFETIME_DAYS} days, or without end (null)`);
     }
-    const token = TOKEN_PREFIX + crypto.randomBytes(32).toString('base64url');
-    const expiresAt = lifetimeDays === null ? null : new Date(now.getTime() + lifetimeDays * DAY_MS);
     return withScope(pool, { tenantId }, async (client) => {
         await assertAdmin(client, { tenantId, userId: actorUserId });
-        const { rows: [{ n }] } = await client.query('SELECT count(*)::int AS n FROM service_tokens WHERE tenant_id = $1', [tenantId]);
-        if (n >= MAX_TOKENS) throw new ServiceTokenError(`A workspace has at most ${MAX_TOKENS} service tokens`);
-        const { rows: [row] } = await client.query(
-            'INSERT INTO service_tokens (tenant_id, name, token_hash, created_by, expires_at) VALUES ($1, $2, $3, $4, $5) RETURNING id',
-            [tenantId, clean, hashToken(token), actorUserId, expiresAt]
-        );
-        await recordAuditEvent(client, { tenantId, actorUserId, kind: 'service_token_created', subject: clean });
-        return { id: row.id, name: clean, token, expiresAt: expiresAt && expiresAt.toISOString() };
+        return insertServiceToken(client, { tenantId, actorUserId, name: clean, lifetimeDays, now });
     });
+}
+
+/**
+ * Inside withScope, the admin already checked: a new token, its hash stored, audited. Also used by the pdi connection
+ * (lib/pdi-connection.js), which creates its token in the same transaction.
+ *
+ * @param {import('pg').PoolClient} client
+ * @param {{ tenantId: string, actorUserId: string, name: string, lifetimeDays: number|null, now: Date }} input
+ * @returns {Promise<{ id: string, name: string, token: string, expiresAt: string|null }>}
+ * @throws {ServiceTokenError} the limit reached
+ */
+async function insertServiceToken(client, { tenantId, actorUserId, name, lifetimeDays, now }) {
+    const token = TOKEN_PREFIX + crypto.randomBytes(32).toString('base64url');
+    const expiresAt = lifetimeDays === null ? null : new Date(now.getTime() + lifetimeDays * DAY_MS);
+    const { rows: [{ n }] } = await client.query('SELECT count(*)::int AS n FROM service_tokens WHERE tenant_id = $1', [tenantId]);
+    if (n >= MAX_TOKENS) throw new ServiceTokenError(`A workspace has at most ${MAX_TOKENS} service tokens`);
+    const { rows: [row] } = await client.query(
+        'INSERT INTO service_tokens (tenant_id, name, token_hash, created_by, expires_at) VALUES ($1, $2, $3, $4, $5) RETURNING id',
+        [tenantId, name, hashToken(token), actorUserId, expiresAt]
+    );
+    await recordAuditEvent(client, { tenantId, actorUserId, kind: 'service_token_created', subject: name });
+    return { id: row.id, name, token, expiresAt: expiresAt && expiresAt.toISOString() };
 }
 
 /**
@@ -83,6 +96,8 @@ async function listServiceTokens(pool, { tenantId, actorUserId }) {
 async function revokeServiceToken(pool, { tenantId, actorUserId, id }) {
     return withScope(pool, { tenantId }, async (client) => {
         await assertAdmin(client, { tenantId, userId: actorUserId });
+        const { rows: owned } = await client.query('SELECT 1 FROM pdi_connections WHERE tenant_id = $1 AND service_token_id = $2 AND disconnected_at IS NULL', [tenantId, id]);
+        if (owned.length) throw new ServiceTokenError('This token belongs to the connection with pdi; disconnect pdi in Settings → pdi instead');
         const { rows } = await client.query('DELETE FROM service_tokens WHERE tenant_id = $1 AND id = $2 RETURNING name', [tenantId, id]);
         if (!rows.length) return false;
         await recordAuditEvent(client, { tenantId, actorUserId, kind: 'service_token_revoked', subject: rows[0].name });
@@ -275,6 +290,6 @@ function metricsCsv({ days }) {
 
 module.exports = {
     MAX_TOKENS, ServiceTokenError, ServiceAuthError, ServiceRequestError, ServiceNotFoundError,
-    createServiceToken, listServiceTokens, revokeServiceToken, serviceItemStatus, serviceMetrics, metricsCsv,
+    createServiceToken, insertServiceToken, withServiceToken, listServiceTokens, revokeServiceToken, serviceItemStatus, serviceMetrics, metricsCsv,
     serviceChanges, serviceReleasePlan, serviceFlags, serviceEnvironments,
 };

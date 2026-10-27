@@ -81,6 +81,7 @@ const GITHUB_ID_PARAM = { type: 'string', pattern: '^[1-9][0-9]{0,14}$' };
 
 /** Domain errors from lib/ and the HTTP status each one means. */
 const { EventSubscriptionError } = require('./lib/outgoing-events');
+const { PdiConnectionError, PdiConnectionConflictError, NoPdiConnectionError } = require('./lib/pdi-connection');
 const ERROR_STATUS = [
     [TenantNotFoundError, 404],
     [InvitationNotFoundError, 404],
@@ -108,6 +109,9 @@ const ERROR_STATUS = [
     [AtlassianError, 502],
     [EventSubscriptionError, 400],
     [ServiceTokenError, 400],
+    [PdiConnectionError, 400],
+    [PdiConnectionConflictError, 409],
+    [NoPdiConnectionError, 404],
     [ServiceAuthError, 401],
     [ServiceRequestError, 400],
     [ServiceNotFoundError, 404],

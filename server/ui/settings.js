@@ -102,7 +102,7 @@ const SETTINGS_ICONS = {
 /** The settings pages, in the sidebar's groups; `section` is the loader (and message key) each one reads. */
 const PAGES = [
     { group: 'Workspace', items: [{ id: 'general', label: 'General', section: 'workspace' }, { id: 'members', label: 'Members', section: 'workspace' }] },
-    { group: 'Integrations', items: [{ id: 'github', label: 'GitHub', section: 'github' }, { id: 'jira', label: 'Jira', section: 'jira' }] },
+    { group: 'Integrations', items: [{ id: 'github', label: 'GitHub', section: 'github' }, { id: 'jira', label: 'Jira', section: 'jira' }, { id: 'pdi', label: 'pdi', section: 'pdi' }] },
     { group: 'Feature flags', items: [{ id: 'flags', label: 'Flags', section: 'flags' }, { id: 'sources', label: 'Sources', section: 'flags' }] },
     { group: 'Other', items: [{ id: 'danger', label: 'Danger zone', section: 'workspace', admin: true }] },
 ];
@@ -490,6 +490,60 @@ function renderGeneral({ workspace, admin, auditEvents = null, eventSubscription
                 <button type="submit" class="btn">Save</button></form>`
             : html`<p class="settings-hint">Deployment history is kept for ${days} days.</p>`,
     })}${admin ? EventSubscriptions(eventSubscriptions) : ''}${admin ? ServiceTokens(serviceTokens, once) : ''}${admin ? AuditEvents(auditEvents) : ''}`);
+}
+
+// ---- pdi ---------------------------------------------------------------------------------------------------
+
+const PDI_STATE_LABELS = { none: 'Not connected', pending: 'Waiting for pdi', connected: 'Connected', degraded: 'Connected, with problems', disconnected: 'Disconnected' };
+const PDI_CHECKS = {
+    pdi_reads: { ok: 'pdi read ShipScope with its token', todo: 'pdi has not read ShipScope yet: set the three variables in pdi and start pdi-receiver or its MCP server' },
+    reaches_pdi: { ok: 'ShipScope reached pdi', todo: 'ShipScope has not reached pdi yet: use Test once pdi-receiver runs at the address' },
+};
+
+/** One proof of the connection: done, waiting, or failing with pdi's answer. */
+function PdiCheck(check){
+    const text = PDI_CHECKS[check.id] || { ok: check.id, todo: check.id };
+    const mark = check.ok ? '✓' : check.error ? '!' : '…';
+    return html`<li><span class="state-tag">${mark}</span> ${check.ok ? text.ok : text.todo}${check.at ? html` <span class="settings-row-meta">· last ${fmtDateTime(check.at)}</span>` : ''}
+        ${check.error ? html`<div class="settings-error">${check.error}</div>` : ''}</li>`;
+}
+
+/**
+ * Settings → Integrations → pdi (design-docs/PDI-CONNECTION-PLAN.pl.md): connect with pdi's receiver address, the three
+ * variables for pdi shown once, the state with its two proofs, Test and Disconnect. Members see the state only.
+ *
+ * @param {{ connection: { state: string, receiverUrl: string|null, connectedAt: string|null, checks: object[] }|null|{ error: string }, admin: boolean, once?: { pdiEnv?: Record<string, string> } }} props
+ */
+function renderPdi({ connection, admin, once = {} }){
+    const page = (body) => Page({ id: 'pdi', section: 'pdi', title: 'pdi', hint: 'pdi keeps the decisions and problems behind your changes. Connected, it gets ShipScope\'s release events and reads release status for its trace and impact reviews.', body });
+    if (!connection) {
+        return page(html`<p class="settings-loading">Loading…</p>`);
+    }
+    if (connection.error) {
+        return page(Card({ body: html`<p class="settings-error">${connection.error}</p>` }));
+    }
+    const env = once.pdiEnv ? Object.entries(once.pdiEnv).map(([k, v]) => `${k}=${v}`).join('\n') : null;
+    const shown = env ? SecretBox({ label: 'Variables for pdi — shown only once', value: env, note: 'Put them in pdi\'s environment (pdi-receiver and its MCP server). ShipScope keeps only the token\'s hash and the secret sealed.' }) : '';
+    const active = ['pending', 'connected', 'degraded'].includes(connection.state);
+    if (!active) {
+        const form = admin
+            ? html`<form class="settings-form" data-action="connect-pdi">
+                <label>pdi-receiver's address <input name="receiverUrl" type="url" required maxlength="500" placeholder="https://pdi.example.com"></label>
+                <button type="submit" class="btn">Connect</button></form>`
+            : html`<p class="settings-hint">${MEMBER_HINT}</p>`;
+        return page(Card({
+            title: PDI_STATE_LABELS[connection.state] || connection.state,
+            body: html`<p class="settings-hint">Connecting creates a read-only service token for pdi and sends ShipScope's release events to <span class="mono">&lt;address&gt;/events/shipscope</span>, signed with a secret of their own.${connection.state === 'disconnected' ? html` Disconnected ${fmtDateTime(connection.disconnectedAt)}.` : ''}</p>${form}`,
+        }));
+    }
+    const actions = admin
+        ? html`<span><button type="button" class="btn" data-action="test-pdi">Test</button> <button type="button" class="btn btn-danger" data-action="disconnect-pdi">Disconnect</button></span>`
+        : '';
+    return page(html`${shown}${Card({
+        title: PDI_STATE_LABELS[connection.state] || connection.state,
+        body: html`<p class="settings-hint">pdi at <strong class="mono">${connection.receiverUrl}</strong>, connected ${fmtDateTime(connection.connectedAt)}.</p>
+            <ul class="settings-list">${connection.checks.map(PdiCheck)}</ul>${actions}`,
+    })}`);
 }
 
 /** @param {{ workspace: { members: object[], invitations: object[]|null }|null, admin: boolean, meId: string, once: object }} props */
@@ -1146,7 +1200,7 @@ const AUDIT_EVENT_LABELS = {
     flag_source_created: 'added the flag source', flag_source_updated: 'changed the flag source', flag_source_deleted: 'deleted the flag source',
     ingest_token_created: 'created a token for', ingest_token_revoked: 'revoked a token of',
     flag_details_changed: 'edited the flag', flag_link_accepted: 'linked the suggested issue', flag_link_dismissed: 'dismissed the suggested issue',
-    jira_site_selected: 'chose the Jira site', jira_flag_link_changed: 'set how Jira names flags:', jira_release_link_changed: 'set how Jira names release lines:', event_subscription_added: 'subscribed an address to events:', event_subscription_removed: 'removed the event subscription of', service_token_created: 'created the service token', service_token_revoked: 'revoked the service token', jira_boards_changed: 'chose the Jira boards',
+    jira_site_selected: 'chose the Jira site', jira_flag_link_changed: 'set how Jira names flags:', jira_release_link_changed: 'set how Jira names release lines:', event_subscription_added: 'subscribed an address to events:', event_subscription_removed: 'removed the event subscription of', service_token_created: 'created the service token', service_token_revoked: 'revoked the service token', pdi_connected: 'connected pdi at', pdi_disconnected: 'disconnected pdi at', jira_boards_changed: 'chose the Jira boards',
     jira_board_changed: 'changed the increments of the board',
 };
 
@@ -1359,6 +1413,7 @@ function renderSettings(){
         jira: () => renderJira({ enabled: s.features.jira, webhooks: s.features.jiraWebhooks, jira: s.jira, boards: s.boards, admin, flagFields: s.flagFields }),
         flags: () => renderFlags({ flagList: s.flagList, admin, jiraUrl: s.jira && s.jira.site ? s.jira.site.url : null }),
         sources: () => renderSourcesPage({ sources: s.flags, repos, admin, once: s.once, origin: location.origin, wizard: s.codeWizard, endpointTest: s.endpointTest, secretEvents: s.secretEvents }),
+        pdi: () => renderPdi({ connection: s.pdiConnection, admin, once: s.once }),
         danger: () => renderDangerZone({ tenantName: s.tenant && s.tenant.name }),
     };
     const counts = {
@@ -1429,6 +1484,9 @@ const loaders = {
         settingsState.flagList = list;
         settingsState.flags = sources;
         settingsState.secretEvents = events;
+    },
+    async pdi(){
+        settingsState.pdiConnection = await api('GET', tenantPath('/pdi-connection')).then((r) => r.connection, (err) => ({ error: err.message }));
     },
     async activity(){
         settingsState.auditEvents = isAdmin()
@@ -1506,6 +1564,24 @@ const actions = {
         const values = formValues(form);
         await api('POST', tenantPath('/event-subscriptions'), { url: values.url.trim(), types: values.types || [] });
         return { section: 'workspace', ok: 'Subscribed; release events go to it from now on (the first look only records the current state).' };
+    },
+    'connect-pdi': async (form) => {
+        const values = formValues(form);
+        const { env } = await api('POST', tenantPath('/pdi-connection'), { receiverUrl: values.receiverUrl.trim() });
+        settingsState.once = { pdiEnv: env };
+        return { section: 'pdi', ok: 'Connection created. Put the variables in pdi, then use Test.' };
+    },
+    'test-pdi': async () => {
+        settingsState.pdiConnection = (await api('POST', tenantPath('/pdi-connection/test'))).connection;
+        const reach = settingsState.pdiConnection.checks.find((c) => c.id === 'reaches_pdi');
+        return reach && reach.ok ? { section: 'pdi', ok: 'pdi answered.' } : { section: 'pdi', error: true, ok: (reach && reach.error) || 'pdi did not answer.' };
+    },
+    'disconnect-pdi': async () => {
+        if (!confirmed('Disconnect pdi? Its token stops working and release events stop at once.')) {
+            return null;
+        }
+        await api('DELETE', tenantPath('/pdi-connection'));
+        return { section: 'pdi', ok: 'Disconnected.' };
     },
     'create-service-token': async (form) => {
         const values = formValues(form);
@@ -1864,7 +1940,7 @@ async function runAction(name, el){
         }
         if (result.section) {
             if (result.ok) {
-                settingsState.messages[result.section] = { error: false, text: result.ok };
+                settingsState.messages[result.section] = { error: Boolean(result.error), text: result.ok };
             }
             // Every change an admin makes lands in the audit log, which General shows.
             await load(...(isAdmin() && result.section !== 'activity' ? [result.section, 'activity'] : [result.section]));
@@ -1956,7 +2032,7 @@ async function initSettings(){
 }
 
 if (typeof module !== 'undefined') {
-    module.exports = { onboardingSteps, SourceStatus, tokenState, TokenLine, renderGettingStarted, SetupCard, renderSidebar, pageFromHash, repoBadge, initials, renderGeneral, AuditEvents, AUDIT_EVENT_LABELS, OidcFields, oidcOf, renderMembers, renderDangerZone, renderGitHub, renderJira, renderFlags, renderSourcesPage, FlagRow, formValues, actions, settingsState, runAction, load, api, ApiError };
+    module.exports = { onboardingSteps, SourceStatus, tokenState, TokenLine, renderGettingStarted, SetupCard, renderSidebar, pageFromHash, repoBadge, initials, renderGeneral, AuditEvents, AUDIT_EVENT_LABELS, OidcFields, oidcOf, renderMembers, renderPdi, renderDangerZone, renderGitHub, renderJira, renderFlags, renderSourcesPage, FlagRow, formValues, actions, settingsState, runAction, load, api, ApiError };
 } else if (SETTINGS_TENANT_ID) {
     initSettings();
 }

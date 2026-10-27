@@ -13,6 +13,7 @@ const { open, seal, needsReseal, SecretBoxError } = require('./secret-box');
 const { sealFor, openWith, isSealedFor, sealingKeyId, SealedBoxError } = require('./sealed-box');
 const { endpointTokenAad } = require('./flags');
 const { tenantSigningSecret, signingSecretAad } = require('./endpoint-flags');
+const { subscriptionSecretAad } = require('./outgoing-events');
 
 /** Seals one value again with the current key; true when it changed, null when no key opens it. */
 function reseal(keys, sealed, aad) {
@@ -79,6 +80,12 @@ async function resealSecrets({ pool, encryptionKey, sealingKeys = null, log = ()
                 const next = resealForWorker(encryptionKey, sealingKeys, source.endpoint_token_enc, endpointTokenAad(tenantId, source.id));
                 if (next) await client.query('UPDATE flag_sources SET endpoint_token_enc = $3 WHERE tenant_id = $1 AND id = $2', [tenantId, source.id, next]);
                 count(tenantId, 'endpoint token', next);
+            }
+            const { rows: subs } = await client.query('SELECT id, signing_secret_enc FROM event_subscriptions WHERE tenant_id = $1 AND signing_secret_enc IS NOT NULL FOR UPDATE', [tenantId]);
+            for (const sub of subs) {
+                const next = reseal(encryptionKey, sub.signing_secret_enc, subscriptionSecretAad(tenantId, sub.id));
+                if (next) await client.query('UPDATE event_subscriptions SET signing_secret_enc = $3 WHERE tenant_id = $1 AND id = $2', [tenantId, sub.id, next]);
+                count(tenantId, 'event signing secret', next);
             }
             const { rows: [tenant] } = await client.query('SELECT endpoint_signing_secret_enc FROM tenants WHERE id = $1 FOR UPDATE', [tenantId]);
             if (tenant && tenant.endpoint_signing_secret_enc) {

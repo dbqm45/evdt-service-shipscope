@@ -42,6 +42,12 @@ odróżnić ShipScope od kogokolwiek innego. Jest zapisany zaszyfrowany osobno d
 przy rotacji kluczy. Admin workspace'u może go wymienić sam (Settings → Sources → „Replace it”), na przykład po
 wycieku.
 
+Połączenie z pdi (Settings → Integrations → pdi) ma własny sekret podpisu zdarzeń i pingu, niezależny od sekretu
+workspace'u. ShipScope pokazuje go raz przy połączeniu jako `PDI_SHIPSCOPE_SIGNING_SECRET` i trzyma zaszyfrowany
+`TOKEN_ENCRYPTION_KEY` przy subskrypcji zdarzeń (`event_subscriptions.signing_secret_enc`). Rotacja kluczy go
+przeszyfrowuje, a test odtworzenia kopii sprawdza, czy się otwiera. Nowy sekret daje rozłączenie i ponowne
+połączenie.
+
 ## Pierwsze ustawienie (produkcja)
 
 1. **Klucz symetryczny.** Wygeneruj go poleceniem `openssl rand -base64 32` i zachowaj kopię w menedżerze haseł.

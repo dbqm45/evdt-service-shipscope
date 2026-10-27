@@ -6,6 +6,8 @@ const { listAuditEvents } = require('../lib/audit-log');
 const { listSubscriptions, addSubscription, removeSubscription, MAX_SUBSCRIPTIONS } = require('../lib/outgoing-events');
 const { MAX_TOKENS: MAX_SERVICE_TOKENS, createServiceToken, listServiceTokens, revokeServiceToken } = require('../lib/service-api');
 const { EVENT_TYPES } = require('../lib/release-events-model');
+const { getPdiConnection, connectPdi, testPdiConnection, disconnectPdi } = require('../lib/pdi-connection');
+const { safeFetch: defaultSafeFetch } = require('../lib/safe-fetch');
 const { removeJiraWebhooks } = require('../lib/jira-sync');
 const { listDeployments, getSettings, updateSettings, MAX_LIMIT } = require('../lib/deployments');
 
@@ -17,7 +19,7 @@ const { listDeployments, getSettings, updateSettings, MAX_LIMIT } = require('../
  * @param {object} ctx see web.js's buildApp() for the full shape
  */
 function registerTenantRoutes(app, ctx) {
-    const { pool, atlassian, fetchFn, requireUser, UUID_PARAM, GITHUB_ID_PARAM } = ctx;
+    const { pool, auth, atlassian, fetchFn, requireUser, UUID_PARAM, GITHUB_ID_PARAM, encryptionKey, safeFetch } = ctx;
     const tenantOnlyParams = { type: 'object', required: ['tenantId'], properties: { tenantId: UUID_PARAM } };
 
     app.post('/tenants', {
@@ -176,6 +178,39 @@ function registerTenantRoutes(app, ctx) {
     }, async (request, reply) => {
         const removed = await revokeServiceToken(pool, { tenantId: request.params.tenantId, actorUserId: request.user.id, id: request.params.tokenId });
         return removed ? reply.code(204).send() : reply.code(404).send({ error: 'No such token' });
+    });
+
+    // The connection with pdi (design-docs/PDI-CONNECTION-PLAN.pl.md): members see its state, admins connect, test and
+    // disconnect; the variables pdi needs are in the 201 answer only.
+    app.get('/tenants/:tenantId/pdi-connection', {
+        preHandler: requireUser,
+        schema: { params: tenantOnlyParams },
+    }, async (request) => ({ connection: await getPdiConnection(pool, { tenantId: request.params.tenantId, actorUserId: request.user.id }) }));
+
+    app.post('/tenants/:tenantId/pdi-connection', {
+        preHandler: requireUser,
+        schema: {
+            params: tenantOnlyParams,
+            body: { type: 'object', required: ['receiverUrl'], additionalProperties: false, properties: { receiverUrl: { type: 'string', minLength: 1, maxLength: 500 } } },
+        },
+    }, async (request, reply) => reply.code(201).send(await connectPdi(pool, {
+        tenantId: request.params.tenantId, actorUserId: request.user.id, receiverUrl: request.body.receiverUrl,
+        publicBaseUrl: auth && auth.publicBaseUrl, encryptionKey,
+    })));
+
+    app.post('/tenants/:tenantId/pdi-connection/test', {
+        preHandler: requireUser,
+        schema: { params: tenantOnlyParams },
+    }, async (request) => ({ connection: await testPdiConnection(pool, {
+        tenantId: request.params.tenantId, actorUserId: request.user.id, encryptionKey, fetchImpl: safeFetch || defaultSafeFetch,
+    }) }));
+
+    app.delete('/tenants/:tenantId/pdi-connection', {
+        preHandler: requireUser,
+        schema: { params: tenantOnlyParams },
+    }, async (request, reply) => {
+        const removed = await disconnectPdi(pool, { tenantId: request.params.tenantId, actorUserId: request.user.id });
+        return removed ? reply.code(204).send() : reply.code(404).send({ error: 'This workspace is not connected with pdi' });
     });
 
     // FR-005: the tenant's deployments as the worker ingested them, newest first.

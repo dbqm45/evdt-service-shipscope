@@ -15,6 +15,7 @@ const { assertAdmin } = require('./tenants');
 const { recordAuditEvent } = require('./audit-log');
 const { checkUrl, SafeFetchError } = require('./safe-fetch');
 const { tenantSigningSecret } = require('./endpoint-flags');
+const { open, SecretBoxError } = require('./secret-box');
 const { readDashboardData } = require('./dashboard-data');
 const { releaseGroups } = require('./release-status');
 const { EVENT_TYPES, emptyEventState, planReleaseEvents, checkEvent } = require('./release-events-model');
@@ -36,6 +37,29 @@ class EventSubscriptionError extends Error {}
  */
 function eventSignature({ secret, timestamp, body }) {
     return `v1=${crypto.createHmac('sha256', secret).update(`${timestamp}.${body}`).digest('hex')}`;
+}
+
+/** What binds a subscription's own sealed signing secret (the pdi connection's, lib/pdi-connection.js) to its place. */
+function subscriptionSecretAad(tenantId, subscriptionId) {
+    return `${tenantId}/event-subscription/${subscriptionId}`;
+}
+
+/**
+ * Inside withScope: the secret that signs a subscription's deliveries: its own when it has one, else the workspace's.
+ *
+ * @param {import('pg').PoolClient} client
+ * @param {{ tenantId: string, encryptionKey: Buffer|object, subscriptionId: string }} input
+ * @returns {Promise<string>}
+ */
+async function subscriptionSigningSecret(client, { tenantId, encryptionKey, subscriptionId }) {
+    const { rows: [sub] } = await client.query('SELECT signing_secret_enc FROM event_subscriptions WHERE tenant_id = $1 AND id = $2', [tenantId, subscriptionId]);
+    if (!sub || !sub.signing_secret_enc) return tenantSigningSecret(client, { tenantId, encryptionKey });
+    try {
+        return open(encryptionKey, sub.signing_secret_enc, subscriptionSecretAad(tenantId, subscriptionId));
+    } catch (err) {
+        if (err instanceof SecretBoxError) throw new EventSubscriptionError('The subscription\'s signing secret cannot be read (was TOKEN_ENCRYPTION_KEY changed without TOKEN_ENCRYPTION_KEY_PREVIOUS?)');
+        throw err;
+    }
 }
 
 /**
@@ -100,6 +124,8 @@ async function addSubscription(pool, { tenantId, actorUserId, url, types }) {
 async function removeSubscription(pool, { tenantId, actorUserId, id }) {
     return withScope(pool, { tenantId }, async (client) => {
         await assertAdmin(client, { tenantId, userId: actorUserId });
+        const { rows: owned } = await client.query('SELECT 1 FROM pdi_connections WHERE tenant_id = $1 AND subscription_id = $2 AND disconnected_at IS NULL', [tenantId, id]);
+        if (owned.length) throw new EventSubscriptionError('This subscription belongs to the connection with pdi; disconnect pdi in Settings → pdi instead');
         const { rows: [row] } = await client.query('DELETE FROM event_subscriptions WHERE tenant_id = $1 AND id = $2 RETURNING url', [tenantId, id]);
         if (row) await recordAuditEvent(client, { tenantId, actorUserId, kind: 'event_subscription_removed', subject: new URL(row.url).host });
         return Boolean(row);
@@ -180,7 +206,12 @@ async function deliverEvents(pool, { encryptionKey, fetchImpl, now = new Date(),
                  ORDER BY o.created_at LIMIT $3`,
                 [tenantId, now, BATCH]
             );
-            return rows.length ? { rows, secret: await tenantSigningSecret(client, { tenantId, encryptionKey }) } : { rows };
+            // Each subscription signs with its own secret when it has one (the pdi connection's), else the workspace's.
+            const secrets = new Map();
+            for (const row of rows) {
+                if (!secrets.has(row.subscription_id)) secrets.set(row.subscription_id, await subscriptionSigningSecret(client, { tenantId, encryptionKey, subscriptionId: row.subscription_id }));
+            }
+            return { rows, secrets };
         });
         for (const row of due.rows) {
             const body = JSON.stringify(row.event);
@@ -191,7 +222,7 @@ async function deliverEvents(pool, { encryptionKey, fetchImpl, now = new Date(),
                     method: 'POST', body,
                     headers: {
                         'content-type': 'application/json', 'x-shipscope-timestamp': timestamp, 'x-shipscope-event': row.event.type,
-                        'x-shipscope-signature': eventSignature({ secret: due.secret, timestamp, body }),
+                        'x-shipscope-signature': eventSignature({ secret: due.secrets.get(row.subscription_id), timestamp, body }),
                     },
                 });
                 if (res.status < 200 || res.status >= 300) error = `${new URL(row.url).host} answered HTTP ${res.status}`;
@@ -223,4 +254,4 @@ async function deliverEvents(pool, { encryptionKey, fetchImpl, now = new Date(),
     return totals;
 }
 
-module.exports = { MAX_SUBSCRIPTIONS, MAX_ATTEMPTS, EventSubscriptionError, eventSignature, listSubscriptions, addSubscription, removeSubscription, detectReleaseEvents, deliverEvents };
+module.exports = { MAX_SUBSCRIPTIONS, MAX_ATTEMPTS, EventSubscriptionError, eventSignature, subscriptionSecretAad, subscriptionSigningSecret, listSubscriptions, addSubscription, removeSubscription, detectReleaseEvents, deliverEvents };
