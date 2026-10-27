@@ -7,6 +7,12 @@ dashboard, not a published package), so entries are grouped by date instead. See
 ShipScope is, `CLAUDE.md` for the technical reference, and `FAQ.md` for how specific numbers/badges are
 calculated.
 
+## [0.2.57] - 2026-10-27
+
+### Added
+
+- **SHP:** show the pdi layer only for workspaces connected with pdi (#116)
+
 ## [0.2.56] - 2026-10-27
 
 ### Added
