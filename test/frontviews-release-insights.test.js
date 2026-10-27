@@ -680,10 +680,29 @@ test('renderRollbackDriftChart: empty states and columns', () => {
 test('renderInsights renders all five charts without stray commas', () => {
     const { run, setState, html } = loadApp();
 
-    setState(rnState({ issueDeployments: {} }));
+    setState(rnState({ issueDeployments: {}, capabilities: { pdi: true } }));
     run('renderInsights()');
     for (const id of ['chartSprint', 'chartLeadTime', 'chartIntentLeadTime', 'chartReportLeadTime', 'chartPriority', 'chartStaleFlags', 'chartRollbackDrift']) {
         assert.ok(html(id).length > 0, id);
         assert.ok(!/>\s*,\s*</.test(html(id)), id);
     }
 });
+
+test('renderInsights leaves out the lead time from the intent and from the report without pdi', () => {
+    const { run, setState, html } = loadApp();
+
+    setState(rnState({ issueDeployments: {}, capabilities: { pdi: false } }));
+    run('renderInsights()');
+    assert.ok(html('chartSprint').length > 0);
+    assert.ok(!renderedInto(html, 'chartIntentLeadTime'), 'no intent chart without pdi');
+    assert.ok(!renderedInto(html, 'chartReportLeadTime'), 'no report chart without pdi');
+});
+
+/** An element the view never touched does not exist in the stub DOM. */
+function renderedInto(html, id){
+    try {
+        return html(id).length > 0;
+    } catch {
+        return false;
+    }
+}

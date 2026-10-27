@@ -79,6 +79,7 @@ if (!process.env.TEST_DATABASE_URL) {
 }
 
 const { createTestDb } = require('./helpers/test-db');
+const { connectPdiForTest } = require('./helpers/pdi');
 const { fakeGitHub, AUTH, signIn } = require('./helpers/auth');
 const { buildApp } = require('../web');
 const { withScope } = require('../lib/scope');
@@ -110,6 +111,7 @@ async function setup(t) {
     const alice = await signIn(app, 'alice');
     const bob = await signIn(app, 'bob');
     const tenantId = (await app.inject({ method: 'POST', url: '/tenants', cookies: { sid: alice }, payload: { name: 'Acme' } })).json().tenant.id;
+    await connectPdiForTest(pool, tenantId);
     const as = (sid) => (method, url, payload) => app.inject({ method, url: `/tenants/${tenantId}${url}`, cookies: { sid }, payload });
     const link = (await as(alice)('POST', '/invitations', { role: 'member' })).json().url;
     await app.inject({ method: 'POST', url: `${new URL(link).pathname}/accept`, cookies: { sid: bob } });

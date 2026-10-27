@@ -16,6 +16,7 @@ const { recordAuditEvent } = require('./audit-log');
 const { checkUrl, SafeFetchError } = require('./safe-fetch');
 const { tenantSigningSecret } = require('./endpoint-flags');
 const { open, SecretBoxError } = require('./secret-box');
+const { pdiLayer } = require('./pdi-layer');
 const { readDashboardData } = require('./dashboard-data');
 const { releaseGroups } = require('./release-status');
 const { EVENT_TYPES, emptyEventState, planReleaseEvents, checkEvent } = require('./release-events-model');
@@ -154,7 +155,9 @@ function stateFrom(rows) {
 async function detectReleaseEvents(pool, { tenantId, now = new Date(), log = () => {} }) {
     return withScope(pool, { tenantId }, async (client) => {
         const { rows: subscriptions } = await client.query('SELECT id, types FROM event_subscriptions WHERE tenant_id = $1', [tenantId]);
-        if (!subscriptions.length) return { events: 0, queued: 0 };
+        // Events are part of the pdi layer: looked for only with an active connection (pending included, so pdi can
+        // prove it with a delivery).
+        if (!subscriptions.length || !(await pdiLayer(client, { tenantId, now })).active) return { events: 0, queued: 0 };
         const { rows: stateRows } = await client.query('SELECT kind, subject, value FROM event_state WHERE tenant_id = $1', [tenantId]);
         const groups = releaseGroups(await readDashboardData(client, { tenantId }), { now });
         const { events, state } = planReleaseEvents({ groups, previous: stateFrom(stateRows), now });

@@ -360,6 +360,12 @@ once. It is `degraded` when the last contact with pdi failed and the last succes
 has not read ShipScope for 14 days. `DELETE` revokes the token, removes the subscription with what waits for it and
 marks the connection `disconnected`. Connecting and disconnecting are in the settings activity.
 
+The pdi layer (changes from a repo, the release plan, outgoing events, the service API, the lead time from the intent)
+works only for a connected workspace (design-docs/PDI-GATE-PLAN.pl.md). While the connection is `pending` the service
+API and events already work, so pdi can prove it; without any connection the service API answers 404 (except
+`/connection`), no events are queued and repos' changes folders are not read. Workspaces that used these features
+before the gate got a `pending` connection when the worker first started with it.
+
 ## Service API
 
 Other services (pdi's trace graph and outcome review, tf's control bands, a CI script) read one workspace with a

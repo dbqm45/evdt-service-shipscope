@@ -86,6 +86,24 @@ function initDelegatedHandlers(){
     });
 }
 
+/** Without a connection with pdi the pdi layer's tab and charts are not shown at all (design-docs/PDI-GATE-PLAN.pl.md). */
+function applyCapabilities(){
+    if (pdiLayerOn()) {
+        return;
+    }
+    const planTab = document.querySelector('.tab[data-view="plan"]');
+    if (planTab) {
+        planTab.hidden = true;
+    }
+    ['chartIntentLeadTime', 'chartReportLeadTime'].forEach(id => {
+        const panel = document.getElementById(id);
+        const box = panel && panel.closest ? panel.closest('.panel') : null;
+        if (box) {
+            box.hidden = true;
+        }
+    });
+}
+
 function initTabs(){
     switchToTab(DEFAULT_VIEW);
 
@@ -216,6 +234,7 @@ async function init(){
     initTabs();
     initTooltips();
     state = await loadData();
+    applyCapabilities();
 
     state.selectedPi = state.jiraIndex.currentPi
         || (state.jiraIndex.pis[0] && state.jiraIndex.pis[0].pi)

@@ -8,6 +8,7 @@ const { recordAuditEvent } = require('./audit-log');
 const { readDashboardData } = require('./dashboard-data');
 const { readWorkItems } = require('./work-items');
 const { workItemIssues, WORK_ITEM_KEY } = require('./work-items-model');
+const { pdiLayer } = require('./pdi-layer');
 const { itemStatus, itemStatuses, leadTimes, releasePlan, flagsView, environmentsView } = require('./release-status');
 
 const TOKEN_PREFIX = 'shps_';
@@ -111,12 +112,15 @@ async function revokeServiceToken(pool, { tenantId, actorUserId, id }) {
  *
  * @template T
  * @param {import('pg').Pool} pool
- * @param {{ token: string, now?: Date }} input
+ * Every route but `/connection` needs the workspace's connection with pdi to be active (pending, connected or
+ * degraded): the service API belongs to the pdi layer (design-docs/PDI-GATE-PLAN.pl.md).
+ *
+ * @param {{ token: string, now?: Date, requirePdi?: boolean }} input
  * @param {(client: import('pg').PoolClient, tenantId: string) => Promise<T>} fn
  * @returns {Promise<T>}
- * @throws {ServiceAuthError} unknown, malformed or expired token
+ * @throws {ServiceAuthError|ServiceNotFoundError} unknown, malformed or expired token; no active connection with pdi
  */
-async function withServiceToken(pool, { token, now = new Date() }, fn) {
+async function withServiceToken(pool, { token, now = new Date(), requirePdi = true }, fn) {
     if (typeof token !== 'string' || !TOKEN_PATTERN.test(token)) throw new ServiceAuthError('A service token is required');
     return withScope(pool, { serviceTokenHash: hashToken(token) }, async (client) => {
         const { rows } = await client.query('SELECT id, tenant_id, expires_at FROM service_tokens WHERE token_hash = $1', [hashToken(token)]);
@@ -124,6 +128,9 @@ async function withServiceToken(pool, { token, now = new Date() }, fn) {
         const { id, tenant_id: tenantId, expires_at: expiresAt } = rows[0];
         if (expiresAt && expiresAt <= now) throw new ServiceAuthError('The service token has expired');
         await setScope(client, { tenantId, serviceTokenHash: '' });
+        if (requirePdi && !(await pdiLayer(client, { tenantId, now })).active) {
+            throw new ServiceNotFoundError('This workspace is not connected with pdi (Settings → Integrations → pdi)');
+        }
         await client.query('UPDATE service_tokens SET last_used_at = $3 WHERE tenant_id = $1 AND id = $2', [tenantId, id, now]);
         return fn(client, tenantId);
     });

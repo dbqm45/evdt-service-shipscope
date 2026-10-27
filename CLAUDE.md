@@ -107,7 +107,7 @@ changelog entry by hand outside a `chore(release)` PR.
 
 Deployed to Render per `context/foundation/infrastructure.md`: `render.yaml` builds both the Web Service and the
 Background Worker from the repo root (`npm ci --prefix server`, `node server/web.js`), not `rootDir: server`, which
-would hide `docs/` from the Web Service. Migrations (`server/migrations/001`–`044`, applied by the hand-rolled
+would hide `docs/` from the Web Service. Migrations (`server/migrations/001`–`045`, applied by the hand-rolled
 `lib/migrate.js`) run as each service's `preDeployCommand` under an advisory lock (`test/render-blueprint.test.js`).
 Dependencies, all in `server/package.json`: `pg`, `fastify`, `@fastify/cookie`. Fastify runs with
 `removeAdditional: false, coerceTypes: false`: unknown fields and wrong types are a 400, never silently fixed.
@@ -367,7 +367,7 @@ the web service fills once a minute (`sampleStatus()`, web.js); a day is an outa
   `…/environments` (`environmentsView()`: `currentVersion()` per service and environment with its drift). Per-token
   token bucket as for the ingest (`server/test/service-api.test.js`).
 - **Connection with pdi** (`lib/pdi-connection.js`, migration `044`, `pdi_connections`, RLS; design-docs/PDI-CONNECTION-PLAN.pl.md,
-  step 1 of the decision "ShipScope bez pdi i z pdi"; this step hides nothing yet): Settings → Integrations → pdi
+  step 1 of the decision "ShipScope bez pdi i z pdi"): Settings → Integrations → pdi
   (`renderPdi()`); `POST …/pdi-connection { receiverUrl }` (admin, 409 when active) creates in one transaction a
   service token "pdi" (`insertServiceToken()`), an event subscription to `<receiverUrl>/events/shipscope` with its own
   sealed secret (`event_subscriptions.signing_secret_enc`, `subscriptionSigningSecret()`, AAD
@@ -378,6 +378,16 @@ the web service fills once a minute (`sampleStatus()`, web.js); a day is an outa
   signed ping `GET <receiver>/events/shipscope`, `X-ShipScope-Event: ping`, from the worker's `pdiPingTick()` hourly
   and Settings' Test). `DELETE` revokes the token and the subscription. Audited `pdi_connected`/`pdi_disconnected`
   (`server/test/pdi-connection.test.js`).
+- **The pdi layer's gate** (step 2, `lib/pdi-layer.js`, design-docs/PDI-GATE-PLAN.pl.md): `pdiLayer()` gives
+  `visible` (connected/degraded) and `active` (also pending, so pdi can prove the connection). Without `active`:
+  `syncRepo()` skips the work items, `detectReleaseEvents()` queues nothing, and the service API answers 404
+  (`withServiceToken()`'s `requirePdi`; `/connection` never requires it). Without `visible`: the dashboard data leaves
+  out `workItemUrls`, the `@changes` increment and `releasePlan` lines/plans and carries `capabilities: { pdi }`, which
+  `pdiLayerOn()` (`docs/app-core.js`) reads to hide the Release plan tab and the lead time from the intent and report
+  (`applyCapabilities()`); Settings hides outgoing events, service tokens, the release-line convention and the changes
+  folder's errors. `FALLBACK` shows the layer with `?pdi=1` (`PDI_SAMPLE`). Workspaces that used the layer before get a
+  `pending` connection once at worker start (`backfillPdiConnections()`, migration `045`: `receiver_url` may be null)
+  (`server/test/pdi-layer.test.js`, `server/test/helpers/pdi.js` `connectPdiForTest()`).
 - **Webhooks** (`lib/webhooks.js`, migration `013`) — `POST /webhooks/github` (HMAC, `GITHUB_APP_WEBHOOK_SECRET`)
   and `POST /webhooks/jira` (HS256 JWT signed with the Atlassian client secret; a token without `exp` is logged as
   `jira webhook token without exp` and accepted unless `JIRA_WEBHOOK_REQUIRE_EXP=1`, since Atlassian does not

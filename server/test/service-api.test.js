@@ -11,6 +11,7 @@ if (!process.env.TEST_DATABASE_URL) {
 }
 
 const { createTestDb } = require('./helpers/test-db');
+const { connectPdiForTest } = require('./helpers/pdi');
 const { fakeGitHub, AUTH, signIn } = require('./helpers/auth');
 const { buildApp } = require('../web');
 const { withScope } = require('../lib/scope');
@@ -34,6 +35,7 @@ async function setup(t) {
     const alice = await signIn(app, 'alice');
     const bob = await signIn(app, 'bob');
     const tenantId = (await app.inject({ method: 'POST', url: '/tenants', cookies: { sid: alice }, payload: { name: 'Acme' } })).json().tenant.id;
+    await connectPdiForTest(pool, tenantId, { proven: false });
     const as = (sid) => (method, url, payload) => app.inject({ method, url: `/tenants/${tenantId}${url}`, cookies: { sid }, payload });
     const link = (await as(alice)('POST', '/invitations', { role: 'member' })).json().url;
     await app.inject({ method: 'POST', url: `${new URL(link).pathname}/accept`, cookies: { sid: bob } });
@@ -222,6 +224,7 @@ test('isolation: a token reads only its own workspace', async (t) => {
     const { token } = (await first.as(first.alice)('POST', '/service-tokens', { name: 'pdi' })).json();
     // A second workspace of alice's with its own repo and change: invisible to the first token.
     const other = (await first.app.inject({ method: 'POST', url: '/tenants', cookies: { sid: first.alice }, payload: { name: 'Other' } })).json().tenant.id;
+    await connectPdiForTest(first.pool, other, { proven: false });
     await withScope(first.pool, { tenantId: other }, async (c) => {
         await c.query("INSERT INTO github_installations (tenant_id, installation_id, account_login, account_type) VALUES ($1, 10, 'other', 'Organization')", [other]);
         await c.query("INSERT INTO tracked_repos (tenant_id, repo_id, installation_id, full_name) VALUES ($1, 2, 10, 'other/x')", [other]);

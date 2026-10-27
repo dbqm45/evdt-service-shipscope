@@ -12,7 +12,9 @@ const { checkUrl, SafeFetchError } = require('./safe-fetch');
 const { insertServiceToken, withServiceToken } = require('./service-api');
 const { EVENT_TYPES } = require('./release-events-model');
 const { eventSignature, subscriptionSecretAad, subscriptionSigningSecret } = require('./outgoing-events');
+// judgePdiConnection names the state's shape in the JSDoc below.
 const { judgePdiConnection } = require('./pdi-connection-model');
+const { readPdiConnection } = require('./pdi-layer');
 
 /** pdi-receiver's path for ShipScope (dbqm45/pdi src/pdi/receiver.py). */
 const RECEIVER_PATH = '/events/shipscope';
@@ -32,21 +34,6 @@ function receiverBase(raw) {
         throw err;
     }
     return `${url.origin}${url.pathname.replace(/\/+$/, '').replace(new RegExp(`${RECEIVER_PATH}$`), '')}`;
-}
-
-/**
- * The connection's state as Settings shows it, inside withScope.
- *
- * @param {import('pg').PoolClient} client
- * @param {{ tenantId: string, now?: Date }} input
- * @returns {Promise<ReturnType<typeof judgePdiConnection>>}
- */
-async function readPdiConnection(client, { tenantId, now = new Date() }) {
-    const { rows: [connection] } = await client.query('SELECT * FROM pdi_connections WHERE tenant_id = $1', [tenantId]);
-    if (!connection || connection.disconnected_at) return judgePdiConnection({ connection: connection || null, tokenLastUsedAt: null, subscription: null, now });
-    const { rows: [token] } = await client.query('SELECT last_used_at FROM service_tokens WHERE tenant_id = $1 AND id = $2', [tenantId, connection.service_token_id]);
-    const { rows: [subscription] } = await client.query('SELECT last_delivered_at, last_error, last_error_at FROM event_subscriptions WHERE tenant_id = $1 AND id = $2', [tenantId, connection.subscription_id]);
-    return judgePdiConnection({ connection, tokenLastUsedAt: token ? token.last_used_at : null, subscription: subscription || null, now });
 }
 
 /**
@@ -138,14 +125,16 @@ async function pingPdi(pool, { tenantId, encryptionKey, fetchImpl, now = new Dat
         const { rows: [connection] } = await client.query('SELECT receiver_url, subscription_id FROM pdi_connections WHERE tenant_id = $1 AND disconnected_at IS NULL', [tenantId]);
         if (!connection) return null;
         const { rows: [sub] } = await client.query('SELECT signing_secret_enc FROM event_subscriptions WHERE tenant_id = $1 AND id = $2', [tenantId, connection.subscription_id]);
-        if (!sub || !sub.signing_secret_enc) return { missing: true };
+        // A connection carried over from before (backfillPdiConnections()) may have no address or sign with the
+        // workspace's secret, as its subscription did.
+        if (!connection.receiver_url || !sub) return { missing: true };
         const secret = await subscriptionSigningSecret(client, { tenantId, encryptionKey, subscriptionId: connection.subscription_id });
         return { url: `${connection.receiver_url}${RECEIVER_PATH}`, secret };
     });
     if (!target) return null;
     if (target.missing) {
         await withScope(pool, { tenantId }, (client) => client.query('UPDATE pdi_connections SET last_ping_error = $2, last_ping_error_at = $3 WHERE tenant_id = $1',
-            [tenantId, 'The connection\'s event subscription is gone; disconnect and connect pdi again', now]));
+            [tenantId, 'ShipScope has no address of pdi for this connection; disconnect and connect pdi again', now]));
         return false;
     }
     const timestamp = String(Math.floor(now.getTime() / 1000));
@@ -163,6 +152,39 @@ async function pingPdi(pool, { tenantId, encryptionKey, fetchImpl, now = new Dat
         ? client.query('UPDATE pdi_connections SET last_ping_error = $2, last_ping_error_at = $3 WHERE tenant_id = $1', [tenantId, error, now])
         : client.query('UPDATE pdi_connections SET last_ping_ok_at = $2, last_ping_error = NULL, last_ping_error_at = NULL WHERE tenant_id = $1', [tenantId, now])));
     return !error;
+}
+
+/**
+ * Workspaces that used the service API or outgoing events before the connection existed (design-docs/PDI-GATE-PLAN.pl.md)
+ * get a pending connection over what they have: the first subscription (its address without `/events/shipscope`
+ * becomes the receiver's) and the token named "pdi", else the one used last. Their past deliveries and reads count as
+ * proofs. Idempotent: a workspace with a connection row is left alone. The worker runs it once at start.
+ *
+ * @param {import('pg').Pool} pool
+ * @returns {Promise<{ created: number }>}
+ */
+async function backfillPdiConnections(pool) {
+    let created = 0;
+    const { rows: tenants } = await pool.query('SELECT id FROM tenants ORDER BY created_at');
+    for (const { id: tenantId } of tenants) {
+        created += await withScope(pool, { tenantId }, async (client) => {
+            const { rows: existing } = await client.query('SELECT 1 FROM pdi_connections WHERE tenant_id = $1', [tenantId]);
+            if (existing.length) return 0;
+            const { rows: [sub] } = await client.query('SELECT id, url, created_by FROM event_subscriptions WHERE tenant_id = $1 ORDER BY created_at LIMIT 1', [tenantId]);
+            const { rows: [token] } = await client.query(
+                "SELECT id, created_by FROM service_tokens WHERE tenant_id = $1 ORDER BY (name = 'pdi') DESC, last_used_at DESC NULLS LAST, created_at LIMIT 1",
+                [tenantId]
+            );
+            if (!sub && !token) return 0;
+            const receiver = sub ? sub.url.replace(/\/+$/, '').replace(new RegExp(`${RECEIVER_PATH}$`), '') : null;
+            await client.query(
+                'INSERT INTO pdi_connections (tenant_id, receiver_url, service_token_id, subscription_id, created_by) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (tenant_id) DO NOTHING',
+                [tenantId, receiver, token ? token.id : null, sub ? sub.id : null, (sub || token).created_by]
+            );
+            return 1;
+        });
+    }
+    return { created };
 }
 
 /**
@@ -213,7 +235,7 @@ async function testPdiConnection(pool, { tenantId, actorUserId, encryptionKey, f
  * @returns {Promise<{ workspace: { id: string, name: string }, pdi: { state: string, receiverUrl: string|null } }>}
  */
 async function serviceConnection(pool, { token, now = new Date() }) {
-    return withServiceToken(pool, { token, now }, async (client, tenantId) => {
+    return withServiceToken(pool, { token, now, requirePdi: false }, async (client, tenantId) => {
         const { rows: [tenant] } = await client.query('SELECT id, name FROM tenants WHERE id = $1', [tenantId]);
         const { state, receiverUrl } = await readPdiConnection(client, { tenantId, now });
         return { workspace: { id: tenant.id, name: tenant.name }, pdi: { state, receiverUrl } };
@@ -222,5 +244,5 @@ async function serviceConnection(pool, { token, now = new Date() }) {
 
 module.exports = {
     RECEIVER_PATH, PdiConnectionError, PdiConnectionConflictError, NoPdiConnectionError,
-    readPdiConnection, getPdiConnection, connectPdi, disconnectPdi, pingPdi, pingPdiConnections, testPdiConnection, serviceConnection,
+    readPdiConnection, getPdiConnection, connectPdi, backfillPdiConnections, disconnectPdi, pingPdi, pingPdiConnections, testPdiConnection, serviceConnection,
 };
