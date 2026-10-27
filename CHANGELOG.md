@@ -7,6 +7,12 @@ dashboard, not a published package), so entries are grouped by date instead. See
 ShipScope is, `CLAUDE.md` for the technical reference, and `FAQ.md` for how specific numbers/badges are
 calculated.
 
+## [0.2.60] - 2026-10-27
+
+### Added
+
+- **SHP:** flow time from first commit to first PROD in the service API (#119)
+
 ## [0.2.59] - 2026-10-27
 
 ### Added

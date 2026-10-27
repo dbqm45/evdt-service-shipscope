@@ -7,6 +7,12 @@ dashboard, nie publikowany pakiet), dlatego wpisy są pogrupowane według dat. I
 ShipScope, znajdują się w `README.pl.md`, pełne techniczne odniesienie w `CLAUDE.md` (po angielsku), a
 wyjaśnienie sposobu liczenia poszczególnych wartości/badge'y w `FAQ.pl.md`.
 
+## [0.2.60] - 2026-10-27
+
+### Nowe
+
+- **SHP:** flow time from first commit to first PROD in the service API (#119)
+
 ## [0.2.59] - 2026-10-27
 
 ### Nowe
