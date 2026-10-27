@@ -7,6 +7,18 @@ dashboard, nie publikowany pakiet), dlatego wpisy są pogrupowane według dat. I
 ShipScope, znajdują się w `README.pl.md`, pełne techniczne odniesienie w `CLAUDE.md` (po angielsku), a
 wyjaśnienie sposobu liczenia poszczególnych wartości/badge'y w `FAQ.pl.md`.
 
+## [0.2.58] - 2026-10-27
+
+### Nowe
+
+- **SHP:** simplify the core: one flags path and Insights as a setting (#117)
+
+## [0.2.57] - 2026-10-27
+
+### Nowe
+
+- **SHP:** show the pdi layer only for workspaces connected with pdi (#116)
+
 ## [0.2.56] - 2026-10-27
 
 ### Nowe
