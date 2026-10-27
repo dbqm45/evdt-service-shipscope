@@ -7,6 +7,7 @@ const { open, SecretBoxError } = require('./secret-box');
 const { openWith, isSealedFor, SealedBoxError } = require('./sealed-box');
 const { endpointTokenAad } = require('./flags');
 const { signingSecretAad } = require('./endpoint-flags');
+const { subscriptionSecretAad } = require('./outgoing-events');
 
 // Counted per tenant, under its scope (an unscoped count of an RLS table is always 0).
 const COUNTED = ['memberships', 'tracked_repos', 'deployments', 'flag_sources', 'flags', 'flag_values', 'jira_issues', 'audit_events'];
@@ -71,6 +72,8 @@ async function collectRestoreFacts(pool, { encryptionKey = null, sealingKeys = n
             for (const s of sources) tryOpen(s.endpoint_token_enc, endpointTokenAad(tenantId, s.id));
             const { rows: [tenant] } = await client.query('SELECT endpoint_signing_secret_enc FROM tenants WHERE id = $1', [tenantId]);
             if (tenant) tryOpen(tenant.endpoint_signing_secret_enc, signingSecretAad(tenantId));
+            const { rows: subs } = await client.query('SELECT id, signing_secret_enc FROM event_subscriptions WHERE tenant_id = $1 AND signing_secret_enc IS NOT NULL', [tenantId]);
+            for (const sub of subs) tryOpen(sub.signing_secret_enc, subscriptionSecretAad(tenantId, sub.id));
         });
     }
     return { migrations: migrationRows.map((r) => r.filename), rls, tenants: tenants.length, counts, newest, secrets };

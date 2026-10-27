@@ -9,6 +9,7 @@ const { runQueuedEndpointTest } = require('./lib/endpoint-flags');
 const { handOverAccessToken } = require('./lib/jira-connections');
 const { flagSourceHealth } = require('./lib/flags');
 const { detectReleaseEvents, deliverEvents } = require('./lib/outgoing-events');
+const { pingPdiConnections } = require('./lib/pdi-connection');
 const { safeFetch } = require('./lib/safe-fetch');
 const { pendingSyncRequests, finishSyncRequests } = require('./lib/webhooks');
 const { recordRun } = require('./lib/worker-status');
@@ -36,6 +37,8 @@ const EVENTS_LOCK = 727_008;
 const EVENT_DELIVERY_LOCK = 727_009;
 const EVENTS_INTERVAL_MS = 5 * 60_000;
 const EVENT_DELIVERY_INTERVAL_MS = 60_000;
+const PDI_PING_LOCK = 727_010;
+const PDI_PING_INTERVAL_MS = 3600_000; // the pdi connection's ShipScope → pdi proof (lib/pdi-connection.js)
 const ENDPOINT_TEST_INTERVAL_MS = 2_000; // an admin waits on these in Settings
 const JIRA_TOKEN_INTERVAL_MS = 1_000; // the web service waits on these, a page in Settings with it
 
@@ -316,6 +319,15 @@ async function eventDeliveryTick(pool, encryptionKey, logger = defaultLogger, de
     });
 }
 
+/** Pings every active pdi connection (lib/pdi-connection.js pingPdiConnections()), signed, through safeFetch(). */
+async function pdiPingTick(pool, encryptionKey, logger = defaultLogger, deps = { pingPdiConnections, fetchImpl: safeFetch }) {
+    await runJob(pool, {
+        job: 'pdi-ping', lock: PDI_PING_LOCK, logger, deps,
+        run: () => deps.pingPdiConnections(pool, { encryptionKey, fetchImpl: deps.fetchImpl, log: syncLogger(logger.child({ job: 'pdi-ping' })) }),
+        summary: (r) => `pdi connections pinged: ${r.pinged}, ${r.failed} not reached`,
+    });
+}
+
 async function sourcesTick(pool, logger = defaultLogger, deps = { flagSourceHealth }) {
     await runJob(pool, {
         job: 'sources', lock: SOURCES_LOCK, logger, deps,
@@ -381,6 +393,8 @@ if (require.main === module) {
         // Events are signed with the workspace's signing secret, sealed by TOKEN_ENCRYPTION_KEY.
         timers.push(setInterval(() => eventsTick(pool), EVENTS_INTERVAL_MS));
         timers.push(setInterval(() => eventDeliveryTick(pool, encryptionKey), EVENT_DELIVERY_INTERVAL_MS));
+        timers.push(setInterval(() => pdiPingTick(pool, encryptionKey), PDI_PING_INTERVAL_MS));
+        pdiPingTick(pool, encryptionKey);
     }
 
     process.on('SIGTERM', () => {
@@ -390,4 +404,4 @@ if (require.main === module) {
     });
 }
 
-module.exports = { heartbeatTick, runExclusive, syncIntervalMinutes, tenantBudgetSeconds, syncTick, jiraTick, flagsTick, secretsTick, endpointTestTick, jiraTokenTick, webhookTick, sourcesTick, cleanupTick, eventsTick, eventDeliveryTick };
+module.exports = { heartbeatTick, runExclusive, syncIntervalMinutes, tenantBudgetSeconds, syncTick, jiraTick, flagsTick, secretsTick, endpointTestTick, jiraTokenTick, webhookTick, sourcesTick, cleanupTick, eventsTick, eventDeliveryTick, pdiPingTick };

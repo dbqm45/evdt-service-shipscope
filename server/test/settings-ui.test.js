@@ -1084,3 +1084,45 @@ test('Sources: Test with a token only the worker can read waits for the worker\'
         /the worker reads it/);
     delete ui.settingsState.endpointTestWaitMs;
 });
+
+test('pdi: connect with the receiver\'s address, the variables shown once, the two proofs, Test and Disconnect; members only see', async () => {
+    ui.settingsState.tenantId = TENANT;
+    const base = `/tenants/${TENANT}`;
+    const none = str(ui.renderPdi({ connection: { state: 'none', checks: [] }, admin: true }));
+    assert.match(none, /Not connected/);
+    assert.match(none, /<form class="settings-form" data-action="connect-pdi">/);
+    assert.doesNotMatch(str(ui.renderPdi({ connection: { state: 'none', checks: [] }, admin: false })), /data-action="connect-pdi"/, 'admins only');
+    assert.match(str(ui.renderPdi({ connection: null, admin: true })), /Loading/);
+
+    const pending = { state: 'pending', receiverUrl: 'https://pdi.<x>.com', connectedAt: '2026-10-27T10:00:00Z', checks: [
+        { id: 'pdi_reads', ok: true, at: '2026-10-27T10:05:00Z', error: null }, { id: 'reaches_pdi', ok: false, at: null, error: 'pdi.example.com answered HTTP 404' },
+    ] };
+    const env = { PDI_SHIPSCOPE_URL: 'https://s', PDI_SHIPSCOPE_TOKEN: `shps_${'a'.repeat(43)}`, PDI_SHIPSCOPE_SIGNING_SECRET: 'b'.repeat(43) };
+    const shown = str(ui.renderPdi({ connection: pending, admin: true, once: { pdiEnv: env } }));
+    assert.match(shown, /Variables for pdi — shown only once<\/strong><code>PDI_SHIPSCOPE_URL=https:\/\/s\nPDI_SHIPSCOPE_TOKEN=shps_a+\nPDI_SHIPSCOPE_SIGNING_SECRET=b+<\/code>/);
+    assert.match(shown, /Waiting for pdi/);
+    assert.match(shown, /pdi\.&lt;x&gt;\.com/);
+    assert.match(shown, /✓<\/span> pdi read ShipScope with its token/);
+    assert.match(shown, /!<\/span> ShipScope has not reached pdi yet.*answered HTTP 404/s);
+    assert.match(shown, /data-action="test-pdi".*data-action="disconnect-pdi"/s);
+    const member = str(ui.renderPdi({ connection: { ...pending, state: 'connected' }, admin: false }));
+    assert.match(member, /Connected/);
+    assert.doesNotMatch(member, /data-action="(test|disconnect)-pdi"/);
+
+    const connected = { ...pending, state: 'connected', checks: pending.checks.map((c) => ({ ...c, ok: true, error: null })) };
+    const { fn, calls } = fakeFetch({
+        [`POST ${base}/pdi-connection`]: { connection: pending, env },
+        [`GET ${base}/pdi-connection`]: { connection: pending },
+        [`POST ${base}/pdi-connection/test`]: { connection: connected },
+        [`DELETE ${base}/pdi-connection`]: null,
+        [`GET ${base}/audit-events`]: { events: [] },
+    });
+    global.fetch = fn;
+    await ui.runAction('connect-pdi', form([['receiverUrl', ' https://pdi.example.com ']], {}, 'pdi'));
+    assert.deepStrictEqual(calls[0], { method: 'POST', url: `${base}/pdi-connection`, body: { receiverUrl: 'https://pdi.example.com' } });
+    assert.deepStrictEqual(ui.settingsState.once, { pdiEnv: env });
+    await ui.runAction('test-pdi', button({}, 'pdi'));
+    assert.deepStrictEqual(ui.settingsState.messages.pdi, { error: false, text: 'pdi answered.' });
+    await ui.runAction('disconnect-pdi', button({}, 'pdi'));
+    assert.ok(calls.some((c) => c.method === 'DELETE' && c.url === `${base}/pdi-connection`));
+});

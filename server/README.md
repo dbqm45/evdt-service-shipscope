@@ -344,6 +344,22 @@ X-ShipScope-Signature: v1=<hex HMAC-SHA256(secret, "1793000000.<raw body>")>
 
 Check it in constant time, and refuse a timestamp more than a few minutes old.
 
+## Connecting pdi
+
+Settings → Integrations → pdi (admins; `GET/POST/DELETE /tenants/:tenantId/pdi-connection`,
+`POST …/pdi-connection/test`; design-docs/PDI-CONNECTION-PLAN.pl.md). `POST { receiverUrl }` takes pdi-receiver's
+public https address and, in one step, creates a service token named "pdi", an event subscription to
+`<receiverUrl>/events/shipscope` signed with a secret of its own, and the connection. The answer carries, once, what pdi
+reads from its environment: `PDI_SHIPSCOPE_URL`, `PDI_SHIPSCOPE_TOKEN`, `PDI_SHIPSCOPE_SIGNING_SECRET`.
+
+The connection is `pending` until both sides have proven it, then `connected`: pdi has used its token on the service
+API (it reads `GET /api/service/v1/connection`), and ShipScope has reached pdi, by an event delivered with a 2xx or by
+a signed ping, `GET <receiverUrl>/events/shipscope` with `X-ShipScope-Event: ping` and
+`X-ShipScope-Signature: v1=HMAC-SHA256(secret, "<timestamp>.")` (empty body). The worker pings hourly, Test pings at
+once. It is `degraded` when the last contact with pdi failed and the last success is older than an hour, or when pdi
+has not read ShipScope for 14 days. `DELETE` revokes the token, removes the subscription with what waits for it and
+marks the connection `disconnected`. Connecting and disconnecting are in the settings activity.
+
 ## Service API
 
 Other services (pdi's trace graph and outcome review, tf's control bands, a CI script) read one workspace with a
@@ -368,12 +384,15 @@ GET /api/service/v1/release-plan
 GET /api/service/v1/flags
 → { flags: [{ key, description, kind, itemKeys, services, prod: { state, percent, changedAt } | null,
     envs: { env: { service: { state, rollout, changedAt, sourceName } } }, freshness, blastRadius, stale }] }
+GET /api/service/v1/connection
+→ { workspace: { id, name }, pdi: { state: "none"|"pending"|"connected"|"degraded"|"disconnected", receiverUrl } }
 GET /api/service/v1/environments
 → { services: [{ name, serviceType, flagCoverage, envs: { test|qa|prod: null | { version, deployedAt, commitUrl,
     deployedBy, rollback, drift: null | { comparedWith, files, paths, unknown, commitsBehind } } } }] }
 ```
 
-The last four (K-1) are what the dashboard shows, read by the ShipScope MCP server for Claude
+`connection` names the token's workspace and its pdi connection; pdi reads it when it starts and daily. The changes,
+release-plan, flags and environments routes (K-1) are what the dashboard shows, read by the ShipScope MCP server for Claude
 ([`adapters/mcp/`](../adapters/mcp/README.md)): the changes from the repos with their tasks, the Release plan tab
 (`releasePlanModel()`), the flags panel (`flagProdExposure()`, `flagBlastRadius()`, `flagStaleWarning()`) and each
 service's latest successful deployment per environment (`currentVersion()`) with its drift.
