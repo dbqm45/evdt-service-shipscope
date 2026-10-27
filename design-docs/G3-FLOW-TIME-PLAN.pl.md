@@ -2,8 +2,9 @@
 
 Stan: 2026-10-27. Luka G3 z mapy ekosystemu SDLC po decyzji D-E1 (pdi, 25.10): prognozę „kiedy to będzie” liczy
 automat (liczba cięć z planu tf × historyczny czas przepływu z ShipScope), a sprintdeck głosuje nad ryzykiem
-i zrozumieniem. Kalibracja prognozy potrzebuje rzeczywistego czasu przepływu. Ten krok daje go w API usług; prognoza
-i jej porównanie z wynikiem to krok w tf/pdi, a pokazanie w pokoju sprintdecka przyjdzie po jego MVP.
+i zrozumieniem. Kalibracja prognozy potrzebuje rzeczywistego czasu przepływu. Ten krok daje go w API usług (#119, zrobione).
+Prognoza i jej porównanie z wynikiem to krok 2, zrobiony w pdi (dbqm45/pdi#37: przy „Approve for implementation”
+liczba cięć z `/changes` × mediana dni na cięcie z `/flow`); pokazanie w pokoju sprintdecka przyjdzie po jego MVP.
 
 ## Co
 1. **Pierwszy commit elementu.** Synchronizacja wdrożeń już czyta commity zakresu każdego wdrożenia (porównanie
