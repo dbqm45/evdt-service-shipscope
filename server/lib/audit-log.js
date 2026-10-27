@@ -10,7 +10,7 @@ const SECRET_EVENT_KINDS = [
 ];
 const AUDIT_EVENT_KINDS = [
     ...SECRET_EVENT_KINDS,
-    'workspace_created', 'retention_changed',
+    'workspace_created', 'retention_changed', 'insights_changed',
     'invitation_created', 'invitation_revoked', 'member_joined', 'member_removed', 'member_left',
     'github_linked', 'github_unlinked', 'repo_tracked', 'repo_untracked', 'repo_settings_changed', 'repo_environments_changed',
     'repo_flag_stance_changed', 'repo_role_changed',

@@ -28,16 +28,21 @@ Sign in with GitHub and create a workspace at `/start`. Its Settings page (`/t/<
 5. **Choose Jira boards** — tick each team's board and save. The board's rhythm (PI, sprints, releases or monthly
    flow) is detected; it can be changed per board, together with a PI-name template. Sync now, or wait for the next
    sync.
-6. **Send feature flags** (optional) — ShipScope does not read flags itself. Add a source per place your flags live
-   (a build step, a flag service; kind build or runtime, priority, optional component), create a token for it, and
-   have it send the full state of its flags to `POST /api/flags/ingest` — see [Sending feature flags](#sending-feature-flags).
-   Under Jira → Feature flags in Jira you can also name the field or label prefix that links Jira issues to flags.
+6. **Send feature flags** (optional) — the recommended way: under Sources, add a source per place your flags live
+   (a build step, a flag service; kind build or runtime, priority, the services it covers), create a token for it (or
+   let GitHub Actions send with its OIDC token), and have your pipeline send the full state of its flags to
+   `POST /api/flags/ingest`, usually with the flags adapter — see [Sending feature flags](#sending-feature-flags).
+   ShipScope can also read flags itself, from a file in your code or from an endpoint: Sources → **Advanced sources**,
+   below. Under Jira → Feature flags in Jira you can also name the field or label prefix that links Jira issues to flags.
 7. **Invite your team** — one invitation link per person. Members see everything; admins can change settings.
 
-Under Workspace an admin also sets how many days of deployment history to keep (7–730) and can delete the
-workspace.
+That is the whole core: GitHub, optionally Jira, and a flag source with a token. Under General an admin also sets how
+many days of deployment history to keep (7–730) and whether the dashboard shows **Insights** (charts over the same
+data; `?insights=1` in the address previews it), and can delete the workspace. The pdi layer (changes from a repo,
+the release plan, outgoing events, the service API) appears only once the workspace is connected with pdi, under
+Integrations → pdi.
 
-## Feature flags in your code (the simplest way)
+## Advanced sources: feature flags in your code
 
 When a service keeps its flags in a file in its repository (JSON, YAML, `.properties`, `.env`, TypeScript or
 JavaScript), ShipScope reads that file itself, at the commit each environment last deployed successfully. No token,
@@ -62,7 +67,7 @@ value from the file. Values are read without running any code: a value computed 
 `process.env.X`, is reported as unreadable. Flags switched at runtime are read from an endpoint (next section) or sent
 by a source (below).
 
-## Feature flags from an endpoint
+## Advanced sources: feature flags from an endpoint
 
 When a backend serves its runtime flags over https, ShipScope reads them itself: every 5 minutes (or the interval you
 set, at least 2), and again when someone opens the dashboard if the last read is over a minute old. Nothing to run in

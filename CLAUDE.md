@@ -107,7 +107,7 @@ changelog entry by hand outside a `chore(release)` PR.
 
 Deployed to Render per `context/foundation/infrastructure.md`: `render.yaml` builds both the Web Service and the
 Background Worker from the repo root (`npm ci --prefix server`, `node server/web.js`), not `rootDir: server`, which
-would hide `docs/` from the Web Service. Migrations (`server/migrations/001`–`045`, applied by the hand-rolled
+would hide `docs/` from the Web Service. Migrations (`server/migrations/001`–`046`, applied by the hand-rolled
 `lib/migrate.js`) run as each service's `preDeployCommand` under an advisory lock (`test/render-blueprint.test.js`).
 Dependencies, all in `server/package.json`: `pg`, `fastify`, `@fastify/cookie`. Fastify runs with
 `removeAdditional: false, coerceTypes: false`: unknown fields and wrong types are a 400, never silently fixed.
@@ -388,6 +388,14 @@ the web service fills once a minute (`sampleStatus()`, web.js); a day is an outa
   folder's errors. `FALLBACK` shows the layer with `?pdi=1` (`PDI_SAMPLE`). Workspaces that used the layer before get a
   `pending` connection once at worker start (`backfillPdiConnections()`, migration `045`: `receiver_url` may be null)
   (`server/test/pdi-layer.test.js`, `server/test/helpers/pdi.js` `connectPdiForTest()`).
+- **The simpler core** (step 4, design-docs/CORE-SIMPLIFY-PLAN.pl.md): Settings → Sources offers one recommended path
+  first, a source with a token (or OIDC); reading from code or an endpoint (with Find flags files, Preview and the
+  signing secret) sits in a folded `<details class="settings-advanced">` "Advanced sources", open once the workspace
+  has such a source or the admin is in the wizard or testing a new endpoint; Getting started's flags step says the
+  same. Insights is a workspace setting (migration `046`, `tenants.insights_enabled`, default off; `PUT …/settings
+  { insightsEnabled }`, every field optional but at least one, audited `insights_changed`; Settings → General);
+  `buildDashboardData()` adds `capabilities.insights`, and `insightsOn()` (`docs/app-core.js`) shows the tab with it
+  or with `?insights=1` (`server/test/insights-setting.test.js`).
 - **Webhooks** (`lib/webhooks.js`, migration `013`) — `POST /webhooks/github` (HMAC, `GITHUB_APP_WEBHOOK_SECRET`)
   and `POST /webhooks/jira` (HS256 JWT signed with the Atlassian client secret; a token without `exp` is logged as
   `jira webhook token without exp` and accepted unless `JIRA_WEBHOOK_REQUIRE_EXP=1`, since Atlassian does not
@@ -578,7 +586,7 @@ lines, a task in several lines, a flag task in no line), shown above its lines, 
 (`test/app-release-plan.test.js`). The `FALLBACK` shows the retry-queue Epic's lines and a `CHG-12` plan with a flag
 past its remove-by.
 
-**Insights** (behind `?insights=1`, `INSIGHTS_ENABLED`). Hand-rolled charts over existing data: release status per
+**Insights** (a workspace setting, `capabilities.insights`, or `?insights=1` as a preview: `insightsOn()`). Hand-rolled charts over existing data: release status per
 sprint on prod (`sprintReleaseStatusBreakdown()`, labels from `sprintLabelFor()`) and lead time Done → prod
 (`leadTimeToProdBySprint()`, median days, negative clamped to 0) side by side; release status per priority
 (`priorityReleaseStatusBreakdown()`, `PRIORITY_ORDER` = Blocker/Critical/Major/Medium/Minor, issues without one

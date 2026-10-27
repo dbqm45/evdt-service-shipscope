@@ -62,7 +62,7 @@ function initGlobalPiSelect(){
         refreshReleaseNotesFilterOptions();
         resetReleaseNotesFilters();
 
-        if (INSIGHTS_ENABLED) {
+        if (insightsOn()) {
             renderInsights();
         }
     });
@@ -86,8 +86,11 @@ function initDelegatedHandlers(){
     });
 }
 
-/** Without a connection with pdi the pdi layer's tab and charts are not shown at all (design-docs/PDI-GATE-PLAN.pl.md). */
+/** Shows Insights when the workspace turned it on; without a connection with pdi the pdi layer's tab and charts are not
+ *  shown at all (design-docs/PDI-GATE-PLAN.pl.md). */
 function applyCapabilities(){
+    // Insights is the workspace's choice; its tab stays hidden (index.html) until the data says so.
+    document.querySelector('.tab[data-view="insights"]').style.display = insightsOn() ? '' : 'none';
     if (pdiLayerOn()) {
         return;
     }
@@ -106,12 +109,6 @@ function applyCapabilities(){
 
 function initTabs(){
     switchToTab(DEFAULT_VIEW);
-
-    if (!INSIGHTS_ENABLED) {
-        document.querySelector('.tab[data-view="insights"]').remove();
-    } else {
-        document.querySelector('.tab[data-view="insights"]').style.display = '';
-    }
 
     document.querySelectorAll('.tab').forEach(tab=>{
         tab.onclick = ()=> switchToTab(tab.dataset.view);
@@ -301,7 +298,7 @@ async function init(){
     renderReleaseNotes();
     renderReleasePlan();
 
-    if (INSIGHTS_ENABLED) {
+    if (insightsOn()) {
         renderInsights();
     }
 }

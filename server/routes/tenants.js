@@ -96,20 +96,22 @@ function registerTenantRoutes(app, ctx) {
         schema: { params: tenantOnlyParams },
     }, async (request) => getSettings(pool, { tenantId: request.params.tenantId, actorUserId: request.user.id }));
 
-    // How long deployment history is kept (the worker's daily cleanup applies it). Admins only.
+    // How long deployment history is kept (the worker's daily cleanup applies it) and whether the dashboard shows
+    // Insights; each optional, at least one. Admins only.
     app.put('/tenants/:tenantId/settings', {
         preHandler: requireUser,
         schema: {
             params: tenantOnlyParams,
             body: {
                 type: 'object',
-                required: ['deploymentRetentionDays'],
+                minProperties: 1,
                 additionalProperties: false,
-                properties: { deploymentRetentionDays: { type: 'integer', minimum: 7, maximum: 730 } },
+                properties: { deploymentRetentionDays: { type: 'integer', minimum: 7, maximum: 730 }, insightsEnabled: { type: 'boolean' } },
             },
         },
     }, async (request) => updateSettings(pool, {
-        tenantId: request.params.tenantId, actorUserId: request.user.id, deploymentRetentionDays: request.body.deploymentRetentionDays,
+        tenantId: request.params.tenantId, actorUserId: request.user.id,
+        deploymentRetentionDays: request.body.deploymentRetentionDays, insightsEnabled: request.body.insightsEnabled,
     }));
 
     // Who changed which setting, and when (lib/audit-log.js): the latest events, newest first. Admins only.

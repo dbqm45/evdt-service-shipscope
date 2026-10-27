@@ -34,6 +34,12 @@ const DEFAULT_VIEW = 'tech';
 // The Insights tab is a soft launch: removed from the page unless asked for with ?insights=1 (initTabs()). A next
 // preview tab can be gated the same way.
 const INSIGHTS_ENABLED = new URLSearchParams(location.search).get('insights') === '1';
+/** Insights shows when the workspace turned it on (Settings → General, `capabilities.insights`) or, as a preview (also
+ *  of the sample data), with `?insights=1` in the address (design-docs/CORE-SIMPLIFY-PLAN.pl.md, D2). */
+function insightsOn(){
+    return INSIGHTS_ENABLED || Boolean(typeof state !== 'undefined' && state && state.capabilities && state.capabilities.insights);
+}
+
 /** The sample data (file://) shows the pdi layer with `?pdi=1` (design-docs/PDI-GATE-PLAN.pl.md). */
 const PDI_SAMPLE = new URLSearchParams(location.search).get('pdi') === '1';
 

@@ -109,7 +109,7 @@ function registerDashboardRoutes(app, ctx) {
         if (mockDashboard) {
             await assertMember(request.params.tenantId, request.user.id);
             // The sample shows everything, the pdi layer included.
-            return { ...mockDashboard.data, capabilities: { pdi: true } };
+            return { ...mockDashboard.data, capabilities: { pdi: true, insights: true } };
         }
         const data = await buildDashboardData(pool, { tenantId: request.params.tenantId, actorUserId: request.user.id });
         // Someone is looking: ask the worker to read this tenant's endpoint sources now (lib/flag-poll.js onDemand,

@@ -132,7 +132,7 @@ test('fallback boot: init renders everything from the built-in dataset and picks
     assert.equal(boxes.statusBadgeLabel.textContent, 'Sample');
 });
 
-test('tabs: default view is tech; Insights tab removed without ?insights=1, shown with it', async () => {
+test('tabs: default view is tech; Insights tab hidden unless the workspace turned it on or ?insights=1', async () => {
     const off = loadApp();
 
     await settle();
@@ -140,14 +140,13 @@ test('tabs: default view is tech; Insights tab removed without ?insights=1, show
     assert.equal(off.boxes['sprintSelectWrap'].style.display, 'none');
     assert.ok(off.byView.tech.classList.contains('active'));
     assert.ok(off.viewEls[0].classList.contains('active'));
-    assert.equal(off.byView.insights.removed, true);
+    assert.equal(off.byView.insights.style.display, 'none');
     assert.equal(off.byView.notes.removed, false);
     assert.equal(off.boxes.chartSprint, undefined, 'insights not rendered');
 
     const on = loadApp({ search: '?insights=1' });
 
     await settle();
-    assert.equal(on.byView.insights.removed, false);
     assert.equal(on.byView.insights.style.display, '');
     assert.ok(String(on.boxes.chartSprint.innerHTML).length > 0, 'insights rendered');
 });

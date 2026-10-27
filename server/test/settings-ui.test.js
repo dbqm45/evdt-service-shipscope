@@ -426,7 +426,7 @@ test('getting started: each step read off the loaded sections -- todo, waiting, 
         ['waiting', 'Waiting for the first read: ShipScope reads the endpoint of Flags API within a minute.']);
     assert.deepStrictEqual([byId({ ...empty, sources: [endpoint([{ env: 'qa', state: 'error' }])] }).flags.state, byId({ ...empty, sources: [endpoint([{ env: 'qa', state: 'error' }])] }).flags.hint],
         ['problem', 'Could not read the endpoint of Flags API: see the source for why.']);
-    assert.match(byId(empty).flags.hint, /flags file in your code/);
+    assert.match(byId(empty).flags.hint, /from your code or an endpoint, under Sources → Advanced sources/);
 
     const repo = (extra) => ({ fullName: 'acme/web', deployments: 0, lastSyncedAt: null, lastSyncError: null, rateLimitedUntil: null, ...extra });
     const gh = (...repos) => ({ installations: [{ accountLogin: 'acme' }], repos });
@@ -796,6 +796,34 @@ test('settings assets: only the listed ui/ files are ever read, whatever else th
     assert.deepStrictEqual([...loadUiAssets(path.join(dir, 'missing'), shared).keys()], ['style.css']);
 });
 
+test('the core\'s one flags path (D1): a source with a token first, code and endpoint under Advanced sources', () => {
+    const repos = [{ repoId: 101, fullName: 'acme/web' }];
+    const page = (extra = {}) => str(ui.renderSourcesPage({ sources: [], repos, admin: true, once: {}, origin: 'https://s', ...extra }));
+    const fresh = page();
+    assert.ok(fresh.indexOf('data-action="create-source"') < fresh.indexOf('class="settings-advanced"'), 'the token form comes first');
+    assert.ok(fresh.indexOf('class="settings-advanced"') < fresh.indexOf('data-action="create-code-source"'), 'reading from code is advanced');
+    assert.ok(fresh.indexOf('class="settings-advanced"') < fresh.indexOf('data-action="create-endpoint-source"'), 'so is an endpoint');
+    assert.match(fresh, /<details class="settings-advanced"><summary>Advanced sources<\/summary>/, 'folded without such a source');
+    const code = { id: 's1', name: 'Web code', origin: 'code', kind: 'build', priority: 0, repoIds: [101], tokens: [], environments: [], code: { file: 'flags.json' }, lastError: null };
+    assert.match(page({ sources: [code] }), /<details class="settings-advanced" open>/, 'open once the workspace uses one');
+    assert.match(page({ wizard: { draft: {}, found: { ref: 'HEAD', truncated: false, candidates: [] }, preview: null, place: 'sources' } }), /<details class="settings-advanced" open>/, 'and while the admin is in the wizard');
+    assert.match(page({ endpointTest: { place: 'new', pending: true } }), /<details class="settings-advanced" open>/, 'or testing a new endpoint');
+
+    const empty = { features: { githubApp: true, jira: true }, github: { installations: [], repos: [] }, jira: { connected: false }, boards: null, sources: [], flagList: [], workspace: { members: [{}], invitations: [] } };
+    const flags = ui.onboardingSteps(empty).find((st) => st.id === 'flags');
+    assert.strictEqual(flags.cta, 'Add a source');
+    assert.match(flags.hint, /^Add a source and give its token to your pipeline/);
+    assert.match(flags.hint, /Advanced sources/);
+});
+
+test('Insights is a workspace setting (D2): a switch under General for admins, its state for members', () => {
+    const workspace = (insightsEnabled) => ({ settings: { deploymentRetentionDays: 90, insightsEnabled }, members: [], invitations: [] });
+    assert.match(str(ui.renderGeneral({ workspace: workspace(false), admin: true })), /<form class="settings-form" data-action="save-insights">[\s\S]*name="insightsEnabled" type="checkbox" >/);
+    assert.match(str(ui.renderGeneral({ workspace: workspace(true), admin: true })), /name="insightsEnabled" type="checkbox" checked>/);
+    assert.match(str(ui.renderGeneral({ workspace: workspace(true), admin: false })), /Insights: on/);
+    assert.match(str(ui.renderGeneral({ workspace: workspace(false), admin: false })), /Insights: off/);
+});
+
 if (!process.env.TEST_DATABASE_URL) {
     test('real-Postgres tests skipped (TEST_DATABASE_URL not set)', { skip: true }, () => {});
     return;
@@ -1131,3 +1159,4 @@ test('pdi: connect with the receiver\'s address, the variables shown once, the t
     await ui.runAction('disconnect-pdi', button({}, 'pdi'));
     assert.ok(calls.some((c) => c.method === 'DELETE' && c.url === `${base}/pdi-connection`));
 });
+

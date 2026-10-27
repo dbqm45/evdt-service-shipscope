@@ -290,7 +290,7 @@ function onboardingSteps({ features, github, jira, boards, sources, flagList, wo
         steps.push(step('flags', 'Send feature flags', true, 'waiting',
             `Waiting for the first message from ${sources.filter((src) => activeTokens(src, now).length).map((src) => src.name).join(', ')} (POST /api/flags/ingest with its token).`, '#sources'));
     } else {
-        steps.push(step('flags', 'Send feature flags', true, 'todo', 'Point ShipScope at the flags file in your code (read at every deployment), or name a source that sends them with a token.', '#sources', 'Add a source'));
+        steps.push(step('flags', 'Send feature flags', true, 'todo', 'Add a source and give its token to your pipeline: the ShipScope flags adapter sends the state of your flags at each deployment. ShipScope can also read them itself, from your code or an endpoint, under Sources → Advanced sources.', '#sources', 'Add a source'));
     }
 
     if (!workspace) {
@@ -477,7 +477,7 @@ function ServiceTokens(tokens, once){
 /** `pdi`: the workspace is connected with pdi; outgoing events and service tokens belong to that layer (design-docs/PDI-GATE-PLAN.pl.md).
  * @param {{ workspace: { settings: object }|null, admin: boolean, auditEvents?: object[]|null|{ error: string }, eventSubscriptions?: object[]|null|{ error: string }, serviceTokens?: object[]|null|{ error: string }, once?: object, pdi?: boolean }} props */
 function renderGeneral({ workspace, admin, auditEvents = null, eventSubscriptions = null, serviceTokens = null, once = {}, pdi = false }){
-    const page = (body) => Page({ id: 'general', section: 'workspace', title: 'General', hint: admin ? 'How long ShipScope keeps this workspace\'s history.' : MEMBER_HINT, body });
+    const page = (body) => Page({ id: 'general', section: 'workspace', title: 'General', hint: admin ? 'How long ShipScope keeps this workspace\'s history, and whether the dashboard shows Insights.' : MEMBER_HINT, body });
     if (!workspace) {
         return page(html`<p class="settings-loading">Loading…</p>`);
     }
@@ -490,6 +490,15 @@ function renderGeneral({ workspace, admin, auditEvents = null, eventSubscription
                 <label>Keep deployment history (days, 7–730) <input name="deploymentRetentionDays" type="number" min="7" max="730" required value="${days}"></label>
                 <button type="submit" class="btn">Save</button></form>`
             : html`<p class="settings-hint">Deployment history is kept for ${days} days.</p>`,
+    })}${Card({
+        title: 'Insights',
+        // A workspace setting (design-docs/CORE-SIMPLIFY-PLAN.pl.md, D2); ?insights=1 in the address still previews it.
+        body: admin
+            ? html`<p class="settings-hint">A dashboard tab with charts over the data ShipScope already has: release status per sprint and priority, lead time Done → PROD, stale flags, rollbacks and drift.</p>
+                <form class="settings-form" data-action="save-insights">
+                <label class="inline"><input name="insightsEnabled" type="checkbox" ${workspace.settings.insightsEnabled ? raw('checked') : ''}> Show Insights on the dashboard</label>
+                <button type="submit" class="btn">Save</button></form>`
+            : html`<p class="settings-hint">Insights: ${workspace.settings.insightsEnabled ? 'on' : 'off'}.</p>`,
     })}${admin && pdi ? EventSubscriptions(eventSubscriptions) : ''}${admin && pdi ? ServiceTokens(serviceTokens, once) : ''}${admin ? AuditEvents(auditEvents) : ''}`);
 }
 
@@ -1191,7 +1200,7 @@ const AUDIT_EVENT_LABELS = {
     signing_secret_viewed: 'showed the signing secret', signing_secret_rotated: 'replaced the signing secret',
     endpoint_token_set: 'set the endpoint token of', endpoint_token_removed: 'removed the endpoint token of',
     jira_connected: 'connected Jira', jira_disconnected: 'disconnected Jira',
-    workspace_created: 'created the workspace', retention_changed: 'set deployment history to',
+    workspace_created: 'created the workspace', retention_changed: 'set deployment history to', insights_changed: 'turned Insights',
     invitation_created: 'created an invitation as', invitation_revoked: 'revoked an invitation as',
     member_joined: 'joined as', member_removed: 'removed the member', member_left: 'left the workspace',
     github_linked: 'connected the GitHub account', github_unlinked: 'disconnected the GitHub account',
@@ -1294,6 +1303,10 @@ function renderSources({ flags, repos, once, origin, now = new Date(), wizard = 
         <div class="settings-row-meta">Tokens: ${s.tokens.length ? s.tokens.map((t) => TokenLine(t, now)) : s.oidc ? 'none — only GitHub Actions send' : 'none — the source can\'t send anything'}</div>
         ${NewTokenForm(s)}
         </td><td class="actions"><button type="button" class="btn btn-danger" data-action="delete-source" data-source-id="${s.id}">Delete</button></td></tr>`));
+    // One recommended path (design-docs/CORE-SIMPLIFY-PLAN.pl.md, D1): reading from code or an endpoint stays folded
+    // until the workspace uses it or the admin is in the middle of setting one up.
+    const advancedOpen = flags.some((s) => s.origin === 'code' || s.origin === 'endpoint')
+        || Boolean(sourcesWizard.found || sourcesWizard.preview) || Boolean(endpointTest && endpointTest.place === 'new');
     return html`${once.token ? SecretBox({
         label: 'Ingest token — shown only once',
         value: once.token,
@@ -1304,6 +1317,19 @@ function renderSources({ flags, repos, once, origin, now = new Date(), wizard = 
         note: `Every request ShipScope sends your endpoint carries X-ShipScope-Timestamp (Unix seconds) and X-ShipScope-Signature: v1=<hex HMAC-SHA256 of "<timestamp>.GET.<the full URL>">. Recompute it with this secret and refuse a mismatch or a timestamp older than 5 minutes.`,
     }) : ''}
         ${rows.length ? html`<table class="settings-table"><tbody>${rows}</tbody></table>` : html`<p class="settings-hint">No flag source yet.</p>`}
+        <h3>Add a source that sends its flags</h3>
+        <p class="settings-hint">The recommended way: a source gets its own token, and your pipeline sends the full state of its flags with the ShipScope flags adapter (or GitHub Actions' OIDC token, no secret to keep).</p>
+        <form class="settings-form" data-action="create-source">
+            <label>Name <input name="name" required maxlength="100" placeholder="e.g. LaunchDarkly"></label>
+            <label>Kind <select name="kind">${kindOptions('runtime')}</select></label>
+            <label>Priority (optional) <input name="priority" type="number" min="0" max="1000"></label>
+            ${services([])}
+            ${StaleAfterInput(null)}
+            ${LifetimeSelect('tokenExpiresInDays')}
+            <button type="submit" class="btn btn-primary">Add source</button>
+        </form>
+        <details class="settings-advanced"${advancedOpen ? raw(' open') : ''}><summary>Advanced sources</summary>
+        <p class="settings-hint">ShipScope reads the flags itself: from a file in your code at each deployment, or from an endpoint your backend serves.</p>
         <h3>Read flags from code</h3>
         <p class="settings-hint">For flags kept in a file in the repository (JSON, YAML, .properties, .env, TypeScript/JavaScript): ShipScope reads it at every new deployment. Nothing to set up in your pipelines.</p>
         ${repos.length ? html`<form class="settings-form" data-action="create-code-source" data-place="sources">
@@ -1324,16 +1350,7 @@ function renderSources({ flags, repos, once, origin, now = new Date(), wizard = 
         ${testFor('new')}
         <p class="settings-row-meta">Requests are signed so your endpoint can tell ShipScope's calls from anyone else's. <button type="button" class="btn-link btn" data-action="show-endpoint-signing">Show the signing secret</button>
             · <button type="button" class="btn-link btn" data-action="rotate-endpoint-signing">Replace it</button></p>
-        <h3>Add a source that sends its flags</h3>
-        <form class="settings-form" data-action="create-source">
-            <label>Name <input name="name" required maxlength="100" placeholder="e.g. LaunchDarkly"></label>
-            <label>Kind <select name="kind">${kindOptions('runtime')}</select></label>
-            <label>Priority (optional) <input name="priority" type="number" min="0" max="1000"></label>
-            ${services([])}
-            ${StaleAfterInput(null)}
-            ${LifetimeSelect('tokenExpiresInDays')}
-            <button type="submit" class="btn btn-primary">Add source</button>
-        </form>`;
+        </details>`;
 }
 
 const ENVS = ['test', 'qa', 'prod'];
@@ -1549,6 +1566,10 @@ const actions = {
             history.replaceState(null, '', location.pathname + location.search);
         }
         return { section: null };
+    },
+    'save-insights': async (form) => {
+        await api('PUT', tenantPath('/settings'), { insightsEnabled: formValues(form).insightsEnabled.length > 0 });
+        return { section: 'workspace', ok: 'Saved.' };
     },
     'save-retention': async (form) => {
         await api('PUT', tenantPath('/settings'), { deploymentRetentionDays: Number(formValues(form).deploymentRetentionDays) });
