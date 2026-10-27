@@ -127,7 +127,10 @@ async function buildDashboardData(pool, { tenantId, actorUserId }) {
         if (!(await roleOf(client, { tenantId, userId: actorUserId }))) throw new TenantNotFoundError('Tenant not found');
         // People see the pdi layer only once the workspace is connected with pdi (design-docs/PDI-GATE-PLAN.pl.md).
         const { visible } = await pdiLayer(client, { tenantId });
-        return readDashboardData(client, { tenantId, pdi: visible });
+        const data = await readDashboardData(client, { tenantId, pdi: visible });
+        // Insights is the workspace's choice (design-docs/CORE-SIMPLIFY-PLAN.pl.md, D2).
+        const { rows } = await client.query('SELECT insights_enabled FROM tenants WHERE id = $1', [tenantId]);
+        return { ...data, capabilities: { ...data.capabilities, insights: rows[0].insights_enabled } };
     });
 }
 

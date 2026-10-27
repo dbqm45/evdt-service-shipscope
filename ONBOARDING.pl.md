@@ -29,17 +29,21 @@ zaczyna się listą kontrolną **Getting started**, która pokazuje, na jakim et
 5. **Choose Jira boards** — zaznacz tablicę każdego zespołu i zapisz. Rytm tablicy (PI, sprinty, wydania albo
    miesięczny przepływ) jest wykrywany; można go zmienić dla każdej tablicy, razem z szablonem nazwy PI. Kliknij
    Sync now albo poczekaj na kolejną synchronizację.
-6. **Send feature flags** (opcjonalnie) — ShipScope sam nie czyta flag. Dodaj źródło dla każdego miejsca, w którym
-   trzymasz flagi (krok budowania, serwis flag; rodzaj build albo runtime, priorytet, opcjonalnie komponent),
-   utwórz dla niego token i niech wysyła pełny stan swoich flag do `POST /api/flags/ingest` — zob.
-   [Wysyłanie feature flag](#wysyłanie-feature-flag). W Jira → Feature flags in Jira można też wskazać pole albo
-   prefiks etykiety, które łączą zadania Jiry z flagami.
+6. **Send feature flags** (opcjonalnie) — polecana droga: w Sources dodaj źródło dla każdego miejsca, w którym
+   trzymasz flagi (krok budowania, serwis flag; rodzaj build albo runtime, priorytet, usługi, które obejmuje),
+   utwórz dla niego token (albo pozwól GitHub Actions wysyłać tokenem OIDC) i niech pipeline wysyła pełny stan
+   swoich flag do `POST /api/flags/ingest`, zwykle adapterem flag — zob. [Wysyłanie feature flag](#wysyłanie-feature-flag).
+   ShipScope umie też czytać flagi sam, z pliku w kodzie albo z endpointu: Sources → **Advanced sources**, niżej.
+   W Jira → Feature flags in Jira można też wskazać pole albo prefiks etykiety, które łączą zadania Jiry z flagami.
 7. **Invite your team** — jeden link zaproszenia na osobę. Członkowie widzą wszystko; admini mogą zmieniać
    ustawienia.
 
-W sekcji Workspace admin ustawia też, ile dni historii deploymentów przechowywać (7–730), i może usunąć workspace.
+To cały rdzeń: GitHub, opcjonalnie Jira i źródło flag z tokenem. W General admin ustawia też, ile dni historii
+deploymentów przechowywać (7–730) i czy dashboard pokazuje **Insights** (wykresy z tych samych danych; `?insights=1`
+w adresie pokazuje podgląd), i może usunąć workspace. Warstwa pdi (zmiany z repo, plan wydania, zdarzenia
+wychodzące, API usług) pojawia się dopiero po połączeniu workspace'u z pdi, w Integrations → pdi.
 
-## Feature flagi w kodzie (najprostszy sposób)
+## Zaawansowane źródła: feature flagi w kodzie
 
 Gdy serwis trzyma flagi w pliku w swoim repozytorium (JSON, YAML, `.properties`, `.env`, TypeScript albo
 JavaScript), ShipScope sam czyta ten plik w commicie, który każde środowisko ostatnio wdrożyło z sukcesem. Nie

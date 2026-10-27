@@ -52,33 +52,42 @@ async function listDeployments(pool, { tenantId, actorUserId, repoId, environmen
  *
  * @param {import('pg').Pool} pool
  * @param {{ tenantId: string, actorUserId: string }} input
- * @returns {Promise<{ name: string, deploymentRetentionDays: number }>}
+ * @returns {Promise<{ name: string, deploymentRetentionDays: number, insightsEnabled: boolean }>}
  */
 async function getSettings(pool, { tenantId, actorUserId }) {
     return withScope(pool, { tenantId }, async (client) => {
         if (!(await roleOf(client, { tenantId, userId: actorUserId }))) throw new TenantNotFoundError('Tenant not found');
-        const { rows } = await client.query('SELECT name, deployment_retention_days FROM tenants WHERE id = $1', [tenantId]);
-        return { name: rows[0].name, deploymentRetentionDays: rows[0].deployment_retention_days };
+        const { rows } = await client.query('SELECT name, deployment_retention_days, insights_enabled FROM tenants WHERE id = $1', [tenantId]);
+        return settingsOf(rows[0]);
     });
 }
 
+const settingsOf = (row) => ({ name: row.name, deploymentRetentionDays: row.deployment_retention_days, insightsEnabled: row.insights_enabled });
+
 /**
- * Changes how many days of deployment history the tenant keeps (7-730, enforced by the database too).
- * Admins only. Takes effect at the next daily cleanup.
+ * Changes the settings given, leaving the others: how many days of deployment history the tenant keeps (7-730,
+ * enforced by the database too; applied at the next daily cleanup) and whether the dashboard shows Insights.
+ * Admins only.
  *
  * @param {import('pg').Pool} pool
- * @param {{ tenantId: string, actorUserId: string, deploymentRetentionDays: number }} input
- * @returns {Promise<{ name: string, deploymentRetentionDays: number }>}
+ * @param {{ tenantId: string, actorUserId: string, deploymentRetentionDays?: number, insightsEnabled?: boolean }} input
+ * @returns {Promise<{ name: string, deploymentRetentionDays: number, insightsEnabled: boolean }>}
  */
-async function updateSettings(pool, { tenantId, actorUserId, deploymentRetentionDays }) {
+async function updateSettings(pool, { tenantId, actorUserId, deploymentRetentionDays, insightsEnabled }) {
     return withScope(pool, { tenantId }, async (client) => {
         await assertAdmin(client, { tenantId, userId: actorUserId });
         const { rows } = await client.query(
-            'UPDATE tenants SET deployment_retention_days = $2 WHERE id = $1 RETURNING name, deployment_retention_days',
-            [tenantId, deploymentRetentionDays]
+            `UPDATE tenants SET deployment_retention_days = COALESCE($2, deployment_retention_days), insights_enabled = COALESCE($3, insights_enabled)
+              WHERE id = $1 RETURNING name, deployment_retention_days, insights_enabled`,
+            [tenantId, deploymentRetentionDays ?? null, insightsEnabled ?? null]
         );
-        await recordAuditEvent(client, { tenantId, actorUserId, kind: 'retention_changed', subject: `${rows[0].deployment_retention_days} days` });
-        return { name: rows[0].name, deploymentRetentionDays: rows[0].deployment_retention_days };
+        if (deploymentRetentionDays !== undefined) {
+            await recordAuditEvent(client, { tenantId, actorUserId, kind: 'retention_changed', subject: `${rows[0].deployment_retention_days} days` });
+        }
+        if (insightsEnabled !== undefined) {
+            await recordAuditEvent(client, { tenantId, actorUserId, kind: 'insights_changed', subject: rows[0].insights_enabled ? 'on' : 'off' });
+        }
+        return settingsOf(rows[0]);
     });
 }
 

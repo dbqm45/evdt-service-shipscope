@@ -151,8 +151,8 @@ Deployments and settings:
 | Route | Auth | What it does |
 |---|---|---|
 | `GET /tenants/:tenantId/deployments` | session + member | Newest first. Optional `repoId`, `environment` (`test`/`qa`/`prod`), `limit` (default 100, max 500). Each: `deploymentId, repo, environment, status, sha, deployedAt, deployedByLogin, workflowRunUrl, durationMs, commitUrl, rollbackToSha, relatedIssues, issueCommitTypes`. |
-| `GET /tenants/:tenantId/settings` | session + member | `{ name, deploymentRetentionDays }`. |
-| `PUT /tenants/:tenantId/settings` | session + admin | Body `{ "deploymentRetentionDays": 7..730 }` (default 90). Applied by the next daily cleanup. |
+| `GET /tenants/:tenantId/settings` | session + member | `{ name, deploymentRetentionDays, insightsEnabled }`. |
+| `PUT /tenants/:tenantId/settings` | session + admin | Body `{ "deploymentRetentionDays"?: 7..730, "insightsEnabled"?: true }`, at least one (an empty body is a 400); the other setting stays. Retention (default 90) is applied by the next daily cleanup; `insightsEnabled` (default off) shows the dashboard's Insights tab (`capabilities.insights` in the dashboard data). Each change is in the settings activity. |
 
 Jira (only when the `ATLASSIAN_*` variables and `TOKEN_ENCRYPTION_KEY` are set):
 

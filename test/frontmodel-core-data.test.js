@@ -93,6 +93,18 @@ test('barsIcon lights the first N bars; ENV_BAR_COUNT and ICONS shape (every ico
     assert.ok(run('["external","manual","chevron","chevronDown","warn","flag","hourglass","bug","check"].every(k => k in ICONS)'));
 });
 
+test('Insights: the workspace setting (capabilities.insights) or ?insights=1 as a preview turns it on', () => {
+    const on = (loc, capabilities) => {
+        const app = loadApp(loc ? { loc } : {});
+        app.run(`state = { capabilities: ${JSON.stringify(capabilities)} }`);
+        return app.run('insightsOn()');
+    };
+    assert.equal(on(null, { pdi: false, insights: false }), false);
+    assert.equal(on(null, { pdi: false, insights: true }), true, 'the workspace turned it on');
+    assert.equal(on({ search: '?insights=1' }, { pdi: false, insights: false }), true, 'a preview by address');
+    assert.equal(on(null, undefined), false, 'older data without capabilities');
+});
+
 test('feature switches', () => {
     assert.equal(loadApp().run('INSIGHTS_ENABLED'), false);
     assert.equal(loadApp().run('DEFAULT_VIEW'), 'tech');
