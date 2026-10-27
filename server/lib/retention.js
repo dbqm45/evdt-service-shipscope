@@ -1,4 +1,5 @@
 const { withScope } = require('./scope');
+const { PDI_DATA_KEEP_DAYS } = require('./pdi-connection-model');
 
 /**
  * Deletes a tenant's deployment records older than its retention (tenants.deployment_retention_days),
@@ -56,19 +57,49 @@ async function cleanupFlagHistory(pool, tenantId) {
 }
 
 /**
- * Runs cleanupTenant and cleanupFlagHistory for every tenant, each under its own scope.
+ * Removes the pdi layer's data of a workspace disconnected from pdi more than PDI_DATA_KEEP_DAYS ago (decision D5,
+ * design-docs/PDI-DATA-RETENTION-PLAN.pl.md): the work items and release plans read from its repos and the outgoing
+ * events' state; its repos' changes folders are read anew once it connects again. Once per disconnect
+ * (`data_removed_at`). Jira's release lines and the `Flag:` commit links are the core's and stay.
  *
  * @param {import('pg').Pool} pool
- * @returns {Promise<{ deployments: number, flagChanges: number }>} records deleted in total
+ * @param {string} tenantId
+ * @param {{ now?: Date }} [options]
+ * @returns {Promise<{ removed: boolean }>}
+ */
+async function cleanupPdiLayer(pool, tenantId, { now = new Date() } = {}) {
+    return withScope(pool, { tenantId }, async (client) => {
+        const { rowCount } = await client.query(
+            `UPDATE pdi_connections SET data_removed_at = $2
+              WHERE tenant_id = $1 AND data_removed_at IS NULL
+                AND disconnected_at < $2::timestamptz - make_interval(days => $3)`,
+            [tenantId, now, PDI_DATA_KEEP_DAYS]
+        );
+        if (!rowCount) return { removed: false };
+        await client.query('DELETE FROM work_items WHERE tenant_id = $1', [tenantId]);
+        await client.query('DELETE FROM release_plans WHERE tenant_id = $1', [tenantId]);
+        await client.query('DELETE FROM event_state WHERE tenant_id = $1', [tenantId]);
+        await client.query('UPDATE tracked_repos SET work_items_ref = NULL, work_items_error = NULL, work_items_version = 0 WHERE tenant_id = $1', [tenantId]);
+        return { removed: true };
+    });
+}
+
+/**
+ * Runs cleanupTenant, cleanupFlagHistory and cleanupPdiLayer for every tenant, each under its own scope.
+ *
+ * @param {import('pg').Pool} pool
+ * @returns {Promise<{ deployments: number, flagChanges: number, pdiLayers: number }>} records deleted in total, and
+ *   the workspaces whose pdi layer was cleared
  */
 async function cleanupAll(pool) {
     const { rows } = await pool.query('SELECT id FROM tenants');
-    const deleted = { deployments: 0, flagChanges: 0 };
+    const deleted = { deployments: 0, flagChanges: 0, pdiLayers: 0 };
     for (const { id } of rows) {
         deleted.deployments += await cleanupTenant(pool, id);
         deleted.flagChanges += await cleanupFlagHistory(pool, id);
+        if ((await cleanupPdiLayer(pool, id)).removed) deleted.pdiLayers += 1;
     }
     return deleted;
 }
 
-module.exports = { cleanupTenant, cleanupFlagHistory, cleanupAll };
+module.exports = { cleanupTenant, cleanupFlagHistory, cleanupPdiLayer, cleanupAll };

@@ -358,7 +358,10 @@ a signed ping, `GET <receiverUrl>/events/shipscope` with `X-ShipScope-Event: pin
 `X-ShipScope-Signature: v1=HMAC-SHA256(secret, "<timestamp>.")` (empty body). The worker pings hourly, Test pings at
 once. It is `degraded` when the last contact with pdi failed and the last success is older than an hour, or when pdi
 has not read ShipScope for 14 days. `DELETE` revokes the token, removes the subscription with what waits for it and
-marks the connection `disconnected`. Connecting and disconnecting are in the settings activity.
+marks the connection `disconnected`. Connecting and disconnecting are in the settings activity. The pdi layer's data
+(work items and release plans read from the repos, the events' state) stays 30 days after a disconnect, so connecting
+again keeps it; then the daily cleanup removes it and the repos' changes folders are read anew after the next
+connection. Jira's release lines and the `Flag:` commit links belong to the core and stay.
 
 The pdi layer (changes from a repo, the release plan, outgoing events, the service API, the lead time from the intent)
 works only for a connected workspace (design-docs/PDI-GATE-PLAN.pl.md). While the connection is `pending` the service
