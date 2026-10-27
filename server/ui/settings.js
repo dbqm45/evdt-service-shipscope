@@ -474,8 +474,9 @@ function ServiceTokens(tokens, once){
     });
 }
 
-/** @param {{ workspace: { settings: object }|null, admin: boolean, auditEvents?: object[]|null|{ error: string }, eventSubscriptions?: object[]|null|{ error: string }, serviceTokens?: object[]|null|{ error: string }, once?: object }} props */
-function renderGeneral({ workspace, admin, auditEvents = null, eventSubscriptions = null, serviceTokens = null, once = {} }){
+/** `pdi`: the workspace is connected with pdi; outgoing events and service tokens belong to that layer (design-docs/PDI-GATE-PLAN.pl.md).
+ * @param {{ workspace: { settings: object }|null, admin: boolean, auditEvents?: object[]|null|{ error: string }, eventSubscriptions?: object[]|null|{ error: string }, serviceTokens?: object[]|null|{ error: string }, once?: object, pdi?: boolean }} props */
+function renderGeneral({ workspace, admin, auditEvents = null, eventSubscriptions = null, serviceTokens = null, once = {}, pdi = false }){
     const page = (body) => Page({ id: 'general', section: 'workspace', title: 'General', hint: admin ? 'How long ShipScope keeps this workspace\'s history.' : MEMBER_HINT, body });
     if (!workspace) {
         return page(html`<p class="settings-loading">Loading…</p>`);
@@ -489,7 +490,7 @@ function renderGeneral({ workspace, admin, auditEvents = null, eventSubscription
                 <label>Keep deployment history (days, 7–730) <input name="deploymentRetentionDays" type="number" min="7" max="730" required value="${days}"></label>
                 <button type="submit" class="btn">Save</button></form>`
             : html`<p class="settings-hint">Deployment history is kept for ${days} days.</p>`,
-    })}${admin ? EventSubscriptions(eventSubscriptions) : ''}${admin ? ServiceTokens(serviceTokens, once) : ''}${admin ? AuditEvents(auditEvents) : ''}`);
+    })}${admin && pdi ? EventSubscriptions(eventSubscriptions) : ''}${admin && pdi ? ServiceTokens(serviceTokens, once) : ''}${admin ? AuditEvents(auditEvents) : ''}`);
 }
 
 // ---- pdi ---------------------------------------------------------------------------------------------------
@@ -715,7 +716,7 @@ const FLAG_STANCE_CHOICES = { unknown: 'Not set (a flag source covers it, or not
 const SERVICE_ROLE_CHOICES = { '': 'Not set', frontend: 'Frontend (what users see)', backend: 'Backend (APIs, services)' };
 
 /** @param {{ enabled: boolean, webhooks: boolean, github: { installations: object[], repos: object[] }|null, installationRepos: object, admin: boolean, picker?: boolean, editing?: number|null }} props */
-function renderGitHub({ enabled, webhooks, github, installationRepos, admin, picker = false, editing = null, sources = null, wizard = { draft: {}, found: null, preview: null } }){
+function renderGitHub({ enabled, webhooks, github, installationRepos, admin, picker = false, editing = null, sources = null, wizard = { draft: {}, found: null, preview: null }, pdi = false }){
     const hint = 'ShipScope reads deployments, releases and tags of the repositories you track, through the GitHub App.';
     const page = (body, action) => Page({ id: 'github', title: 'GitHub', hint, action, body });
     if (!enabled) {
@@ -739,7 +740,7 @@ function renderGitHub({ enabled, webhooks, github, installationRepos, admin, pic
             <td><span class="settings-repo"><span class="settings-badge">${repoBadge(r.fullName)}</span><span><strong>${name}</strong><span class="settings-row-meta">${owner}</span></span></span></td>
             <td class="mono">${r.versionFile || '—'}</td>
             <td class="mono">${(r.driftIgnorePaths || []).join(', ') || '—'}</td>
-            <td class="mono">${syncStatus(r)}${r.workItemsError ? html`<div><span class="settings-sync warn" title="${r.workItemsError}">changes folder: ${r.workItemsError.split('; ').length} problem${r.workItemsError.split('; ').length === 1 ? '' : 's'}</span></div>` : ''}</td>
+            <td class="mono">${syncStatus(r)}${pdi && r.workItemsError ? html`<div><span class="settings-sync warn" title="${r.workItemsError}">changes folder: ${r.workItemsError.split('; ').length} problem${r.workItemsError.split('; ').length === 1 ? '' : 's'}</span></div>` : ''}</td>
             <td>${FLAG_STANCES[r.flagStance] || FLAG_STANCES.unknown}</td>
             ${admin ? html`<td class="actions">
                 <button type="button" class="btn btn-icon" data-action="edit-repo" data-repo-id="${r.repoId}" aria-label="Edit ${r.fullName}" title="Version file, drift and flags">${SETTINGS_ICONS.edit}</button>
@@ -846,7 +847,7 @@ function ReleaseLinkForm(releaseLink, fields){
 }
 
 /** @param {{ enabled: boolean, webhooks: boolean, jira: object|null, boards: object[]|null|{ error: string }, admin: boolean, flagFields?: object[]|null|{ error: string } }} props */
-function renderJira({ enabled, webhooks, jira, boards, admin, flagFields = null }){
+function renderJira({ enabled, webhooks, jira, boards, admin, flagFields = null, pdi = false }){
     const section = (body) => Page({ id: 'jira', title: 'Jira', hint: 'Read-only access through Atlassian: issues, boards and sprints of the boards you choose.', body: Card({ body }) });
     if (!enabled) {
         return section(html`<p class="settings-hint">Jira is not configured on this server (ATLASSIAN_* variables and TOKEN_ENCRYPTION_KEY).</p>`);
@@ -880,7 +881,7 @@ function renderJira({ enabled, webhooks, jira, boards, admin, flagFields = null 
                 <form id="jiraBoardSelection" class="settings-actions" data-action="save-boards"><button type="submit" class="btn btn-primary">Save selection</button>
                 <button type="button" class="btn" data-action="sync-jira">Sync now</button></form>
                 ${FlagLinkForm(jira.flagLink || null, flagFields)}
-                ${ReleaseLinkForm(jira.releaseLink || null, flagFields)}`;
+                ${pdi ? ReleaseLinkForm(jira.releaseLink || null, flagFields) : ''}`;
         }
     }
     return section(html`${status}${site}${boardBlock}
@@ -1405,12 +1406,14 @@ function renderSettings(){
     const setupDone = steps.filter((st) => !st.optional && st.state !== 'unavailable').every((st) => st.state === 'done' || st.state === 'loading');
     const page = pageFromHash({ hash: typeof location !== 'undefined' ? location.hash : '', admin, setupDone });
     const repos = (s.github && s.github.repos) || [];
+    // The pdi layer's settings show once the workspace is connected with pdi (design-docs/PDI-GATE-PLAN.pl.md).
+    const pdi = Boolean(s.pdiConnection && ['connected', 'degraded'].includes(s.pdiConnection.state));
     const pages = {
         'getting-started': () => renderGettingStarted({ steps }),
-        general: () => renderGeneral({ workspace: s.workspace, admin, auditEvents: s.auditEvents, eventSubscriptions: s.eventSubscriptions, serviceTokens: s.serviceTokens, once: s.once }),
+        general: () => renderGeneral({ workspace: s.workspace, admin, auditEvents: s.auditEvents, eventSubscriptions: s.eventSubscriptions, serviceTokens: s.serviceTokens, once: s.once, pdi }),
         members: () => renderMembers({ workspace: s.workspace, admin, meId: s.me && s.me.user.id, once: s.once }),
-        github: () => renderGitHub({ enabled: s.features.githubApp, webhooks: s.features.githubWebhooks, github: s.github, installationRepos: s.installationRepos, admin, picker: s.trackPicker, editing: s.editingRepo, sources: s.flags, wizard: s.codeWizard }),
-        jira: () => renderJira({ enabled: s.features.jira, webhooks: s.features.jiraWebhooks, jira: s.jira, boards: s.boards, admin, flagFields: s.flagFields }),
+        github: () => renderGitHub({ enabled: s.features.githubApp, webhooks: s.features.githubWebhooks, github: s.github, installationRepos: s.installationRepos, admin, picker: s.trackPicker, editing: s.editingRepo, sources: s.flags, wizard: s.codeWizard, pdi }),
+        jira: () => renderJira({ enabled: s.features.jira, webhooks: s.features.jiraWebhooks, jira: s.jira, boards: s.boards, admin, flagFields: s.flagFields, pdi }),
         flags: () => renderFlags({ flagList: s.flagList, admin, jiraUrl: s.jira && s.jira.site ? s.jira.site.url : null }),
         sources: () => renderSourcesPage({ sources: s.flags, repos, admin, once: s.once, origin: location.origin, wizard: s.codeWizard, endpointTest: s.endpointTest, secretEvents: s.secretEvents }),
         pdi: () => renderPdi({ connection: s.pdiConnection, admin, once: s.once }),

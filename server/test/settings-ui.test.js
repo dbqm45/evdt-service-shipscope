@@ -53,7 +53,7 @@ test('settings page: General, Members and Danger zone -- admins invite and remov
 
     // G1.5: outgoing events, for admins: the subscriptions with their state, a form, the signing secret it uses.
     const subs = [{ id: 's1', url: 'https://pdi.acme.io/hooks', types: ['feature.released'], lastError: 'pdi.acme.io answered HTTP 500', lastDeliveredAt: null, pending: 2 }];
-    const withEvents = str(ui.renderGeneral({ workspace, admin: true, eventSubscriptions: subs }));
+    const withEvents = str(ui.renderGeneral({ workspace, admin: true, eventSubscriptions: subs, pdi: true }));
     assert.match(withEvents, /Outgoing events/);
     assert.match(withEvents, /https:\/\/pdi\.acme\.io\/hooks/);
     assert.match(withEvents, /2 waiting/);
@@ -62,11 +62,11 @@ test('settings page: General, Members and Danger zone -- admins invite and remov
     assert.match(withEvents, /data-action="add-event-subscription"/);
     assert.match(withEvents, /name="types" value="release\.stage_changed" checked/);
     assert.match(withEvents, /signing secret/);
-    assert.ok(!/Outgoing events/.test(str(ui.renderGeneral({ workspace, admin: false, eventSubscriptions: subs }))), 'admins only');
+    assert.ok(!/Outgoing events/.test(str(ui.renderGeneral({ workspace, admin: false, eventSubscriptions: subs, pdi: true }))), 'admins only');
 
     // F5: service tokens, for admins: listed without the token, a form, revoke; a new token shown once.
     const tokens = [{ id: 't1', name: '<b>pdi</b>', createdAt: '2026-10-26T10:00:00Z', expiresAt: '2027-10-26T10:00:00Z', lastUsedAt: null }];
-    const withTokens = str(ui.renderGeneral({ workspace, admin: true, serviceTokens: tokens, once: {} }));
+    const withTokens = str(ui.renderGeneral({ workspace, admin: true, serviceTokens: tokens, once: {}, pdi: true }));
     assert.match(withTokens, /Service tokens/);
     assert.match(withTokens, /&lt;b&gt;pdi&lt;\/b&gt;/, 'the name is escaped');
     assert.match(withTokens, /never used/);
@@ -74,10 +74,13 @@ test('settings page: General, Members and Danger zone -- admins invite and remov
     assert.match(withTokens, /data-action="create-service-token"/);
     assert.match(withTokens, /name="lifetimeDays"/);
     assert.match(withTokens, /\/api\/service\/v1\/items\//);
-    const fresh = str(ui.renderGeneral({ workspace, admin: true, serviceTokens: tokens, once: { serviceToken: 'shps_abc' } }));
+    const fresh = str(ui.renderGeneral({ workspace, admin: true, serviceTokens: tokens, once: { serviceToken: 'shps_abc' }, pdi: true }));
     assert.match(fresh, /Service token — shown only once[\s\S]*shps_abc/);
-    assert.ok(!/Service tokens/.test(str(ui.renderGeneral({ workspace, admin: false, serviceTokens: tokens, once: {} }))), 'admins only');
-    assert.match(str(ui.renderGeneral({ workspace, admin: true, serviceTokens: { error: 'boom' }, once: {} })), /settings-error">boom/);
+    assert.ok(!/Service tokens/.test(str(ui.renderGeneral({ workspace, admin: false, serviceTokens: tokens, once: {}, pdi: true }))), 'admins only');
+    assert.match(str(ui.renderGeneral({ workspace, admin: true, serviceTokens: { error: 'boom' }, once: {}, pdi: true })), /settings-error">boom/);
+    // Outgoing events and service tokens belong to the pdi layer: not shown until the workspace is connected with pdi.
+    const core = str(ui.renderGeneral({ workspace, admin: true, eventSubscriptions: subs, serviceTokens: tokens, once: {} }));
+    assert.ok(!/Outgoing events|Service tokens/.test(core), 'no pdi layer without pdi');
 
     const admin = str(ui.renderMembers({ workspace, admin: true, meId: 'u1', once: {} }));
     assert.match(admin, /id="members" data-section="workspace"/);
@@ -121,8 +124,9 @@ test('settings page: GitHub -- installations, the tracked repositories table, th
     assert.match(admin, /<td class="mono">trigger\.properties<\/td>\s*<td class="mono">\.github\/, README\.md<\/td>/);
     assert.match(admin, /class="settings-sync fail" title="boom &quot;quoted&quot;">sync failed/);
     // F1: a changes folder that could not be read shows under the sync state, with what failed.
-    const withItems = str(ui.renderGitHub({ enabled: true, github: { ...github, repos: [{ ...github.repos[0], lastSyncError: null, workItemsError: 'docs/project/changes/CHG-14/plan.md: no YAML header' }] }, installationRepos, admin: true }));
+    const withItems = str(ui.renderGitHub({ enabled: true, github: { ...github, repos: [{ ...github.repos[0], lastSyncError: null, workItemsError: 'docs/project/changes/CHG-14/plan.md: no YAML header' }] }, installationRepos, admin: true, pdi: true }));
     assert.match(withItems, /class="settings-sync warn" title="docs\/project\/changes\/CHG-14\/plan\.md: no YAML header">changes folder: 1 problem/);
+    assert.ok(!/changes folder/.test(str(ui.renderGitHub({ enabled: true, github: { ...github, repos: [{ ...github.repos[0], lastSyncError: null, workItemsError: 'x' }] }, installationRepos, admin: true }))), 'not without pdi');
     assert.match(admin, /data-action="edit-repo" data-repo-id="101"/);
     assert.match(admin, /data-action="untrack-repo" data-repo-id="101" data-installation-id="7" aria-label="Stop tracking acme\/web-service-frontend"/);
     assert.ok(!/save-repo-settings|data-action="track-repo"/.test(admin), 'no edit form or picker until asked');
@@ -369,15 +373,16 @@ test('settings page: the Jira section offers the flag convention -- none, prefix
 test('settings page: the Jira section offers the release-line convention -- release: labels by default, a fixVersion, a field', () => {
     const jira = { connected: true, site: { cloudId: 'c1', name: 'acme', url: 'https://acme.atlassian.net' }, lastError: null, flagLink: null, releaseLink: { type: 'label', prefix: 'release:' } };
     const fields = [{ id: 'customfield_10050', name: 'Release line', type: 'options' }, { id: 'customfield_10051', name: 'Flags', type: 'labels' }];
-    const byLabel = str(ui.renderJira({ enabled: true, jira, boards: [], admin: true, flagFields: fields }));
+    const byLabel = str(ui.renderJira({ enabled: true, jira, boards: [], admin: true, flagFields: fields, pdi: true }));
     assert.match(byLabel, /data-action="save-release-link"/);
+    assert.ok(!/save-release-link/.test(str(ui.renderJira({ enabled: true, jira, boards: [], admin: true, flagFields: fields }))), 'release lines belong to the pdi layer');
     assert.match(byLabel, /<option value="label" selected>In labels with a prefix/);
     assert.match(byLabel, /name="prefix" maxlength="30" value="release:" >/);
     assert.match(byLabel, /release:R1/, 'the convention is explained with an example');
     assert.doesNotMatch(byLabel.split('save-release-link')[1], /Flags \(labels\)/, 'a labels field can\'t hold one line');
-    const byVersion = str(ui.renderJira({ enabled: true, jira: { ...jira, releaseLink: { type: 'fixVersion', prefix: '' } }, boards: [], admin: true, flagFields: fields }));
+    const byVersion = str(ui.renderJira({ enabled: true, jira: { ...jira, releaseLink: { type: 'fixVersion', prefix: '' } }, boards: [], admin: true, flagFields: fields, pdi: true }));
     assert.match(byVersion, /<option value="fixVersion" selected>/);
-    assert.ok(!/save-release-link/.test(str(ui.renderJira({ enabled: true, jira, boards: [], admin: false }))), 'members don\'t');
+    assert.ok(!/save-release-link/.test(str(ui.renderJira({ enabled: true, jira, boards: [], admin: false, pdi: true }))), 'members don\'t');
 });
 
 test('flag source status: none yet, accepted with what it did, refused with why (until a later message is accepted)', () => {

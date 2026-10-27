@@ -9,7 +9,7 @@ const { runQueuedEndpointTest } = require('./lib/endpoint-flags');
 const { handOverAccessToken } = require('./lib/jira-connections');
 const { flagSourceHealth } = require('./lib/flags');
 const { detectReleaseEvents, deliverEvents } = require('./lib/outgoing-events');
-const { pingPdiConnections } = require('./lib/pdi-connection');
+const { pingPdiConnections, backfillPdiConnections } = require('./lib/pdi-connection');
 const { safeFetch } = require('./lib/safe-fetch');
 const { pendingSyncRequests, finishSyncRequests } = require('./lib/webhooks');
 const { recordRun } = require('./lib/worker-status');
@@ -396,6 +396,10 @@ if (require.main === module) {
         timers.push(setInterval(() => pdiPingTick(pool, encryptionKey), PDI_PING_INTERVAL_MS));
         pdiPingTick(pool, encryptionKey);
     }
+    // Workspaces that used the service API or events before the connection with pdi existed get one (pending), once.
+    backfillPdiConnections(pool)
+        .then((r) => r.created && defaultLogger.info(`pdi connections carried over: ${r.created}`))
+        .catch((err) => defaultLogger.warn({ err: err.message }, 'pdi connections not carried over'));
 
     process.on('SIGTERM', () => {
         defaultLogger.info('worker stopping (SIGTERM)');

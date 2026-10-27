@@ -17,6 +17,7 @@ if (!process.env.TEST_DATABASE_URL) {
 }
 
 const { createTestDb } = require('./helpers/test-db');
+const { connectPdiForTest } = require('./helpers/pdi');
 const { AUTH, fakeGitHub, signIn, testGitHubApp } = require('./helpers/auth');
 const { fakeAtlassian } = require('./helpers/atlassian');
 const { buildApp } = require('../web');
@@ -106,6 +107,7 @@ test('the frontend reads what the syncs stored: release status by sub-task and b
 
     const alice = await signIn(app, 'alice');
     const tenantId = (await app.inject({ method: 'POST', url: '/tenants', cookies: { sid: alice }, payload: { name: 'Acme' } })).json().tenant.id;
+    await connectPdiForTest(pool, tenantId);
     const call = (method, url, payload) => app.inject({ method, url: `/tenants/${tenantId}${url}`, cookies: { sid: alice }, payload });
     const start = await call('GET', '/jira/connect');
     const state = new URL(start.headers.location).searchParams.get('state');

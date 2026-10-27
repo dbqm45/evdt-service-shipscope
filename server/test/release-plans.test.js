@@ -85,6 +85,7 @@ if (!process.env.TEST_DATABASE_URL) {
 
 const crypto = require('crypto');
 const { createTestDb } = require('./helpers/test-db');
+const { connectPdiForTest } = require('./helpers/pdi');
 const { fakeGitHub, AUTH, signIn } = require('./helpers/auth');
 const { buildApp } = require('../web');
 const { withScope } = require('../lib/scope');
@@ -103,6 +104,7 @@ async function setup(t) {
     t.after(() => app.close());
     const alice = await signIn(app, 'alice');
     const tenantId = (await app.inject({ method: 'POST', url: '/tenants', cookies: { sid: alice }, payload: { name: 'Acme' } })).json().tenant.id;
+    await connectPdiForTest(pool, tenantId);
     const rows = (sql, params = []) => withScope(pool, { tenantId }, async (c) => (await c.query(sql, params)).rows);
     await rows("INSERT INTO github_installations (tenant_id, installation_id, account_login, account_type) VALUES ($1, 9, 'acme', 'Organization')", [tenantId]);
     await rows("INSERT INTO tracked_repos (tenant_id, repo_id, installation_id, full_name) VALUES ($1, 1, 9, 'acme/pay')", [tenantId]);

@@ -1,4 +1,5 @@
 const { withScope } = require('./scope');
+const { pdiLayer } = require('./pdi-layer');
 const { readWorkItems, readReleasePlans } = require('./work-items');
 const { CHANGES_KEY, CHANGES_LABEL, workItemIssues } = require('./work-items-model');
 const { roleOf, TenantNotFoundError } = require('./tenants');
@@ -124,7 +125,9 @@ function shortRef(ref) {
 async function buildDashboardData(pool, { tenantId, actorUserId }) {
     return withScope(pool, { tenantId }, async (client) => {
         if (!(await roleOf(client, { tenantId, userId: actorUserId }))) throw new TenantNotFoundError('Tenant not found');
-        return readDashboardData(client, { tenantId });
+        // People see the pdi layer only once the workspace is connected with pdi (design-docs/PDI-GATE-PLAN.pl.md).
+        const { visible } = await pdiLayer(client, { tenantId });
+        return readDashboardData(client, { tenantId, pdi: visible });
     });
 }
 
@@ -133,10 +136,11 @@ async function buildDashboardData(pool, { tenantId, actorUserId }) {
  * tenant itself. Same shape as buildDashboardData().
  *
  * @param {import('pg').PoolClient} client inside withScope()
- * @param {{ tenantId: string }} input
+ * @param {{ tenantId: string, pdi?: boolean }} input `pdi: false` leaves out the pdi layer (changes from the repos, the
+ *   release plan) and says so in `capabilities.pdi`; the worker and the service API read it all
  * @returns {Promise<object>}
  */
-async function readDashboardData(client, { tenantId }) {
+async function readDashboardData(client, { tenantId, pdi = true }) {
     const { rows: repos } = await client.query(
         'SELECT repo_id, full_name, last_synced_at, drift, flag_stance, service_role FROM tracked_repos WHERE tenant_id = $1 ORDER BY created_at, full_name',
         [tenantId]
@@ -175,8 +179,8 @@ async function readDashboardData(client, { tenantId }) {
 
     const { jiraIndex, issueStatusIndex } = await readDashboardJira(client, { tenantId });
     // Work items from the repos (F1): their own increment, their keys in the status index, links to their files.
-    const workItems = await readWorkItems(client, tenantId);
-    const releasePlan = await readReleasePlan(client, tenantId, workItems);
+    const workItems = pdi ? await readWorkItems(client, tenantId) : [];
+    const releasePlan = pdi ? await readReleasePlan(client, tenantId, workItems) : { mode: 'jira', lines: [], plans: [] };
     const workItemUrls = {};
     if (workItems.length) {
         jiraIndex.pis.push({ pi: CHANGES_KEY, kind: 'change', label: CHANGES_LABEL, file: 'changes.json', sprints: [] });
@@ -220,6 +224,7 @@ async function readDashboardData(client, { tenantId }) {
         jiraBrowseUrl,
         releasePlan,
         workItemUrls,
+        capabilities: { pdi },
     };
 }
 

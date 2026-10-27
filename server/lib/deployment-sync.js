@@ -7,6 +7,7 @@ const { ENV_ORDER, computeEnvDrift } = require('./env-drift');
 const { MAX_RUN_LOOKUPS, createCaches, resolveManual, resolveDisplayName } = require('./deployment-people');
 const { refreshCodeFlags } = require('./code-flags');
 const { refreshWorkItems } = require('./work-items');
+const { pdiLayer } = require('./pdi-layer');
 
 /**
  * FR-005: pulls new GitHub deployments of every tracked repo into the tenant's `deployments` table.
@@ -276,7 +277,9 @@ async function syncRepo({ pool, token, tenantId, repo, fetch: fetchFn = fetch, n
     // Flags kept in the repo's code, read at what each environment now runs (ADR-003). Never fails the sync.
     const codeFlags = await refreshCodeFlags({ pool, token, tenantId, repo, fetch: fetchFn, now: new Date(now), log });
     // Work items kept in the repo (F1: docs/project/changes/<CHG>/), read when that folder changed. Never fails the sync.
-    const workItems = await refreshWorkItems({ pool, token, tenantId, repo, fetch: fetchFn, log });
+    // Only for workspaces connected with pdi (the pdi layer, design-docs/PDI-GATE-PLAN.pl.md): no requests otherwise.
+    const pdiActive = await withScope(pool, { tenantId }, async (client) => (await pdiLayer(client, { tenantId })).active);
+    const workItems = pdiActive ? await refreshWorkItems({ pool, token, tenantId, repo, fetch: fetchFn, log }) : { skipped: 'no connection with pdi' };
     return { ...written, driftRecomputed, codeFlags, workItems };
 }
 

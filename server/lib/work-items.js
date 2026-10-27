@@ -4,6 +4,7 @@
 // GitHub request. A file that can't be read is recorded on the repo (tracked_repos.work_items_error, Settings) and the
 // other changes still count; a GitHub failure keeps what was read before; a rate limit is rethrown like elsewhere.
 const { withScope } = require('./scope');
+const { pdiLayer } = require('./pdi-layer');
 const { roleOf, TenantNotFoundError } = require('./tenants');
 const { githubGet, GitHubApiError, GitHubRateLimitError } = require('./github-app');
 const { CHANGES_DIR, CHANGES_KEY, MAX_CHANGES, WorkItemFileError, buildWorkItems, workItemIssues, checkReleasePlan } = require('./work-items-model');
@@ -159,6 +160,8 @@ async function readWorkItems(client, tenantId) {
 async function listChangeIssues(pool, { tenantId, actorUserId }) {
     return withScope(pool, { tenantId }, async (client) => {
         if (!(await roleOf(client, { tenantId, userId: actorUserId }))) throw new TenantNotFoundError('Tenant not found');
+        // The Changes increment is part of the pdi layer (design-docs/PDI-GATE-PLAN.pl.md).
+        if (!(await pdiLayer(client, { tenantId })).visible) return [];
         return workItemIssues(await readWorkItems(client, tenantId));
     });
 }

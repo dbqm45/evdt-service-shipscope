@@ -44,7 +44,7 @@ function seed(ctx) {
             deployedAt: new Date().toISOString(), rollback: { toRef: 'x' } }],
         flagsMeta: { 'k"<x': {}, k2: {} },
         flagStates: { 'k"<x': { prod: { build: { enabled: true, changedAt: '2026-01-01' } } }, k2: { prod: { build: { enabled: true, changedAt: '2026-02-01' } } } },
-        issueDeployments: {}, flagStateHistory: [], components: [],
+        issueDeployments: {}, flagStateHistory: [], components: [], capabilities: { pdi: true },
     };`, ctx);
 }
 

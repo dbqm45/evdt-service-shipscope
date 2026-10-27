@@ -382,8 +382,10 @@ function renderRollbackDriftChart(){
 function renderInsights(){
     renderSprintStatusChart();
     renderLeadTimeChart();
-    renderIntentLeadTimeChart();
-    renderReportLeadTimeChart();
+    if (pdiLayerOn()) {
+        renderIntentLeadTimeChart();
+        renderReportLeadTimeChart();
+    }
     renderPriorityStatusChart();
     renderStaleFlagsChart();
     renderRollbackDriftChart();

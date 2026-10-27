@@ -34,6 +34,14 @@ const DEFAULT_VIEW = 'tech';
 // The Insights tab is a soft launch: removed from the page unless asked for with ?insights=1 (initTabs()). A next
 // preview tab can be gated the same way.
 const INSIGHTS_ENABLED = new URLSearchParams(location.search).get('insights') === '1';
+/** The sample data (file://) shows the pdi layer with `?pdi=1` (design-docs/PDI-GATE-PLAN.pl.md). */
+const PDI_SAMPLE = new URLSearchParams(location.search).get('pdi') === '1';
+
+/** Whether the workspace is connected with pdi: the Release plan tab and the lead time from the intent and from the
+ *  problem report show only then; the server already leaves the pdi layer's data out otherwise. */
+function pdiLayerOn(){
+    return Boolean(typeof state !== 'undefined' && state && state.capabilities && state.capabilities.pdi);
+}
 
 function effectiveFlagState(envEntry){
     if (!envEntry) {
