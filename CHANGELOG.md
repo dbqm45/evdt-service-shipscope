@@ -7,6 +7,12 @@ dashboard, not a published package), so entries are grouped by date instead. See
 ShipScope is, `CLAUDE.md` for the technical reference, and `FAQ.md` for how specific numbers/badges are
 calculated.
 
+## [0.2.58] - 2026-10-27
+
+### Added
+
+- **SHP:** simplify the core: one flags path and Insights as a setting (#117)
+
 ## [0.2.57] - 2026-10-27
 
 ### Added
