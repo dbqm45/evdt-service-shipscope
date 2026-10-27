@@ -48,7 +48,7 @@ test('old flag changes go after the retention; each flag/environment keeps its l
 
     await pool.query('UPDATE tenants SET deployment_retention_days = 7 WHERE id = $1', [tenantId]);
     assert.strictEqual(await cleanupFlagHistory(pool, tenantId), 0, 'the rest are latest');
-    assert.deepStrictEqual(await cleanupAll(pool), { deployments: 0, flagChanges: 0 });
+    assert.deepStrictEqual(await cleanupAll(pool), { deployments: 0, flagChanges: 0, pdiLayers: 0 });
 });
 
 test('the dashboard reads the newest HISTORY_READ_LIMIT changes, oldest first', async (t) => {

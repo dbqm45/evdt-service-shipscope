@@ -510,6 +510,16 @@ const PDI_CHECKS = {
     reaches_pdi: { ok: 'ShipScope reached pdi', todo: 'ShipScope has not reached pdi yet: use Test once pdi-receiver runs at the address' },
 };
 
+/** After a disconnect: until when the pdi layer's data stays (decision D5), or when the daily retention removed it. */
+function PdiDataNote({ dataKeptUntil = null, dataRemovedAt = null }){
+    if (dataRemovedAt) {
+        return html` The pdi layer's data was removed ${fmtDateTime(dataRemovedAt)}, 30 days after the disconnect.`;
+    }
+    return dataKeptUntil
+        ? html` The pdi layer's data (changes from repos, release plans, the events' state) is kept until ${fmtDateTime(dataKeptUntil)}; connect again before then to keep it.`
+        : '';
+}
+
 /** One proof of the connection: done, waiting, or failing with pdi's answer. */
 function PdiCheck(check){
     const text = PDI_CHECKS[check.id] || { ok: check.id, todo: check.id };
@@ -543,7 +553,7 @@ function renderPdi({ connection, admin, once = {} }){
             : html`<p class="settings-hint">${MEMBER_HINT}</p>`;
         return page(Card({
             title: PDI_STATE_LABELS[connection.state] || connection.state,
-            body: html`<p class="settings-hint">Connecting creates a read-only service token for pdi and sends ShipScope's release events to <span class="mono">&lt;address&gt;/events/shipscope</span>, signed with a secret of their own.${connection.state === 'disconnected' ? html` Disconnected ${fmtDateTime(connection.disconnectedAt)}.` : ''}</p>${form}`,
+            body: html`<p class="settings-hint">Connecting creates a read-only service token for pdi and sends ShipScope's release events to <span class="mono">&lt;address&gt;/events/shipscope</span>, signed with a secret of their own.${connection.state === 'disconnected' ? html` Disconnected ${fmtDateTime(connection.disconnectedAt)}.${PdiDataNote(connection)}` : ''}</p>${form}`,
         }));
     }
     const actions = admin

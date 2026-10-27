@@ -824,6 +824,15 @@ test('Insights is a workspace setting (D2): a switch under General for admins, i
     assert.match(str(ui.renderGeneral({ workspace: workspace(false), admin: false })), /Insights: off/);
 });
 
+test('pdi: after a disconnect the card says until when the pdi layer\'s data stays, or when it was removed (D5)', () => {
+    const gone = { state: 'disconnected', receiverUrl: 'https://pdi.example.com', disconnectedAt: '2026-10-01T10:00:00Z', checks: [] };
+    const kept = str(ui.renderPdi({ connection: { ...gone, dataKeptUntil: '2026-10-31T10:00:00Z', dataRemovedAt: null }, admin: true }));
+    assert.match(kept, /The pdi layer's data \(changes from repos, release plans, the events' state\) is kept until [^<]+; connect again before then to keep it\./);
+    const removed = str(ui.renderPdi({ connection: { ...gone, dataKeptUntil: null, dataRemovedAt: '2026-10-31T10:00:00Z' }, admin: true }));
+    assert.match(removed, /The pdi layer's data was removed [^<]+, 30 days after the disconnect\./);
+    assert.doesNotMatch(str(ui.renderPdi({ connection: { state: 'none', checks: [] }, admin: true })), /pdi layer's data/);
+});
+
 if (!process.env.TEST_DATABASE_URL) {
     test('real-Postgres tests skipped (TEST_DATABASE_URL not set)', { skip: true }, () => {});
     return;

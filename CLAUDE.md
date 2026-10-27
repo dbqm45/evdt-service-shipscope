@@ -107,7 +107,7 @@ changelog entry by hand outside a `chore(release)` PR.
 
 Deployed to Render per `context/foundation/infrastructure.md`: `render.yaml` builds both the Web Service and the
 Background Worker from the repo root (`npm ci --prefix server`, `node server/web.js`), not `rootDir: server`, which
-would hide `docs/` from the Web Service. Migrations (`server/migrations/001`–`046`, applied by the hand-rolled
+would hide `docs/` from the Web Service. Migrations (`server/migrations/001`–`047`, applied by the hand-rolled
 `lib/migrate.js`) run as each service's `preDeployCommand` under an advisory lock (`test/render-blueprint.test.js`).
 Dependencies, all in `server/package.json`: `pg`, `fastify`, `@fastify/cookie`. Fastify runs with
 `removeAdditional: false, coerceTypes: false`: unknown fields and wrong types are a 400, never silently fixed.
@@ -377,7 +377,12 @@ the web service fills once a minute (`sampleStatus()`, web.js); a day is an outa
   `last_used_at` (pdi reads `GET /api/service/v1/connection`) and the last contact with pdi (a delivered event, or the
   signed ping `GET <receiver>/events/shipscope`, `X-ShipScope-Event: ping`, from the worker's `pdiPingTick()` hourly
   and Settings' Test). `DELETE` revokes the token and the subscription. Audited `pdi_connected`/`pdi_disconnected`
-  (`server/test/pdi-connection.test.js`).
+  (`server/test/pdi-connection.test.js`). After a disconnect the pdi layer's data stays `PDI_DATA_KEEP_DAYS` (30;
+  `dataKeptUntil` in the state, Settings says so); then the daily retention's `cleanupPdiLayer()` (`lib/retention.js`,
+  design-docs/PDI-DATA-RETENTION-PLAN.pl.md, decision D5) removes `work_items`, `release_plans` and `event_state`,
+  resets the repos' `work_items_ref`/`_error`/`_version` and stamps `pdi_connections.data_removed_at` (migration
+  `047`, cleared by connecting again); Jira's `release_lines` and `flag_commit_links` are the core's and stay
+  (`server/test/pdi-data-retention.test.js`).
 - **The pdi layer's gate** (step 2, `lib/pdi-layer.js`, design-docs/PDI-GATE-PLAN.pl.md): `pdiLayer()` gives
   `visible` (connected/degraded) and `active` (also pending, so pdi can prove the connection). Without `active`:
   `syncRepo()` skips the work items, `detectReleaseEvents()` queues nothing, and the service API answers 404

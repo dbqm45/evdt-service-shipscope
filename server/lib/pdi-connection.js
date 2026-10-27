@@ -80,7 +80,7 @@ async function connectPdi(pool, { tenantId, actorUserId, receiverUrl, publicBase
             `INSERT INTO pdi_connections (tenant_id, receiver_url, service_token_id, subscription_id, created_by, created_at)
              VALUES ($1, $2, $3, $4, $5, $6)
              ON CONFLICT (tenant_id) DO UPDATE SET receiver_url = $2, service_token_id = $3, subscription_id = $4, created_by = $5, created_at = $6,
-                 last_ping_ok_at = NULL, last_ping_error = NULL, last_ping_error_at = NULL, disconnected_at = NULL`,
+                 last_ping_ok_at = NULL, last_ping_error = NULL, last_ping_error_at = NULL, disconnected_at = NULL, data_removed_at = NULL`,
             [tenantId, base, token.id, sub.id, actorUserId, now]
         );
         await recordAuditEvent(client, { tenantId, actorUserId, kind: 'pdi_connected', subject: new URL(base).host });
