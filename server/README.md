@@ -384,6 +384,10 @@ GET /api/service/v1/items/:key                     Authorization: Bearer shps_�
 GET /api/service/v1/metrics?from=2026-10-01&to=2026-10-31&format=json|csv
 → { environment: "prod", from, to, days: [{ date, deployments, failedDeployments, rollbacks,
     leadTimeDaysMedian, leadTimeCount }] }
+GET /api/service/v1/flow?from=2026-10-01&to=2026-10-31
+→ { from, to, items: [{ key, kind: "task"|"change"|"issue", parentKey, firstCommitAt, firstProdAt, flowDays }],
+    changes: [{ key, tasks, startedAt, deliveredAt, flowDays }],
+    summary: { itemFlowDaysMedian, itemCount, changeFlowDaysMedian, changeCount, tasksPerChangeMedian } }
 GET /api/service/v1/changes
 → { changes: [{ key, title, status, problem, source, sourceReportedAt, intentCreated, subtasks, envs, firstProdAt,
     releasedOnProd, tasks: [{ key, title, status, prod, releasedOnProd }] }] }
@@ -400,6 +404,11 @@ GET /api/service/v1/environments
     deployedBy, rollback, drift: null | { comparedWith, files, paths, unknown, commitsBehind } } } }] }
 ```
 
+`flow` (G3 step 1, design-docs/G3-FLOW-TIME-PLAN.pl.md) is each item's first commit (the earliest author date the
+deployment sync saw for its key, stored from migration `048` on) to its first PROD deployment, for the items that first
+reached PROD in the range, and the repo changes delivered in it (every slice but dropped ones on PROD: the first commit
+of any slice to the last one on PROD); the range follows `/metrics`. tf and pdi calibrate the automatic forecast (slices
+× flow time) with it.
 `connection` names the token's workspace and its pdi connection; pdi reads it when it starts and daily. The changes,
 release-plan, flags and environments routes (K-1) are what the dashboard shows, read by the ShipScope MCP server for Claude
 ([`adapters/mcp/`](../adapters/mcp/README.md)): the changes from the repos with their tasks, the Release plan tab

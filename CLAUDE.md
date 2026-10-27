@@ -107,7 +107,7 @@ changelog entry by hand outside a `chore(release)` PR.
 
 Deployed to Render per `context/foundation/infrastructure.md`: `render.yaml` builds both the Web Service and the
 Background Worker from the repo root (`npm ci --prefix server`, `node server/web.js`), not `rootDir: server`, which
-would hide `docs/` from the Web Service. Migrations (`server/migrations/001`–`047`, applied by the hand-rolled
+would hide `docs/` from the Web Service. Migrations (`server/migrations/001`–`048`, applied by the hand-rolled
 `lib/migrate.js`) run as each service's `preDeployCommand` under an advisory lock (`test/render-blueprint.test.js`).
 Dependencies, all in `server/package.json`: `pg`, `fastify`, `@fastify/cookie`. Fastify runs with
 `removeAdditional: false, coerceTypes: false`: unknown fields and wrong types are a 400, never silently fixed.
@@ -365,7 +365,12 @@ the web service fills once a minute (`sampleStatus()`, web.js); a day is an outa
   `…/release-plan` (`releasePlan()` = `releasePlanModel()`), `…/flags` (`flagsView()`: exposure, state per service,
   freshness, `flagBlastRadius()`/`flagStaleWarning()`, so the sandbox also loads `app-technical-flags.js`) and
   `…/environments` (`environmentsView()`: `currentVersion()` per service and environment with its drift). Per-token
-  token bucket as for the ingest (`server/test/service-api.test.js`).
+  token bucket as for the ingest (`server/test/service-api.test.js`). Flow time (G3 step 1,
+  design-docs/G3-FLOW-TIME-PLAN.pl.md): the deployment sync stores each key's earliest commit author date of the
+  deployment's commits (`firstCommitDates()` in `lib/deployment-logic.js`) in `issue_deployments.first_commit_at`
+  (migration `048`; filled in later, never moved later), and `GET …/flow?from&to` (`serviceFlow()`, the `/metrics`
+  range) gives first commit → first PROD per item and per delivered repo change with medians (`flowTimes()`,
+  `lib/flow-model.js`, pure; `server/test/flow-model.test.js`).
 - **Connection with pdi** (`lib/pdi-connection.js`, migration `044`, `pdi_connections`, RLS; design-docs/PDI-CONNECTION-PLAN.pl.md,
   step 1 of the decision "ShipScope bez pdi i z pdi"): Settings → Integrations → pdi
   (`renderPdi()`); `POST …/pdi-connection { receiverUrl }` (admin, 409 when active) creates in one transaction a

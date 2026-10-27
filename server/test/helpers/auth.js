@@ -74,7 +74,8 @@ function fakeGitHub(usersByCode, github = {}) {
         // statuses: { [id]: [...] (newest first) }, commits: { [sha]: message }, compare(base, head) -> body,
         // tags: [{ name, commit: { sha } }], releases: [{ tag_name }], files: { [sha]: { [path]: text } },
         // treeOf: { [commitSha]: treeSha } (default `tree-<sha>`), trees: { [treeSha]: listing },
-        // runs: { [runId]: { event } }, fileCommits: { [path]: [sha, ...] }, fail: HTTP status to answer everything with }. Refs in commits/compare
+        // runs: { [runId]: { event } }, fileCommits: { [path]: [sha, ...] }, commitDates: { [sha]: ISO author date },
+        // fail: HTTP status to answer everything with }. Refs in commits/compare
         // may be tag names. github.users[login] = { name } answers GET /users/<login> (the sync's display names).
         m = url.match(/^https:\/\/api\.github\.com\/users\/([^/?]+)$/);
         if (m && github.users) {
@@ -104,7 +105,8 @@ function fakeGitHub(usersByCode, github = {}) {
                 const commitSha = shaOf(decodeURIComponent(sub[1]));
                 if (!commitSha) return json({ message: 'No commit found' }, 422);
                 const tree = repo.treeOf?.[commitSha] || `tree-${commitSha}`;
-                return json({ sha: commitSha, commit: { message: repo.commits?.[commitSha] || '', tree: { sha: tree } } });
+                const date = repo.commitDates?.[commitSha];
+                return json({ sha: commitSha, commit: { message: repo.commits?.[commitSha] || '', tree: { sha: tree }, ...(date && { author: { date } }) } });
             }
             sub = rest.match(/^compare\/([^/?]+)$/);
             if (sub) {

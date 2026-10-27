@@ -1,7 +1,7 @@
 const { withScope } = require('./scope');
 const { withTenantClaim, eachLimited } = require('./tenant-claim');
 const { createInstallationToken, githubGet, GitHubApiError, GitHubRateLimitError } = require('./github-app');
-const { buildDeploymentPlan, computeNextCursor, issuesFromMessages, flagLinksFromMessages, mergeSeenEnvironments } = require('./deployment-logic');
+const { buildDeploymentPlan, computeNextCursor, issuesFromMessages, flagLinksFromMessages, firstCommitDates, mergeSeenEnvironments } = require('./deployment-logic');
 const { fetchRefIndex, resolveVersionFile, resolveVersion } = require('./version-resolution');
 const { ENV_ORDER, computeEnvDrift } = require('./env-drift');
 const { MAX_RUN_LOOKUPS, createCaches, resolveManual, resolveDisplayName } = require('./deployment-people');
@@ -69,15 +69,19 @@ async function describeRange({ token, fullName, previous, current, fetch }) {
         // A redeploy of the same ref: comparing it with itself would yield an empty range, so it inherits
         // what the previous record shipped (the same lesson as lastResolvedRangeByEnv in the file-based sync).
         // Its Flag: trailers were stored with the previous record.
-        return { keys: previous.relatedIssues, typesByKey: previous.issueCommitTypes, commitUrl: previous.commitUrl, rollbackTo: null, flagLinks: [] };
+        return { keys: previous.relatedIssues, typesByKey: previous.issueCommitTypes, commitUrl: previous.commitUrl, rollbackTo: null, flagLinks: [], firstCommits: {} };
     }
     if (!previous) {
         // With a version file the deployed commit is only a trigger; the issues are on the commit it names.
-        const message = current.fromFile
-            ? (await githubGet({ token, path: `/repos/${fullName}/commits/${encodeURIComponent(current.ref)}`, fetch }))?.commit?.message
-            : current.message;
+        const commit = current.fromFile
+            ? (await githubGet({ token, path: `/repos/${fullName}/commits/${encodeURIComponent(current.ref)}`, fetch }))?.commit
+            : current.commit;
+        const message = commit?.message;
         const { keys, typesByKey } = issuesFromMessages([message || '']);
-        return { keys, typesByKey, commitUrl: `https://github.com/${fullName}/commit/${current.sha}`, rollbackTo: null, flagLinks: flagLinksFromMessages([message || '']) };
+        return {
+            keys, typesByKey, commitUrl: `https://github.com/${fullName}/commit/${current.sha}`, rollbackTo: null,
+            flagLinks: flagLinksFromMessages([message || '']), firstCommits: firstCommitDates([{ commit }]),
+        };
     }
     const comparison = await githubGet({
         token,
@@ -91,6 +95,7 @@ async function describeRange({ token, fullName, previous, current, fetch }) {
         keys,
         typesByKey,
         flagLinks: flagLinksFromMessages(messages),
+        firstCommits: firstCommitDates(comparison?.commits),
         commitUrl: `https://github.com/${fullName}/compare/${previous.ref}...${current.fromFile ? current.ref : current.sha}`,
         // "behind": this ref is an ancestor of what was deployed before, so the environment moved backwards.
         rollbackTo: comparison?.status === 'behind' ? current.ref : null,
@@ -192,7 +197,7 @@ async function syncRepo({ pool, token, tenantId, repo, fetch: fetchFn = fetch, n
         const { version, resolvedRef } = resolveVersion({ sha, message, refIndex, fileRef });
         const previous = previousByEnv[entry.environment] || null;
         const range = await describeRange({
-            token, fullName, previous, current: { sha, ref: resolvedRef, message, fromFile: Boolean(fileRef) }, fetch: fetchFn,
+            token, fullName, previous, current: { sha, ref: resolvedRef, message, commit: commit?.commit, fromFile: Boolean(fileRef) }, fetch: fetchFn,
         });
         const record = {
             deploymentId: entry.dep.id,
@@ -255,10 +260,12 @@ async function syncRepo({ pool, token, tenantId, repo, fetch: fetchFn = fetch, n
             if (r.status !== 'success') continue;
             for (const key of r.keys) {
                 await client.query(
-                    `INSERT INTO issue_deployments (tenant_id, issue_key, environment, repo_id, first_deployed_at, commit_url)
-                     VALUES ($1, $2, $3, $4, $5, $6)
-                     ON CONFLICT (tenant_id, issue_key, environment, repo_id) DO NOTHING`,
-                    [tenantId, key, r.environment, repoId, r.deployedAt, r.commitUrl]
+                    // The first commit date is filled in when a later deployment knows it, and never moves later (G3).
+                    `INSERT INTO issue_deployments (tenant_id, issue_key, environment, repo_id, first_deployed_at, commit_url, first_commit_at)
+                     VALUES ($1, $2, $3, $4, $5, $6, $7)
+                     ON CONFLICT (tenant_id, issue_key, environment, repo_id) DO UPDATE
+                         SET first_commit_at = LEAST(COALESCE(issue_deployments.first_commit_at, EXCLUDED.first_commit_at), COALESCE(EXCLUDED.first_commit_at, issue_deployments.first_commit_at))`,
+                    [tenantId, key, r.environment, repoId, r.deployedAt, r.commitUrl, (r.firstCommits || {})[key] || null]
                 );
             }
         }

@@ -153,6 +153,34 @@ test('metrics: PROD per day as JSON or CSV (control_band.py reads the CSV), with
     assert.strictEqual(dflt.days.length, 90, 'the last 90 days by default');
 });
 
+test('flow (G3): first commit → first PROD per item, delivered changes, medians; range checks as for metrics', async (t) => {
+    const { as, alice, service, rows } = await setup(t);
+    const { token } = (await as(alice)('POST', '/service-tokens', { name: 'tf' })).json();
+    const fact = (key, env, deployedAt, commitAt) => rows(
+        'INSERT INTO issue_deployments (tenant_id, issue_key, environment, repo_id, first_deployed_at, first_commit_at) VALUES ((SELECT tenant_id FROM tracked_repos LIMIT 1), $1, $2, 1, $3, $4)',
+        [key, env, deployedAt, commitAt]);
+    await fact('TSK-57', 'prod', '2026-10-04T00:00:00Z', '2026-10-01T00:00:00Z');
+    await fact('TSK-58', 'prod', '2026-10-08T00:00:00Z', '2026-10-03T00:00:00Z');
+    await fact('PAY-1', 'prod', '2026-09-20T00:00:00Z', '2026-09-18T00:00:00Z');
+    const res = await service(token.token, '/api/service/v1/flow?from=2026-10-01&to=2026-10-31');
+    assert.strictEqual(res.statusCode, 200, res.body);
+    assert.deepStrictEqual(res.json(), {
+        from: '2026-10-01',
+        to: '2026-10-31',
+        items: [
+            { key: 'TSK-57', kind: 'task', parentKey: 'CHG-12', firstCommitAt: '2026-10-01T00:00:00.000Z', firstProdAt: '2026-10-04T00:00:00.000Z', flowDays: 3 },
+            { key: 'TSK-58', kind: 'task', parentKey: 'CHG-12', firstCommitAt: '2026-10-03T00:00:00.000Z', firstProdAt: '2026-10-08T00:00:00.000Z', flowDays: 5 },
+        ],
+        changes: [{ key: 'CHG-12', tasks: 2, startedAt: '2026-10-01T00:00:00.000Z', deliveredAt: '2026-10-08T00:00:00.000Z', flowDays: 7 }],
+        summary: { itemFlowDaysMedian: 4, itemCount: 2, changeFlowDaysMedian: 7, changeCount: 1, tasksPerChangeMedian: 2 },
+    }, 'PAY-1 reached PROD before the range');
+    for (const q of ['from=2026-10-05&to=2026-10-04', 'from=2025-01-01&to=2026-10-04', 'to=2026-13-01']) {
+        assert.strictEqual((await service(token.token, `/api/service/v1/flow?${q}`)).statusCode, 400, q);
+    }
+    await rows('DELETE FROM pdi_connections');
+    assert.strictEqual((await service(token.token, '/api/service/v1/flow')).statusCode, 404, 'the pdi layer, like the rest of the service API');
+});
+
 test('changes: the repo\'s changes with their problem, source, tasks and status per environment, as the dashboard has them', async (t) => {
     const { as, alice, service } = await setup(t);
     const { token } = (await as(alice)('POST', '/service-tokens', { name: 'pdi' })).json();

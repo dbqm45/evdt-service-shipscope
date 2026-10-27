@@ -287,3 +287,30 @@ test('untracking a repo removes its deployments; RLS hides deployments from othe
     assert.deepStrictEqual(await rows('SELECT * FROM deployments'), []);
     assert.deepStrictEqual(await rows('SELECT * FROM issue_deployments'), []);
 });
+
+test('sync (G3): each key\'s first commit date from the deployment\'s commits, filled in later, never moved later', async (t) => {
+    const web = {
+        deployments: [
+            { id: 203, environment: 'prod', sha: sha(3), created_at: at(10) },
+            { id: 202, environment: 'test', sha: sha(3), created_at: at(20) },
+            { id: 201, environment: 'test', sha: sha(1), created_at: at(30) },
+        ],
+        statuses: { 201: [status('success', 29)], 202: [status('success', 19)], 203: [status('success', 9)] },
+        commits: { [sha(1)]: 'feat: TSK-57 queue', [sha(3)]: 'feat: TSK-58 key' },
+        commitDates: { [sha(1)]: '2026-10-01T08:00:00Z' },
+        compare: () => ({ status: 'ahead', commits: [
+            { commit: { message: 'feat: TSK-58 key', author: { date: '2026-10-02T09:00:00Z' } } },
+            { commit: { message: 'fix: TSK-57 retry', author: { date: '2026-10-03T09:00:00Z' } } },
+        ] }),
+    };
+    const { sync, rows } = await setup(t, { 'acme/web': web, 'acme/api': emptyRepo() });
+    await sync();
+    const facts = await rows("SELECT issue_key, environment, first_commit_at FROM issue_deployments ORDER BY issue_key, environment");
+    assert.deepStrictEqual(facts.map((f) => [f.issue_key, f.environment, f.first_commit_at && f.first_commit_at.toISOString()]), [
+        // 201 is the first on test: its single commit's date. 202's range (vs 201) has a later TSK-57 commit: kept.
+        ['TSK-57', 'test', '2026-10-01T08:00:00.000Z'],
+        // 203 is the first on prod: one commit (sha 3), whose fetched commit has no date: null there.
+        ['TSK-58', 'prod', null],
+        ['TSK-58', 'test', '2026-10-02T09:00:00.000Z'],
+    ]);
+});
