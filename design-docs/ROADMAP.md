@@ -91,6 +91,14 @@ korporacyjnych.
   - [x] Zdarzenia `release.stage_changed` i `feature.released` z polem `release` (G1.5, `design-docs/G1.5-PLAN.pl.md`):
     subskrypcje adresów w Settings → General, kolejka i podpisana dostawa z ponowieniami (pierwsze wychodzące
     webhooki z F5, tylko te dwa zdarzenia). Część pdi (skrzynka bramek, ocena skutku MVP) jest w repo pdi.
+  - [x] Reszta F5 z planu jednego flow: API usług dla pdi i tf (#110, `design-docs/F5-API-PLAN.pl.md`), release notes
+    słowami intencji zmiany (#111), lead time od intencji i od zgłoszenia w Insights (#112, #113), serwer MCP nad API
+    usług (K-1, #114).
+  - [x] Połączenie z pdi (`design-docs/PDI-CONNECTION-PLAN.pl.md`, #115) i warstwa pdi tylko dla połączonych
+    workspace'ów (#116, #118, `design-docs/PDI-GATE-PLAN.pl.md`), prostszy rdzeń bez pdi (#117,
+    `design-docs/CORE-SIMPLIFY-PLAN.pl.md`).
+  - [x] Czas przepływu od pierwszego commita do pierwszego PROD w API usług (krok 1 luki G3, #119,
+    `design-docs/G3-FLOW-TIME-PLAN.pl.md`); prognozę z niego liczy pdi (dbqm45/pdi#37).
 - [ ] Wysyłanie flag do panelu Jiry przez jej Feature Flags API (wymaga aplikacji Forge).
 
 ## Niezawodność usługi (przed płatnymi klientami)
