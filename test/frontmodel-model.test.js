@@ -103,6 +103,57 @@ test('a deployment naming only a sub-task counts for its parent (subtaskKeys)', 
     assert.deepEqual(j(`issueStatusForEnv(${story},"prod")`), { level: 'deployed_code_only', blocked: false, results: [], uncertain: [], mismatch: [] });
 });
 
+test('a rollback takes an issue off the environment until a later deploy brings it back (rolledBackIssues)', () => {
+    const { j, run, setState } = loadApp();
+    const status = (key) => run(`issueStatusForEnv({key:"${key}"},"prod").level`);
+
+    // v45 shipped K-1 and K-2 to prod; prod then went back to v40, which takes both off.
+    setState({ deployments: [
+        dep('c', 'prod', { id: 'v40', deployedAt: daysAgo(1), relatedIssues: [], rolledBackIssues: ['K-1', 'K-2'] }),
+        dep('c', 'prod', { id: 'v45', deployedAt: daysAgo(3), relatedIssues: ['K-1', 'K-2'] }),
+        dep('c', 'qa', { id: 'qa', deployedAt: daysAgo(4), relatedIssues: ['K-1'] }),
+    ] });
+    assert.equal(status('K-1'), 'none');
+    assert.equal(run('issueDeployedOnComponent("c",{key:"K-1"},"prod")'), null);
+    assert.equal(run('issueStatusForEnv({key:"K-1"},"qa").level'), 'deployed_code_only', 'another environment is untouched');
+    assert.equal(run('anyDeploymentForIssue({key:"K-1"},"prod")'), false);
+    assert.deepEqual(j('componentsReached({key:"K-1"},"prod")'), []);
+
+    // A later deploy brings K-1 back; K-2 stays off. The order of the list does not matter, the time does.
+    setState({ deployments: [
+        dep('c', 'prod', { id: 'v40', deployedAt: daysAgo(2), relatedIssues: [], rolledBackIssues: ['K-1', 'K-2'] }),
+        dep('c', 'prod', { id: 'v46', deployedAt: daysAgo(1), relatedIssues: ['K-1'] }),
+        dep('c', 'prod', { id: 'v45', deployedAt: daysAgo(3), relatedIssues: ['K-1', 'K-2'] }),
+    ] });
+    assert.equal(run('issueDeployedOnComponent("c",{key:"K-1"},"prod").id'), 'v46');
+    assert.equal(status('K-2'), 'none');
+
+    // A sub-task rolled back while the Story's own key is still there: the Story is still deployed.
+    setState({ deployments: [
+        dep('c', 'prod', { id: 'back', deployedAt: daysAgo(1), rolledBackIssues: ['S-2'] }),
+        dep('c', 'prod', { id: 'both', deployedAt: daysAgo(3), relatedIssues: ['S-1', 'S-2'] }),
+    ] });
+    assert.equal(run('issueDeployedOnComponent("c",{key:"S-1",subtaskKeys:["S-2"]},"prod").id'), 'both');
+    assert.equal(run('issueDeployedOnComponent("c",{key:"S-3",subtaskKeys:["S-2"]},"prod")'), null);
+});
+
+test('the never-trimmed index honours rolledBackAt; a live rollback wins over an index entry without it', () => {
+    const { run, setState } = loadApp();
+
+    setState({
+        deployments: [dep('c', 'prod', { id: 'back', deployedAt: daysAgo(1), rolledBackIssues: ['K-3'] })],
+        issueDeployments: {
+            'K-1': { prod: { c: { deployedAt: '2026-01-01T00:00:00Z', rolledBackAt: '2026-02-01T00:00:00Z' } } },
+            'K-2': { prod: { c: { deployedAt: '2026-01-01T00:00:00Z' } } },
+            'K-3': { prod: { c: { deployedAt: '2026-01-01T00:00:00Z' } } },
+        },
+    });
+    assert.equal(run('issueStatusForEnv({key:"K-1"},"prod").level'), 'none');
+    assert.equal(run('issueStatusForEnv({key:"K-2"},"prod").level'), 'deployed_code_only');
+    assert.equal(run('issueStatusForEnv({key:"K-3"},"prod").level'), 'none');
+    assert.equal(run('anyDeploymentForIssue({key:"K-1"},"prod")'), false);
+});
+
 test('an issue with no deployment of its own counts as deployed where all its blockers are (blockedByKeys)', () => {
     const { j, run, setState } = loadApp();
 

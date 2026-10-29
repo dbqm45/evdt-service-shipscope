@@ -44,6 +44,8 @@ function toLegacyRecord(row, component) {
         deployedByLogin: row.deployed_by_login,
         status: row.status,
         relatedIssues: row.related_issues,
+        // Only on a rollback that took issues off (docs/app-model.js keyDeployment()).
+        ...(row.rolled_back_issues?.length && { rolledBackIssues: row.rolled_back_issues }),
         issueCommitTypes: row.issue_commit_types,
         resolvedRef: row.resolved_ref,
     };
@@ -154,7 +156,7 @@ async function readDashboardData(client, { tenantId, pdi = true }) {
         [tenantId]
     );
     const { rows: facts } = await client.query(
-        'SELECT issue_key, environment, repo_id, first_deployed_at, commit_url FROM issue_deployments WHERE tenant_id = $1',
+        'SELECT issue_key, environment, repo_id, first_deployed_at, commit_url, rolled_back_at FROM issue_deployments WHERE tenant_id = $1',
         [tenantId]
     );
 
@@ -162,7 +164,11 @@ async function readDashboardData(client, { tenantId, pdi = true }) {
     for (const f of facts) {
         const byEnv = (issueDeployments[f.issue_key] ||= {});
         const byComponent = (byEnv[f.environment] ||= {});
-        byComponent[names.get(Number(f.repo_id))] = { deployedAt: f.first_deployed_at.toISOString(), commitUrl: f.commit_url };
+        byComponent[names.get(Number(f.repo_id))] = {
+            deployedAt: f.first_deployed_at.toISOString(), commitUrl: f.commit_url,
+            // Taken off by a rollback and not deployed again since (docs/app-model.js keyDeployment()).
+            ...(f.rolled_back_at && { rolledBackAt: f.rolled_back_at.toISOString() }),
+        };
     }
 
     // Drift belongs on each environment's latest successful record, where currentVersion() finds it

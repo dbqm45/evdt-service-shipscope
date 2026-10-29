@@ -20,6 +20,7 @@ function toDeployment(row, fullNameByRepo) {
         commitUrl: row.commit_url,
         rollbackToSha: row.rollback_to_sha,
         relatedIssues: row.related_issues,
+        rolledBackIssues: row.rolled_back_issues || [],
         issueCommitTypes: row.issue_commit_types,
     };
 }

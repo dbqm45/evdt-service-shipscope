@@ -101,6 +101,23 @@ korporacyjnych.
     `design-docs/G3-FLOW-TIME-PLAN.pl.md`); prognozę z niego liczy pdi (dbqm45/pdi#37).
 - [ ] Wysyłanie flag do panelu Jiry przez jej Feature Flags API (wymaga aplikacji Forge).
 
+## Wersje i wdrożenia (z analizy US14, 2026-10-29)
+
+Zmiany w repozytoriach aplikacji (payload, tagi, bramka QA → PROD, jeden Deployment na wdrożenie) są w
+[WDROZENIA-W-REPO-APLIKACJI.pl.md](WDROZENIA-W-REPO-APLIKACJI.pl.md); tu tylko to, co robi ShipScope.
+
+- [x] Wersja z `payload` wdrożenia (`version`, `sha`) przed plikiem wersji, releasem i tagiem; starsze rekordy przy
+  pliku wersji rozwiązywane z prawdziwymi tagami. (#121)
+- [ ] Status po rollbacku: zadania cofnięte rollbackiem nie są już „wdrożone” na tym środowisku
+  ([plan](ROLLBACK-STATUS-PLAN.pl.md)).
+- [ ] Wersja uzupełniana później: rekord z ostatnich dni, który ma ref = SHA, dostaje tag/release, gdy się pojawi.
+- [ ] Znacznik „PROD bez QA” oparty na wersji (ref na PROD nigdy nie miał udanego wdrożenia na QA), zamiast liczby
+  commitów.
+- [ ] Metryki API usług bez duplikatów: kilka rekordów tego samego komponentu, środowiska i refu w krótkim oknie
+  liczone jako jedno wdrożenie (jak w historii wdrożeń).
+- [ ] Mapowanie środowisk: nieznana nazwa z „prod” (np. `production-approval`) do potwierdzenia w Settings zamiast
+  od razu PROD.
+
 ## Niezawodność usługi (przed płatnymi klientami)
 
 - [x] Skalowanie workera: każdy workspace zajmowany osobno (blokada per zadanie i workspace, `lib/tenant-claim.js`),
