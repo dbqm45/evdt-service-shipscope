@@ -7,6 +7,12 @@ dashboard, not a published package), so entries are grouped by date instead. See
 ShipScope is, `CLAUDE.md` for the technical reference, and `FAQ.md` for how specific numbers/badges are
 calculated.
 
+## [0.2.64] - 2026-10-29
+
+### Added
+
+- **SHP:** mark a QA or PROD deploy that skipped the stage before (#124)
+
 ## [0.2.63] - 2026-10-29
 
 ### Added
