@@ -30,6 +30,7 @@ function renderDeployCard(d, attachedFlips){
           ${EnvBadge({ env: d.environment, icon: envBadgeIcon(ENV_BAR_COUNT[d.environment]) })}
           ${d.manual ? ManualBadge({ withIcon: true }) : ''}
           ${d.rollback ? RollbackBadge({ toRef: d.rollback.toRef }) : ''}
+          ${d.skippedEnv ? SkippedEnvBadge({ env: d.skippedEnv }) : ''}
           ${d.workflowRunUrl ? RunBadge({ url: d.workflowRunUrl }) : ''}`,
         meta: joinMeta([
             MonoText({ text: fmtTime(d.deployedAt) }),
@@ -80,6 +81,7 @@ function renderDeployGroupCard(group, attachedFlips, isOpen){
           ${EnvBadge({ env: group.env, icon: envBadgeIcon(ENV_BAR_COUNT[group.env]) })}
           ${manualBadge}
           ${latest.rollback ? RollbackBadge({ toRef: latest.rollback.toRef }) : ''}
+          ${latest.skippedEnv ? SkippedEnvBadge({ env: latest.skippedEnv }) : ''}
           ${latest.workflowRunUrl ? RunBadge({ url: latest.workflowRunUrl }) : ''}`,
         meta: joinMeta([
             MonoText({ text: `${fmtTime(oldest.deployedAt)}–${fmtTime(latest.deployedAt)}` }),

@@ -65,7 +65,7 @@ function buildComponentRow(comp, env){
     row.innerHTML = html`${ComponentName({ ...nameProps, subline: RelTime({ text: relTime(d.deployedAt) }) })}${ComponentDeployedMeta({
         status: d.status,
         version: VersionLink({ version: d.version, url: d.commitUrl, stopClick: true }),
-        driftNote: driftNotesHtml(d.driftBehind),
+        driftNote: html`${driftNotesHtml(d.driftBehind)}${d.skippedEnv ? SkippedEnvBadge({ env: d.skippedEnv }) : ''}`,
     })}`;
     row.onclick = (e)=> {
         const infoBtn = e && e.target && e.target.closest ? e.target.closest('.drift-info-btn') : null;

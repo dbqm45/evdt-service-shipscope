@@ -463,6 +463,9 @@ select option { background:var(--panel-2); color:var(--text); padding:6px 12px; 
 .env-badge svg { display:block; flex-shrink:0; width:10px; height:9px; }
 .rollback-badge { display:inline-flex; align-items:center; gap:4px; font-size:var(--text-sm); height:24px; padding:0 9px; box-sizing:border-box; border-radius:5px; background:var(--rollback-badge-bg); color:var(--rollback); border:1px solid var(--rollback-badge-border); }
 .rollback-badge svg { flex:none; width:13px; height:13px; }
+.skipped-env-badge { display:inline-flex; align-items:center; gap:4px; font-size:var(--text-sm); height:24px; padding:0 9px; box-sizing:border-box; border-radius:5px; color:var(--nd-warn); border:1px solid currentColor; }
+.comp-meta .skipped-env-badge { height:20px; margin-top:5px; padding:0 6px; }
+.skipped-env-badge svg { flex:none; width:12px; height:12px; }
 .run-badge { color:var(--nd-fg-3); text-decoration:none; display:inline-flex; align-items:center; justify-content:center; flex:none; }
 .run-badge:hover { color:var(--nd-invert-hover); }
 .run-badge svg { display:block; width:14px; height:14px; }

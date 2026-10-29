@@ -111,9 +111,9 @@ Zmiany w repozytoriach aplikacji (payload, tagi, bramka QA → PROD, jeden Deplo
 - [x] Status po rollbacku: zadania cofnięte rollbackiem nie są już „wdrożone” na tym środowisku
   ([plan](ROLLBACK-STATUS-PLAN.pl.md)). (#122)
 - [x] Wersja uzupełniana później: rekord z ostatnich 48 godzin bez wersji, z ref = SHA i bez pliku wersji, dostaje
-  release/tag, gdy się pojawi.
-- [ ] Znacznik „PROD bez QA” oparty na wersji (ref na PROD nigdy nie miał udanego wdrożenia na QA), zamiast liczby
-  commitów.
+  release/tag, gdy się pojawi. (#123)
+- [x] Znacznik „PROD bez QA” oparty na wersji (ref ani etykieta na PROD nigdy nie miały udanego wdrożenia na QA,
+  a drzewo plików różni się od najnowszego na QA), zamiast liczby commitów; tak samo QA bez TEST.
 - [ ] Metryki API usług bez duplikatów: kilka rekordów tego samego komponentu, środowiska i refu w krótkim oknie
   liczone jako jedno wdrożenie (jak w historii wdrożeń).
 - [ ] Mapowanie środowisk: nieznana nazwa z „prod” (np. `production-approval`) do potwierdzenia w Settings zamiast

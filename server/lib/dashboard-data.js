@@ -46,6 +46,8 @@ function toLegacyRecord(row, component) {
         relatedIssues: row.related_issues,
         // Only on a rollback that took issues off (docs/app-model.js keyDeployment()).
         ...(row.rolled_back_issues?.length && { rolledBackIssues: row.rolled_back_issues }),
+        // A QA/PROD deploy of a version the stage before never had (lib/deployment-logic.js skippedStage()).
+        ...(row.skipped_env && { skippedEnv: row.skipped_env }),
         issueCommitTypes: row.issue_commit_types,
         resolvedRef: row.resolved_ref,
     };
