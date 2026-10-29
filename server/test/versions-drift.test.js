@@ -1,7 +1,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const { fakeGitHub, AUTH, signIn, testGitHubApp } = require('./helpers/auth');
-const { extractPromotedVersion, parseVersionProperty, matchVersionLabel, fetchRefIndex, resolveVersionFile, resolveVersion, payloadVersion, resolvePayloadVersion } = require('../lib/version-resolution');
+const { extractPromotedVersion, parseVersionProperty, matchVersionLabel, fetchRefIndex, resolveVersionFile, resolveVersion, payloadVersion, resolvePayloadVersion, planVersionBackfill } = require('../lib/version-resolution');
 const { computeEnvDrift } = require('../lib/env-drift');
 
 const sha = (n) => n.toString(16).padStart(40, 'a');
@@ -89,6 +89,20 @@ test('resolvePayloadVersion: a tag for the version, the commit GitHub knows, els
     assert.deepStrictEqual(await resolve({ version: 'v9.9.9', sha: sha(9) }), { ref: null, label: 'v9.9.9' });
     assert.deepStrictEqual(await resolve({ version: 'build-77' }), { ref: null, label: 'build-77' });
     assert.strictEqual(await resolve({}), null);
+});
+
+test('planVersionBackfill: a release or tag that appeared on the deployed commit later; nothing else', async () => {
+    const { fetch } = fakeRepo({ tags: [{ name: 'v1.4.52', commit: { sha: sha(5) } }, { name: 'nightly', commit: { sha: sha(6) } }], releases: [{ tag_name: 'v1.4.52' }] });
+    const refIndex = await fetchRefIndex({ token: TOKEN, fullName: 'acme/web', fetch });
+    assert.deepStrictEqual(planVersionBackfill([
+        { deploymentId: 1, sha: sha(5) },
+        { deploymentId: 2, sha: sha(6) },
+        { deploymentId: 3, sha: sha(7) },
+    ], refIndex), [
+        { deploymentId: 1, version: 'v1.4.52', resolvedRef: 'v1.4.52' },
+        { deploymentId: 2, version: 'nightly', resolvedRef: 'nightly' },
+    ]);
+    assert.deepStrictEqual(planVersionBackfill([], refIndex), []);
 });
 
 test('fetchRefIndex pages through tags and releases', async () => {
@@ -455,6 +469,38 @@ test('sync: a version file set later resolves older records with the real tags a
     [repo] = await rows('SELECT drift FROM tracked_repos');
     // qa's 1.1.0-okta is tag v1.1.0, prod's latest is release v1.1.0: the same ref, no drift.
     assert.deepStrictEqual(repo.drift, { inputs: { qa: trigger(1), prod: trigger(2) }, failed: [], envs: {} });
+});
+
+test('sync: a deploy synced before its commit was tagged gets the tag later; older ones and labelled ones stay', async (t) => {
+    const web = {
+        deployments: [
+            { id: 3, environment: 'test', sha: sha(5), created_at: at(10) },
+            { id: 2, environment: 'qa', sha: sha(4), created_at: at(4 * 24 * 60) },
+            { id: 1, environment: 'prod', sha: sha(3), created_at: at(20) },
+        ],
+        statuses: { 1: ok(19), 2: ok(4 * 24 * 60 - 1), 3: ok(9) },
+        commits: { [sha(3)]: 'chore: promote v0.9.0', [sha(4)]: 'feat: ABC-4', [sha(5)]: 'feat: ABC-5' },
+        tags: [],
+        releases: [],
+        compare: () => ({ status: 'ahead', ahead_by: 0, behind_by: 0, commits: [] }),
+    };
+    const { sync, rows, calls } = await setup(t, web);
+    await sync();
+    const versions = async () => (await rows('SELECT deployment_id, version, resolved_ref FROM deployments ORDER BY deployment_id'))
+        .map((d) => [Number(d.deployment_id), d.version, d.resolved_ref]);
+    assert.deepStrictEqual(await versions(), [[1, 'v0.9.0', sha(3)], [2, null, sha(4)], [3, null, sha(5)]]);
+
+    // The pipeline tags the commits afterwards; nothing new is deployed.
+    web.tags = [{ name: 'v1.4.52', commit: { sha: sha(5) } }, { name: 'v1.4.51', commit: { sha: sha(4) } }, { name: 'v1.0.0', commit: { sha: sha(3) } }];
+    calls.length = 0;
+    await sync();
+    assert.deepStrictEqual(await versions(), [[1, 'v0.9.0', sha(3)], [2, null, sha(4)], [3, 'v1.4.52', 'v1.4.52']],
+        'only a recent record with no version at all; an older one and a labelled one stay');
+
+    // Nothing left to fill in: no tag listing on the next quiet pass.
+    calls.length = 0;
+    await sync();
+    assert.ok(!calls.some((c) => c.startsWith('tags?')), calls.join('\n'));
 });
 
 test('sync: a failed drift comparison keeps the previous value and is retried on the next pass', async (t) => {

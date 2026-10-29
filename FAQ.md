@@ -49,7 +49,9 @@ often not the code that shipped: a PROD deploy started from `main` that ships `v
 3. a GitHub **Release** pointing at that exact commit;
 4. a plain git **tag** on that commit;
 5. a version-like string (`v1.2.3`, `1.2.3`) in the **commit message**;
-6. the shortened **commit SHA**.
+6. the shortened **commit SHA**. When the commit gets a Release or tag later (a pipeline that tags after it
+   deploys), the next sync within 48 hours shows that instead; this does not apply with a version file, whose
+   deployed commit is only a trigger.
 
 A payload `sha` GitHub knows is what drift and issue ranges compare; a payload `version` is matched to a tag like
 the version file's value (below), and one that matches no tag or commit is shown but not compared.

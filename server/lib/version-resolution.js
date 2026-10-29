@@ -185,6 +185,23 @@ function resolveVersion({ sha, message, refIndex, fileRef, payloadRef = null }) 
     return payloadRef?.label ? { ...resolved, version: payloadRef.label } : resolved;
 }
 
+/**
+ * Records synced while their commit had no release or tag yet (shown as the bare sha) that have one now: a
+ * pipeline that tags after it deploys. The release or tag becomes both the label and the ref, as it would have at
+ * sync time.
+ *
+ * @param {Array<{ deploymentId: number, sha: string }>} candidates
+ * @param {{ shaToRelease: Map<string, string>, shaToTag: Map<string, string> }} refIndex
+ * @returns {Array<{ deploymentId: number, version: string, resolvedRef: string }>}
+ */
+function planVersionBackfill(candidates, refIndex) {
+    return candidates.flatMap(({ deploymentId, sha }) => {
+        const ref = refIndex.shaToRelease.get(sha) || refIndex.shaToTag.get(sha);
+        return ref ? [{ deploymentId, version: ref, resolvedRef: ref }] : [];
+    });
+}
+
 module.exports = {
     extractPromotedVersion, parseVersionProperty, matchVersionLabel, fetchRefIndex, resolveVersionFile, payloadVersion, resolvePayloadVersion, resolveVersion,
+    planVersionBackfill,
 };
