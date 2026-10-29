@@ -22,9 +22,9 @@ The SaaS-pivot backend scoped by `@context/foundation/prd.md`, deployed to Rende
   retention (`lib/retention.js`).
 
 - **Versions and environment drift** (`lib/version-resolution.js`, `lib/env-drift.js`, `lib/tree-diff.js`): each
-  deploy's version comes from a GitHub Release or tag on its commit, else the repo's version file (`version=<ref>`
-  at the deployed commit, for repos whose QA/PROD deploy trigger commits), else a version-like string in the
-  commit message; commit ranges are compared between real refs only (a release/tag name or a sha, never that
+  deploy's version comes from the deployment's `payload` (`version` and/or `sha`, written by the pipeline), else the
+  repo's version file (`version=<ref>` at the deployed commit, for repos whose QA/PROD deploy trigger commits), else
+  a GitHub Release or tag on its commit, else a version-like string in the commit message; commit ranges are compared between real refs only (a release/tag name or a sha, never that
   free-text label). After each pass the latest successful deploys of test -> qa -> prod are compared: commit
   counts are kept as context, the git trees decide (same tree, or a difference only in the repo's
   drift-ignore patterns, means no drift; a comparison that can't be trusted is "unknown", never "same"). Drift

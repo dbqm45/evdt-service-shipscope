@@ -34,16 +34,23 @@ only one status there is nothing to measure, so no duration is shown — that do
 
 ### Where does the version shown for a deploy come from?
 
-The same rule for every environment; what differs is only which commit is deployed there. First match wins:
+The same rule for every environment. GitHub records a deployment at the commit its workflow ran on, and that is
+often not the code that shipped: a PROD deploy started from `main` that ships `v1.0.0` again is recorded at
+`main`'s head, which may carry a newer tag and be commits ahead of QA. First match wins:
 
-1. a GitHub **Release** pointing at that exact commit;
-2. a plain git **tag** on that commit;
-3. a **version file** in the deployed commit, when the repository has one set (Settings → GitHub → the
+1. the deployment's **payload**: `version` and/or `sha` (or `commit`) written by the pipeline that created the
+   deployment — the only signal that says what really shipped (see [ONBOARDING.md](ONBOARDING.md#versions-from-your-pipeline));
+2. a **version file** in the deployed commit, when the repository has one set (Settings → GitHub → the
    repository's pencil button → Version file) — for repos whose QA/PROD deploy commits only contain a line like `version=v1.6.0`;
-4. a version-like string (`v1.2.3`, `1.2.3`) in the **commit message**;
-5. the shortened **commit SHA**.
+3. a GitHub **Release** pointing at that exact commit;
+4. a plain git **tag** on that commit;
+5. a version-like string (`v1.2.3`, `1.2.3`) in the **commit message**;
+6. the shortened **commit SHA**.
 
-The version file's value is matched to a tag: as written, then with the `v` prefix added or dropped, then — for a
+A payload `sha` GitHub knows is what drift and issue ranges compare; a payload `version` is matched to a tag like
+the version file's value (below), and one that matches no tag or commit is shown but not compared.
+
+The version file's (or payload's) value is matched to a tag: as written, then with the `v` prefix added or dropped, then — for a
 version with a suffix such as `1.4.25-okta`, `2.0.0-rc.1`, `1.0.0+build5` or `1.0.0_hotfix` — the base tag `1.4.25`
 (an exact tag always wins). The version shown stays as written (`1.4.25-okta`); the tag is used for the issues,
 rollback and drift. `version=latest` means the newest published (non-pre-)release that existed when the deployment

@@ -21,7 +21,9 @@ Sign in with GitHub and create a workspace at `/start`. Its Settings page (`/t/<
    GitHub brings you back; the installation is linked only if your own GitHub account can see it.
 2. **Choose repositories to track** — Track repository, then Track next to each repository whose deployments you want to see. Optional
    per repository: a version file (for QA/PROD deploys whose commits only hold a line like `version=v1.6.0`) and
-   paths not counted as drift (e.g. `.github/`, `README.md`).
+   paths not counted as drift (e.g. `.github/`, `README.md`). If your deploy workflow runs on one commit and ships
+   another (a PROD deploy started from `main` with the version as an input), put the version in the deployment
+   itself: [Versions from your pipeline](#versions-from-your-pipeline).
 3. **First deployments arrive** — within 15 minutes (the default sync interval), or within about 30 seconds when
    the server has GitHub webhooks configured. A sync error shows under GitHub.
 4. **Connect Jira** (optional, read-only) — sign in with Atlassian and pick the Jira site.
@@ -41,6 +43,27 @@ many days of deployment history to keep (7–730) and whether the dashboard show
 data; `?insights=1` in the address previews it), and can delete the workspace. The pdi layer (changes from a repo,
 the release plan, outgoing events, the service API) appears only once the workspace is connected with pdi, under
 Integrations → pdi.
+
+
+## Versions from your pipeline
+
+ShipScope reads deployments from GitHub, and GitHub records each one at the commit its workflow ran on. When that
+commit is only a trigger (the head of `main`, a deployment branch) and the version shipped is an input, the
+dashboard would show the trigger's tag and count its commits as drift. Tell ShipScope what shipped in the
+deployment's `payload`: `version` (the tag or label, e.g. `v1.6.0`) and, when you know it, `sha` (the full commit
+of the code that shipped). Both are optional; `sha` wins for comparisons.
+
+```bash
+gh api "repos/$GITHUB_REPOSITORY/deployments" --input - <<EOF
+{ "ref": "$GITHUB_SHA", "environment": "production", "auto_merge": false, "required_contexts": [],
+  "payload": { "version": "v1.6.0", "sha": "$ARTIFACT_SHA" } }
+EOF
+```
+
+Then post its statuses (`in_progress`, `success`/`failure`) as you do today.
+
+Deployments that GitHub Actions creates on its own for a job with `environment:` have no payload; for those, use
+the version file instead, or create the deployment yourself as above.
 
 ## Advanced sources: feature flags in your code
 

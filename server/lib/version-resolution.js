@@ -2,9 +2,13 @@ const { githubGet, GitHubApiError } = require('./github-app');
 
 /**
  * Which version a deployment shipped, ported from the file-based sync (see CLAUDE.md,
- * "Deployments" -> `version`). Priority, most authoritative first: a GitHub Release on that exact sha, a git
- * tag on it, the repo's version file (`version=<ref>` at the deployed commit), a version-like string in the
- * commit message, else nothing (the dashboard then shows the short sha).
+ * "Deployments" -> `version`). GitHub records a deployment at the commit its workflow ran on, which is often only
+ * a trigger (main's head, a deployment branch) and not the code that shipped. So, first match wins:
+ * 1. the deployment's own payload (`version` and/or `sha`, written by the pipeline that knows what it shipped);
+ * 2. the repo's version file (`version=<ref>` at the deployed commit);
+ * 3. a GitHub Release on that exact sha, then a git tag on it;
+ * 4. a version-like string in the commit message (a label only);
+ * else nothing (the dashboard then shows the short sha).
  *
  * The *label* and the *ref* are different things on purpose: `version` is only displayed, while `resolvedRef`
  * is what /compare is called with -- a verified release/tag name or a commit sha, never the commit-message
@@ -112,14 +116,75 @@ async function resolveVersionFile({ token, fullName, versionFile, sha, tagNames,
     }
 }
 
+const PAYLOAD_VERSION = /^[A-Za-z0-9][A-Za-z0-9._+\-/]{0,127}$/;
+const FULL_SHA = /^[0-9a-f]{40}$/i;
+
 /**
- * @param {{ sha: string, message: string, refIndex: { shaToRelease: Map<string, string>, shaToTag: Map<string, string> }, fileRef: { ref: string, label: string }|null }} input
- * @returns {{ version: string|null, resolvedRef: string }}
+ * What a pipeline wrote into the deployment's `payload` (GitHub's free-form field, an object or a JSON string):
+ * `version` (a label, at most 128 characters, no spaces or `..`) and `sha` (or `commit`: the full sha of the code
+ * that shipped). A field of the wrong shape is ignored on its own; null when neither is usable.
+ *
+ * @param {unknown} payload
+ * @returns {{ version: string|null, sha: string|null }|null}
  */
-function resolveVersion({ sha, message, refIndex, fileRef }) {
-    const verifiedRef = refIndex.shaToRelease.get(sha) || refIndex.shaToTag.get(sha) || null;
-    if (fileRef) return { version: fileRef.label, resolvedRef: fileRef.ref };
-    return { version: verifiedRef || extractPromotedVersion(message), resolvedRef: verifiedRef || sha };
+function payloadVersion(payload) {
+    let value = payload;
+    if (typeof value === 'string') {
+        try {
+            value = JSON.parse(value);
+        } catch {
+            return null;
+        }
+    }
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+    const version = typeof value.version === 'string' && PAYLOAD_VERSION.test(value.version) && !value.version.includes('..') ? value.version : null;
+    const rawSha = typeof value.sha === 'string' ? value.sha : typeof value.commit === 'string' ? value.commit : null;
+    const sha = rawSha && FULL_SHA.test(rawSha) ? rawSha.toLowerCase() : null;
+    return version || sha ? { version, sha } : null;
 }
 
-module.exports = { extractPromotedVersion, parseVersionProperty, matchVersionLabel, fetchRefIndex, resolveVersionFile, resolveVersion };
+/**
+ * The ref and label a deployment's payload names (payloadVersion()). `ref`: the payload's sha when GitHub knows
+ * that commit, else the tag the version means (matchVersionLabel()), else the commit by that name, else null (the
+ * label is then shown and the ref comes from the other rules). Null when the payload names nothing usable --
+ * never throws, a lookup problem must not fail the sync.
+ *
+ * @param {{ token: string, fullName: string, payload: unknown, tagNames: Set<string>, releases?: { tag: string, publishedAt: string }[], at?: string|null, fetch?: typeof fetch }} input
+ * @returns {Promise<{ ref: string|null, label: string|null }|null>}
+ */
+async function resolvePayloadVersion({ token, fullName, payload, tagNames, releases = [], at = null, fetch: fetchFn = fetch }) {
+    const named = payloadVersion(payload);
+    if (!named) return null;
+    const commitSha = async (name) => {
+        try {
+            const commit = await githubGet({ token, path: `/repos/${fullName}/commits/${encodeURIComponent(name)}`, fetch: fetchFn });
+            return typeof commit?.sha === 'string' ? commit.sha : null;
+        } catch {
+            return null;
+        }
+    };
+    if (named.sha && await commitSha(named.sha)) return { ref: named.sha, label: named.version };
+    if (!named.version) return null;
+    const tag = matchVersionLabel(named.version, { tagNames, releases, at });
+    if (tag) return tag;
+    const sha = await commitSha(named.version);
+    return { ref: sha, label: named.version };
+}
+
+/**
+ * @param {{ sha: string, message: string, refIndex: { shaToRelease: Map<string, string>, shaToTag: Map<string, string> }, fileRef: { ref: string, label: string }|null, payloadRef?: { ref: string|null, label: string|null }|null }} input
+ * @returns {{ version: string|null, resolvedRef: string }}
+ */
+function resolveVersion({ sha, message, refIndex, fileRef, payloadRef = null }) {
+    const verifiedFor = (ref) => refIndex.shaToRelease.get(ref) || refIndex.shaToTag.get(ref) || null;
+    if (payloadRef?.ref) return { version: payloadRef.label || verifiedFor(payloadRef.ref), resolvedRef: payloadRef.ref };
+    const verifiedRef = verifiedFor(sha);
+    const resolved = fileRef
+        ? { version: fileRef.label, resolvedRef: fileRef.ref }
+        : { version: verifiedRef || extractPromotedVersion(message), resolvedRef: verifiedRef || sha };
+    return payloadRef?.label ? { ...resolved, version: payloadRef.label } : resolved;
+}
+
+module.exports = {
+    extractPromotedVersion, parseVersionProperty, matchVersionLabel, fetchRefIndex, resolveVersionFile, payloadVersion, resolvePayloadVersion, resolveVersion,
+};
