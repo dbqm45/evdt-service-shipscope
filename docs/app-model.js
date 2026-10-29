@@ -21,32 +21,54 @@ function issueKeys(issue){
 function deploymentNamesAny(d, keys){
     return (d.relatedIssues || []).some(k => keys.includes(k));
 }
-/** Falls back to state.issueDeployments (never trimmed, unlike state.deployments — see
- *  the server's issue_deployments table) when the live record has aged out of
- *  retention. The synthesized stand-in only carries what callers actually read off a real record
- *  here (deployedAt/commitUrl) — enough for release-status joins and ghostFlagAge's own deployedAt read. */
-function issueDeployedOnComponent(component, issue, env) {
-    const keys = issueKeys(issue);
-    const live = componentDeployments(component, env).find(d => deploymentNamesAny(d, keys));
+/** Where `key` is on `component`/`env` now: its newest successful record there that names it (`relatedIssues`),
+ *  unless a later rollback took it off (`rolledBackIssues`, from the sync); with no live record either way, the
+ *  never-trimmed state.issueDeployments entry (the server's issue_deployments table, which outlives retention) unless
+ *  it carries `rolledBackAt`. `{ record, live }`, or null when the key is not there. The synthesized stand-in only
+ *  carries what callers actually read off a real record (deployedAt/commitUrl) — enough for release-status joins and
+ *  ghostFlagAge's own deployedAt read. */
+function keyDeployment(component, key, env){
+    let deployed = null;
+    let rolledBack = null;
+    const time = d => new Date(d.deployedAt).getTime();
 
-    if (live) {
-        return live;
+    componentDeployments(component, env).forEach(d => {
+        if ((d.relatedIssues || []).includes(key) && (!deployed || time(d) > time(deployed))) {
+            deployed = d;
+        }
+        if ((d.rolledBackIssues || []).includes(key) && (!rolledBack || time(d) > time(rolledBack))) {
+            rolledBack = d;
+        }
+    });
+
+    if (rolledBack && (!deployed || time(rolledBack) > time(deployed))) {
+        return null;
+    }
+    if (deployed) {
+        return { record: deployed, live: true };
     }
 
-    const key = keys.find(k => state.issueDeployments[k]?.[env]?.[component]);
-    const historical = key && state.issueDeployments[key][env][component];
+    const historical = state.issueDeployments[key]?.[env]?.[component];
 
-    return historical ? { ...historical, relatedIssues: [key], component, environment: env, status: 'success' } : null;
+    return historical && !historical.rolledBackAt
+        ? { record: { deployedAt: historical.deployedAt, commitUrl: historical.commitUrl, relatedIssues: [key], component, environment: env, status: 'success' }, live: false }
+        : null;
 }
-/** Any successful deployment (on any component) that references this issue or one of its sub-tasks, ignoring
- *  flags entirely. */
-function anyDeploymentForIssue(issue, env){
-    const keys = issueKeys(issue);
-    const live = state.deployments.some(d =>
-        d.environment === env && d.status === 'success' && deploymentNamesAny(d, keys)
-    );
+/** The deployment through which an issue (its key or a sub-task's) is on `component`/`env` now (keyDeployment()):
+ *  the newest live one, else one from the never-trimmed index; null when none of its keys is there. */
+function issueDeployedOnComponent(component, issue, env) {
+    const found = issueKeys(issue).map(k => keyDeployment(component, k, env)).filter(Boolean);
+    const live = found.filter(f => f.live).map(f => f.record);
 
-    return live || keys.some(k => !!state.issueDeployments[k]?.[env]);
+    if (live.length) {
+        return live.reduce((a, b) => (new Date(b.deployedAt) > new Date(a.deployedAt) ? b : a));
+    }
+
+    return found.length ? found[0].record : null;
+}
+/** Any service on `env` (any component) where this issue or one of its sub-tasks is now, ignoring flags entirely. */
+function anyDeploymentForIssue(issue, env){
+    return componentsReached(issue, env).length > 0;
 }
 /** True when an issue with no deployment of its own is blocked by issues (`blockedByKeys`, from the Jira sync) that
  *  are all deployed on `env` — its code shipped in what blocks it (a bug fixed in a Story's sub-task). One level
@@ -101,8 +123,8 @@ function linkStatus(link, issue, env){
 
     return { deployed, released, deployment: dep, flagOn, flagPartial: !!fs && fs.state === 'partial', flagChangedAt: fs ? fs.changedAt : null };
 }
-/** Services whose deployments on `env` carry this issue's code (its key or a sub-task's), live or from
- *  `issueDeployments`. */
+/** Services whose deployments on `env` carry this issue's code (its key or a sub-task's) now, live or from
+ *  `issueDeployments`, without those a rollback took it off (issueDeployedOnComponent()). */
 function componentsReached(issue, env){
     const keys = issueKeys(issue);
     const live = state.deployments
@@ -110,7 +132,7 @@ function componentsReached(issue, env){
         .map(d => d.component);
     const kept = keys.flatMap(k => Object.keys(state.issueDeployments[k]?.[env] || {}));
 
-    return [...new Set([...live, ...kept])];
+    return [...new Set([...live, ...kept])].filter(c => issueDeployedOnComponent(c, issue, env));
 }
 /** A service's stance on flags (`componentsOrder[].flagCoverage`): tracked, none or unknown; undefined in data
  *  that predates it, which is then never counted as uncertain. */

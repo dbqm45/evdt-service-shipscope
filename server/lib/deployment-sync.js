@@ -71,7 +71,7 @@ async function describeRange({ token, fullName, previous, current, fetch }) {
         // A redeploy of the same ref: comparing it with itself would yield an empty range, so it inherits
         // what the previous record shipped (the same lesson as lastResolvedRangeByEnv in the file-based sync).
         // Its Flag: trailers were stored with the previous record.
-        return { keys: previous.relatedIssues, typesByKey: previous.issueCommitTypes, commitUrl: previous.commitUrl, rollbackTo: null, flagLinks: [], firstCommits: {} };
+        return { keys: previous.relatedIssues, typesByKey: previous.issueCommitTypes, commitUrl: previous.commitUrl, rollbackTo: null, rolledBack: [], flagLinks: [], firstCommits: {} };
     }
     if (!previous) {
         // With a version file the deployed commit is only a trigger; the issues are on the commit it names.
@@ -81,7 +81,7 @@ async function describeRange({ token, fullName, previous, current, fetch }) {
         const message = commit?.message;
         const { keys, typesByKey } = issuesFromMessages([message || '']);
         return {
-            keys, typesByKey, commitUrl: `https://github.com/${fullName}/commit/${current.sha}`, rollbackTo: null,
+            keys, typesByKey, commitUrl: `https://github.com/${fullName}/commit/${current.sha}`, rollbackTo: null, rolledBack: [],
             flagLinks: flagLinksFromMessages([message || '']), firstCommits: firstCommitDates([{ commit }]),
         };
     }
@@ -93,6 +93,7 @@ async function describeRange({ token, fullName, previous, current, fetch }) {
     // GitHub caps `commits` at 250; issues from the rest are missing (same known gap as the file-based sync).
     const messages = (comparison?.commits || []).map((c) => c?.commit?.message || '');
     const { keys, typesByKey } = issuesFromMessages(messages);
+    const rollbackTo = comparison?.status === 'behind' ? current.ref : null;
     return {
         keys,
         typesByKey,
@@ -100,8 +101,25 @@ async function describeRange({ token, fullName, previous, current, fetch }) {
         firstCommits: firstCommitDates(comparison?.commits),
         commitUrl: `https://github.com/${fullName}/compare/${previous.ref}...${current.fromFile ? current.ref : current.sha}`,
         // "behind": this ref is an ancestor of what was deployed before, so the environment moved backwards.
-        rollbackTo: comparison?.status === 'behind' ? current.ref : null,
+        rollbackTo,
+        rolledBack: rollbackTo ? await rolledBackKeys({ token, fullName, from: current.ref, to: previous.ref, fetch }) : [],
     };
+}
+
+/**
+ * The issue keys a rollback took off its environment: those of the commits the previous deploy had and the new,
+ * older one has not (`compare/<new>...<previous>`). Empty when GitHub can't say -- never fails the sync; a rate
+ * limit is rethrown.
+ */
+async function rolledBackKeys({ token, fullName, from, to, fetch }) {
+    try {
+        const comparison = await githubGet({ token, path: `/repos/${fullName}/compare/${encodeURIComponent(from)}...${encodeURIComponent(to)}`, fetch });
+        const commits = Array.isArray(comparison?.commits) ? comparison.commits : [];
+        return issuesFromMessages(commits.map((c) => (typeof c?.commit?.message === 'string' ? c.commit.message : ''))).keys;
+    } catch (err) {
+        if (err instanceof GitHubRateLimitError) throw err;
+        return [];
+    }
 }
 
 /**
@@ -254,12 +272,12 @@ async function syncRepo({ pool, token, tenantId, repo, fetch: fetchFn = fetch, n
             const { rowCount } = await client.query(
                 `INSERT INTO deployments (tenant_id, repo_id, deployment_id, environment, status, sha, ref, deployed_at,
                      deployed_by_login, workflow_run_url, duration_ms, commit_url, rollback_to_sha, related_issues, issue_commit_types,
-                     version, resolved_ref, manual, deployed_by_name)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
+                     version, resolved_ref, manual, deployed_by_name, rolled_back_issues)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
                  ON CONFLICT (tenant_id, deployment_id) DO NOTHING`,
                 [tenantId, repoId, r.deploymentId, r.environment, r.status, r.sha, r.ref, r.deployedAt, r.deployedByLogin,
                     r.workflowRunUrl, r.durationMs, r.commitUrl, r.rollbackTo, r.keys, JSON.stringify(r.typesByKey),
-                    r.version, r.resolvedRef, r.manual, r.deployedByName]
+                    r.version, r.resolvedRef, r.manual, r.deployedByName, r.rolledBack || []]
             );
             inserted += rowCount;
             // `Flag:` trailers of the deployment's commits (lib/deployment-logic.js): a strong flag -> work item link.
@@ -278,8 +296,18 @@ async function syncRepo({ pool, token, tenantId, repo, fetch: fetchFn = fetch, n
                     `INSERT INTO issue_deployments (tenant_id, issue_key, environment, repo_id, first_deployed_at, commit_url, first_commit_at)
                      VALUES ($1, $2, $3, $4, $5, $6, $7)
                      ON CONFLICT (tenant_id, issue_key, environment, repo_id) DO UPDATE
-                         SET first_commit_at = LEAST(COALESCE(issue_deployments.first_commit_at, EXCLUDED.first_commit_at), COALESCE(EXCLUDED.first_commit_at, issue_deployments.first_commit_at))`,
+                         SET first_commit_at = LEAST(COALESCE(issue_deployments.first_commit_at, EXCLUDED.first_commit_at), COALESCE(EXCLUDED.first_commit_at, issue_deployments.first_commit_at)),
+                             -- Deployed again after a rollback took it off: on the environment again.
+                             rolled_back_at = NULL`,
                     [tenantId, key, r.environment, repoId, r.deployedAt, r.commitUrl, (r.firstCommits || {})[key] || null]
+                );
+            }
+            if ((r.rolledBack || []).length) {
+                // A rollback took these off the environment (design-docs/ROLLBACK-STATUS-PLAN.pl.md).
+                await client.query(
+                    `UPDATE issue_deployments SET rolled_back_at = $5
+                     WHERE tenant_id = $1 AND environment = $2 AND repo_id = $3 AND issue_key = ANY($4::text[])`,
+                    [tenantId, r.environment, repoId, r.rolledBack, r.deployedAt]
                 );
             }
         }

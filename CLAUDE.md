@@ -107,7 +107,7 @@ changelog entry by hand outside a `chore(release)` PR.
 
 Deployed to Render per `context/foundation/infrastructure.md`: `render.yaml` builds both the Web Service and the
 Background Worker from the repo root (`npm ci --prefix server`, `node server/web.js`), not `rootDir: server`, which
-would hide `docs/` from the Web Service. Migrations (`server/migrations/001`–`048`, applied by the hand-rolled
+would hide `docs/` from the Web Service. Migrations (`server/migrations/001`–`049`, applied by the hand-rolled
 `lib/migrate.js`) run as each service's `preDeployCommand` under an advisory lock (`test/render-blueprint.test.js`).
 Dependencies, all in `server/package.json`: `pg`, `fastify`, `@fastify/cookie`. Fastify runs with
 `removeAdditional: false, coerceTypes: false`: unknown fields and wrong types are a 400, never silently fixed.
@@ -460,7 +460,9 @@ The `FALLBACK` sample data has the same shape.
   skipped; the sync keeps the names it saw in `seen_environments` for Settings), status, `deployedAt`,
   `version`, `relatedIssues` (Jira keys from commit messages in the compare range), `workflowRunUrl`, `durationMs`
   (between the first and last status, ignoring GitHub's `inactive`), `manual`, `commitUrl`, `deployedBy` (display
-  name, else login), `rollback: { toRef }` (GitHub's compare with the previous deploy on that env says `behind`).
+  name, else login), `rollback: { toRef }` (GitHub's compare with the previous deploy on that env says `behind`), `rolledBackIssues`
+  (only on a rollback: the keys of the commits it took off, `compare/<new>...<previous>`, `deployments.rolled_back_issues`,
+  migration `049`; that keys' `issue_deployments.rolled_back_at` is set, and cleared by a later deploy naming them).
   Each env's latest successful record may carry `driftBehind`: `{ behindEnv, commitCount }` and/or
   `{ untestedIn, untestedCommitCount }` (git history, context only) plus `diff: { files, paths (first 20), ignored }`
   or `diff: { unknown: true }` from the tree comparison, which alone decides whether drift exists. Ignore patterns:
@@ -483,7 +485,9 @@ The `FALLBACK` sample data has the same shape.
 - **Release status**: an issue links to flags via `jiraKeys` and to deployments via `relatedIssues` (and
   `issueDeployments`, which outlives retention), matched on `issueKeys(issue)` — its key plus `subtaskKeys`, so a
   commit naming only a sub-task counts for the Story (issues synced before the field match on their own key until
-  the next sync). An issue with no deployment of its own and no flag also counts as deployed where every issue in its
+  the next sync). A key is on a service and environment now (`keyDeployment()`) when its newest record there names
+  it later than any rollback that took it off (`rolledBackIssues`), else by `issueDeployments` without `rolledBackAt`
+  (design-docs/ROLLBACK-STATUS-PLAN.pl.md); `earliestProdDeployedAt()` keeps the history. An issue with no deployment of its own and no flag also counts as deployed where every issue in its
   `blockedByKeys` is (`deployedViaBlockers()`, one level, each blocker on its key plus its loaded `subtaskKeys`): a
   bug fixed in a Story's sub-task. `issueStatusForEnv()` (ADR-003) works per service the issue's code reached:
   a service with a linked flag is a gate (all on / all off / else partial, a rollout below 100% included; values from

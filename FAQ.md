@@ -15,7 +15,11 @@ Each new deployment is compared on GitHub with what was previously live on the s
 comparison that finds its Jira tickets and builds the commit-range link). If GitHub says the new commit is
 **`behind`** — an ancestor of what was already running — the environment moved backward in history, and the
 deployment gets a rollback badge naming the commit it went back to. It does not matter whether that was a
-deliberate revert or a mistake. No extra API call is needed. (`server/lib/deployment-sync.js`.)
+deliberate revert or a mistake. For a rollback one more comparison runs, the other way round: the commits the
+environment had before and no longer has. Their Jira keys are the issues the rollback took off that environment
+(`rolledBackIssues`); they count as not deployed there until a later deployment brings them back. A rollback that
+GitHub can't see as `behind` (e.g. trigger commits on a deployment branch without a version file or payload) is not
+detected. (`server/lib/deployment-sync.js`.)
 
 ### How is "manual" versus "automatic" decided?
 
@@ -92,7 +96,8 @@ different pace. (`server/lib/env-drift.js`, `server/lib/tree-diff.js`.)
 ShipScope shows the current state; GitHub keeps the full history. Deployments older than the workspace's retention
 (Settings → General, 7–730 days, default 90) are removed daily, except — per repository and environment — the
 latest deployment and the latest successful one, which are what "current version", drift and rollback need. Whether
-an issue ever shipped is remembered separately and survives this cleanup (the `issue_deployments` table). New
+an issue ever shipped is remembered separately and survives this cleanup (the `issue_deployments` table), together
+with whether a rollback took it off since. New
 deployments arrive with the periodic sync (every 15 minutes by default) or about 30 seconds after GitHub reports
 them, when webhooks are on. (`server/lib/retention.js`, `server/worker.js`.)
 
@@ -347,7 +352,8 @@ that don't work in PIs the "increment" is the sprint, the release or the month, 
 ### How is an issue linked to a deployment, and why can it say "Not deployed"?
 
 Through the Jira keys in the deployment's commit messages. An issue counts as deployed on an environment when a
-successful deployment there names its key or the key of one of its sub-tasks. An issue with no deployment of its own
+successful deployment there names its key or the key of one of its sub-tasks, and no later rollback there took that
+key off again (see "How is rollback decided?"). An issue with no deployment of its own
 and no flag also counts as deployed where **every** issue it "is blocked by" is deployed (each blocker matched on its
 key and its sub-tasks' keys): a bug fixed in a Story's sub-task shows the Story's deployments. Only one level of
 blockers is followed. "Not deployed" means none of this matched; issues synced before the sub-task and blocker keys

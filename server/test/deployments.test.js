@@ -146,6 +146,83 @@ test('sync: a deploy that moves an environment back to an older commit is marked
     ]);
 });
 
+test('sync: a rollback records the issues it took off; the index marks them until a later deploy brings them back', async (t) => {
+    const web = {
+        deployments: [
+            { id: 212, environment: 'prod', sha: sha(22), created_at: at(20) },
+            { id: 211, environment: 'prod', sha: sha(21), created_at: at(30) },
+        ],
+        statuses: { 211: [status('success', 29)], 212: [status('success', 19)] },
+        commits: { [sha(21)]: 'feat: OLD-1' },
+        compare: (base, head) => {
+            if (base === sha(21) && head === sha(22)) return { status: 'ahead', commits: [{ commit: { message: 'feat: NEW-1' } }, { commit: { message: 'fix: NEW-2' } }] };
+            if (base === sha(22) && head === sha(21)) return { status: 'behind', commits: [] };
+            throw new Error(`unexpected compare ${base}...${head}`);
+        },
+    };
+    const { app, alice, tenantId, sync, rows } = await setup(t, { 'acme/web': web, 'acme/api': emptyRepo() });
+    await sync();
+
+    // Prod goes back to sha(21): NEW-1 and NEW-2 are no longer there.
+    web.deployments.unshift({ id: 213, environment: 'prod', sha: sha(21), created_at: at(10) });
+    web.statuses[213] = [status('success', 9)];
+    await sync();
+    let deps = await rows('SELECT deployment_id, rollback_to_sha, related_issues, rolled_back_issues FROM deployments ORDER BY deployment_id');
+    assert.deepStrictEqual(deps.map((d) => [Number(d.deployment_id), d.rollback_to_sha, d.related_issues, d.rolled_back_issues]), [
+        [211, null, ['OLD-1'], []],
+        [212, null, ['NEW-1', 'NEW-2'], []],
+        [213, sha(21), [], ['NEW-1', 'NEW-2']],
+    ]);
+    let facts = await rows("SELECT issue_key, rolled_back_at IS NOT NULL AS off FROM issue_deployments WHERE environment = 'prod' ORDER BY issue_key");
+    assert.deepStrictEqual(facts.map((f) => [f.issue_key, f.off]), [['NEW-1', true], ['NEW-2', true], ['OLD-1', false]]);
+
+    const data = (await app.inject({ method: 'GET', url: `/api/tenants/${tenantId}/dashboard-data`, cookies: { sid: alice } })).json();
+    assert.deepStrictEqual(data.deployments.find((d) => d.id === 'gh-213').rolledBackIssues, ['NEW-1', 'NEW-2']);
+    assert.ok(!('rolledBackIssues' in data.deployments.find((d) => d.id === 'gh-212')), 'only on a rollback');
+    assert.ok(Object.values(data.issueDeployments['NEW-1'].prod)[0].rolledBackAt);
+    assert.ok(!('rolledBackAt' in Object.values(data.issueDeployments['OLD-1'].prod)[0]));
+
+    // Forward again to sha(22): NEW-1 and NEW-2 are back; the first deploy time is kept.
+    const [before] = await rows("SELECT first_deployed_at FROM issue_deployments WHERE issue_key = 'NEW-1'");
+    web.deployments.unshift({ id: 214, environment: 'prod', sha: sha(22), created_at: at(5) });
+    web.statuses[214] = [status('success', 4)];
+    await sync();
+    facts = await rows("SELECT issue_key, rolled_back_at IS NOT NULL AS off, first_deployed_at FROM issue_deployments WHERE environment = 'prod' ORDER BY issue_key");
+    assert.deepStrictEqual(facts.map((f) => [f.issue_key, f.off]), [['NEW-1', false], ['NEW-2', false], ['OLD-1', false]]);
+    assert.deepStrictEqual(facts[0].first_deployed_at, before.first_deployed_at);
+    deps = await rows('SELECT related_issues FROM deployments WHERE deployment_id = 214');
+    assert.deepStrictEqual(deps[0].related_issues, ['NEW-1', 'NEW-2']);
+});
+
+test('sync: a rollback whose reverse compare fails still syncs, with nothing marked', async (t) => {
+    const web = {
+        deployments: [
+            { id: 223, environment: 'prod', sha: sha(21), created_at: at(10) },
+            { id: 222, environment: 'prod', sha: sha(22), created_at: at(20) },
+            { id: 221, environment: 'prod', sha: sha(21), created_at: at(30) },
+        ],
+        statuses: { 221: [status('success', 29)], 222: [status('success', 19)], 223: [status('success', 9)] },
+        commits: { [sha(21)]: 'feat: OLD-1' },
+        compare: (base, head) => {
+            if (base === sha(21) && head === sha(22)) {
+                if (web.reverseFails) throw new Error('flaky');
+                return { status: 'ahead', commits: [{ commit: { message: 'feat: NEW-1' } }] };
+            }
+            return { status: 'behind', commits: [] };
+        },
+    };
+    const { sync, rows } = await setup(t, { 'acme/web': web, 'acme/api': emptyRepo() });
+    web.deployments = web.deployments.slice(1);
+    await sync();
+    web.deployments = [{ id: 223, environment: 'prod', sha: sha(21), created_at: at(10) }, ...web.deployments];
+    web.reverseFails = true;
+    await sync();
+    const [repo] = await rows('SELECT last_sync_error FROM tracked_repos WHERE repo_id = 1');
+    assert.strictEqual(repo.last_sync_error, null);
+    const deps = await rows('SELECT deployment_id, rollback_to_sha, rolled_back_issues FROM deployments WHERE deployment_id = 223');
+    assert.deepStrictEqual(deps.map((d) => [d.rollback_to_sha, d.rolled_back_issues]), [[sha(21), []]]);
+});
+
 test('sync: a repo\'s own environment map decides first; the names seen are kept; a changed map syncs from the start', async (t) => {
     const web = {
         deployments: [
