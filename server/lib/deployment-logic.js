@@ -229,7 +229,28 @@ function firstCommitDates(commits) {
     return out;
 }
 
+const STAGE_BEFORE = { qa: 'test', prod: 'qa' };
+
+/**
+ * Whether a successful QA or PROD deploy skipped the stage before it (test -> qa -> prod): that stage never had a
+ * successful deploy of the same ref or the same version label before. `null` when it did, when the deploy is on
+ * test, or when the repo never deployed to that stage at all (a repo without QA); `check-tree` when only the code
+ * can tell (another commit with the same files, e.g. a deployment branch), with the stage's latest ref to compare.
+ *
+ * @param {{ environment: string, ref: string, version: string|null }} deploy
+ * @param {Record<string, { refs: Set<string>, versions: Set<string>, latestRef: string|null }>} stages
+ * @returns {null|{ skipped: 'test'|'qa' }|{ checkTree: { stage: 'test'|'qa', ref: string } }}
+ */
+function skippedStage(deploy, stages) {
+    const stage = STAGE_BEFORE[deploy.environment];
+    const seen = stage && stages[stage];
+    if (!seen || !seen.latestRef) return null;
+    if (seen.refs.has(deploy.ref) || (deploy.version && seen.versions.has(deploy.version))) return null;
+    return { checkTree: { stage, ref: seen.latestRef } };
+}
+
 module.exports = {
+    skippedStage,
     firstCommitDates,
     flagLinksFromMessages,
     mapEnvironment,

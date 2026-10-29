@@ -1,7 +1,7 @@
 const { withScope } = require('./scope');
 const { withTenantClaim, eachLimited } = require('./tenant-claim');
 const { createInstallationToken, githubGet, GitHubApiError, GitHubRateLimitError } = require('./github-app');
-const { buildDeploymentPlan, computeNextCursor, issuesFromMessages, flagLinksFromMessages, firstCommitDates, mergeSeenEnvironments } = require('./deployment-logic');
+const { buildDeploymentPlan, computeNextCursor, issuesFromMessages, flagLinksFromMessages, firstCommitDates, mergeSeenEnvironments, skippedStage } = require('./deployment-logic');
 const { fetchRefIndex, resolveVersionFile, resolvePayloadVersion, resolveVersion, planVersionBackfill } = require('./version-resolution');
 const { ENV_ORDER, computeEnvDrift } = require('./env-drift');
 const { MAX_RUN_LOOKUPS, createCaches, resolveManual, resolveDisplayName } = require('./deployment-people');
@@ -58,6 +58,57 @@ async function lastSuccessByEnv(client, { tenantId, repoId }) {
         // The status time, not GitHub's created_at (not stored): what `version=latest` is judged against for old records.
         deployedAt: r.deployed_at instanceof Date ? r.deployed_at.toISOString() : r.deployed_at,
     }]));
+}
+
+/**
+ * The successful deploys the repo has had on test and QA, for skippedStage(): their refs and version labels, and
+ * the newest ref per stage. Updated in memory as a pass records new ones.
+ */
+async function stageHistory(client, { tenantId, repoId }) {
+    const { rows } = await client.query(
+        `SELECT environment, COALESCE(resolved_ref, sha) AS ref, version FROM deployments
+         WHERE tenant_id = $1 AND repo_id = $2 AND status = 'success' AND environment IN ('test', 'qa')
+         ORDER BY deployed_at, deployment_id`,
+        [tenantId, repoId]
+    );
+    const stages = { test: { refs: new Set(), versions: new Set(), latestRef: null }, qa: { refs: new Set(), versions: new Set(), latestRef: null } };
+    for (const r of rows) noteStage(stages, r.environment, r.ref, r.version);
+    return stages;
+}
+
+function noteStage(stages, environment, ref, version) {
+    const stage = stages[environment];
+    if (!stage) return;
+    stage.refs.add(ref);
+    if (version) stage.versions.add(version);
+    stage.latestRef = ref;
+}
+
+/** The git tree of a ref, or null when GitHub can't say (a rate limit is rethrown). */
+async function treeOf({ token, fullName, ref, fetch }) {
+    try {
+        const commit = await githubGet({ token, path: `/repos/${fullName}/commits/${encodeURIComponent(ref)}`, fetch });
+        return typeof commit?.commit?.tree?.sha === 'string' ? commit.commit.tree.sha : null;
+    } catch (err) {
+        if (err instanceof GitHubRateLimitError) throw err;
+        return null;
+    }
+}
+
+/**
+ * The stage a successful QA or PROD deploy skipped (skippedStage()), settling "another commit, maybe the same code"
+ * by comparing git trees with the stage's newest deploy. Null when it skipped nothing or GitHub can't say -- never a
+ * false alarm, never a failed sync.
+ */
+async function judgeSkippedStage({ token, fullName, deploy, stages, fetch }) {
+    const verdict = skippedStage(deploy, stages);
+    if (!verdict) return null;
+    const [mine, theirs] = await Promise.all([
+        treeOf({ token, fullName, ref: deploy.ref, fetch }),
+        treeOf({ token, fullName, ref: verdict.checkTree.ref, fetch }),
+    ]);
+    if (!mine || !theirs || mine === theirs) return null;
+    return verdict.checkTree.stage;
 }
 
 /**
@@ -232,6 +283,7 @@ async function syncRepo({ pool, token, tenantId, repo, fetch: fetchFn = fetch, n
     }
 
     const previousByEnv = await withScope(pool, { tenantId }, (client) => lastSuccessByEnv(client, { tenantId, repoId }));
+    const stages = await withScope(pool, { tenantId }, (client) => stageHistory(client, { tenantId, repoId }));
     const { plan, blockedIds, skipped } = buildDeploymentPlan(batch, statusesById, { now, stuckMaxAgeHours, fullName, envMap: repo.envMap || {} });
     const seenEnvironments = mergeSeenEnvironments(repo.seenEnvironments || [], batch.map((d) => d.environment));
 
@@ -280,8 +332,12 @@ async function syncRepo({ pool, token, tenantId, repo, fetch: fetchFn = fetch, n
             ...range,
         };
         record.deployedByName = await resolveDisplayName({ token, login: record.deployedByLogin, caches, fetch: fetchFn });
+        record.skippedEnv = record.status === 'success'
+            ? await judgeSkippedStage({ token, fullName, deploy: { environment: entry.environment, ref: resolvedRef, version }, stages, fetch: fetchFn })
+            : null;
         records.push(record);
         if (record.status === 'success') {
+            noteStage(stages, entry.environment, resolvedRef, version);
             previousByEnv[entry.environment] = {
                 sha, ref: resolvedRef, version,
                 relatedIssues: record.keys, issueCommitTypes: record.typesByKey, commitUrl: record.commitUrl,
@@ -305,12 +361,12 @@ async function syncRepo({ pool, token, tenantId, repo, fetch: fetchFn = fetch, n
             const { rowCount } = await client.query(
                 `INSERT INTO deployments (tenant_id, repo_id, deployment_id, environment, status, sha, ref, deployed_at,
                      deployed_by_login, workflow_run_url, duration_ms, commit_url, rollback_to_sha, related_issues, issue_commit_types,
-                     version, resolved_ref, manual, deployed_by_name, rolled_back_issues)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
+                     version, resolved_ref, manual, deployed_by_name, rolled_back_issues, skipped_env)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
                  ON CONFLICT (tenant_id, deployment_id) DO NOTHING`,
                 [tenantId, repoId, r.deploymentId, r.environment, r.status, r.sha, r.ref, r.deployedAt, r.deployedByLogin,
                     r.workflowRunUrl, r.durationMs, r.commitUrl, r.rollbackTo, r.keys, JSON.stringify(r.typesByKey),
-                    r.version, r.resolvedRef, r.manual, r.deployedByName, r.rolledBack || []]
+                    r.version, r.resolvedRef, r.manual, r.deployedByName, r.rolledBack || [], r.skippedEnv || null]
             );
             inserted += rowCount;
             // `Flag:` trailers of the deployment's commits (lib/deployment-logic.js): a strong flag -> work item link.

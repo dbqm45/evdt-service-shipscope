@@ -98,6 +98,13 @@ function RollbackBadge({ toRef }){
     return html`<span class="rollback-badge" title="moved this environment back to an earlier commit (${toRef})">${ICONS.rewind} rollback</span>`;
 }
 
+/** A QA or PROD deploy of a version the stage before (`env`) never had a successful deploy of. */
+function SkippedEnvBadge({ env }){
+    const name = String(env).toUpperCase();
+
+    return html`<span class="skipped-env-badge" title="This version never had a successful deploy on ${name} before it came here">${ICONS.warn} skipped ${name}</span>`;
+}
+
 function RunBadge({ url }){
     return ExternalLink({ href: url, cls: 'run-badge', stopClick: true, title: 'View workflow run', children: ICONS.external });
 }

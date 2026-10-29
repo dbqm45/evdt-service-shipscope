@@ -44,6 +44,13 @@ test('StatusPill: plain, or outlined in red with a warning icon for "FE on, BE o
     assert.doesNotMatch(run(`IssueBreakdown({ issueKey: 'K-1', rows: [], noFlagReason: 'r' })`), /breakdown-alert/);
 });
 
+test('SkippedEnvBadge names the stage that was skipped', () => {
+    const out = run(`SkippedEnvBadge({ env: 'qa' })`);
+    assert.match(out, /class="skipped-env-badge"/);
+    assert.match(out, /skipped QA/);
+    assert.match(out, /title="[^"]*never had a successful deploy on QA/);
+});
+
 test('EmptyState adds the panel class on request', () => {
     assert.equal(run(`EmptyState({ message: 'm' })`), '<div class="empty">m</div>');
     assert.equal(run(`EmptyState({ message: 'm', panel: true })`), '<div class="empty panel">m</div>');

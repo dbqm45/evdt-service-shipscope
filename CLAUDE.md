@@ -107,7 +107,7 @@ changelog entry by hand outside a `chore(release)` PR.
 
 Deployed to Render per `context/foundation/infrastructure.md`: `render.yaml` builds both the Web Service and the
 Background Worker from the repo root (`npm ci --prefix server`, `node server/web.js`), not `rootDir: server`, which
-would hide `docs/` from the Web Service. Migrations (`server/migrations/001`–`049`, applied by the hand-rolled
+would hide `docs/` from the Web Service. Migrations (`server/migrations/001`–`050`, applied by the hand-rolled
 `lib/migrate.js`) run as each service's `preDeployCommand` under an advisory lock (`test/render-blueprint.test.js`).
 Dependencies, all in `server/package.json`: `pg`, `fastify`, `@fastify/cookie`. Fastify runs with
 `removeAdditional: false, coerceTypes: false`: unknown fields and wrong types are a 400, never silently fixed.
@@ -464,7 +464,11 @@ The `FALLBACK` sample data has the same shape.
   (between the first and last status, ignoring GitHub's `inactive`), `manual`, `commitUrl`, `deployedBy` (display
   name, else login), `rollback: { toRef }` (GitHub's compare with the previous deploy on that env says `behind`), `rolledBackIssues`
   (only on a rollback: the keys of the commits it took off, `compare/<new>...<previous>`, `deployments.rolled_back_issues`,
-  migration `049`; that keys' `issue_deployments.rolled_back_at` is set, and cleared by a later deploy naming them).
+  migration `049`; that keys' `issue_deployments.rolled_back_at` is set, and cleared by a later deploy naming them),
+  `skippedEnv` (only on a successful QA/PROD deploy of a version the stage before never had: no earlier successful
+  deploy there with the same ref or label, and a different git tree from that stage's newest; none for a repo that
+  never deployed there or when GitHub can't say; `skippedStage()` in `lib/deployment-logic.js`, judged at sync time
+  into `deployments.skipped_env`, migration `050`; `SkippedEnvBadge()` in the matrix and the history).
   Each env's latest successful record may carry `driftBehind`: `{ behindEnv, commitCount }` and/or
   `{ untestedIn, untestedCommitCount }` (git history, context only) plus `diff: { files, paths (first 20), ignored }`
   or `diff: { unknown: true }` from the tree comparison, which alone decides whether drift exists. Ignore patterns:

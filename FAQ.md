@@ -21,6 +21,18 @@ environment had before and no longer has. Their Jira keys are the issues the rol
 GitHub can't see as `behind` (e.g. trigger commits on a deployment branch without a version file or payload) is not
 detected. (`server/lib/deployment-sync.js`.)
 
+### What does "skipped QA" mean?
+
+A successful QA or PROD deployment gets **skipped TEST** / **skipped QA** when the stage before it never had a
+successful deployment of the same version: no earlier deployment there with the same tag/ref or the same version
+label, and the code (the git tree) differs from that stage's newest deployment, so another commit with identical
+files on a deployment branch does not count. It is judged once, when the deployment is synced, because older
+deployments of the earlier stage may later be removed by retention. A repository that never deploys to that stage
+(no QA at all) never gets it, and neither does a deployment GitHub can't compare. It shows next to the version in the
+environment card and in the deployment history. It points out a skipped stage; it does not block anything — the gate
+belongs in the deploy workflow (`design-docs/WDROZENIA-W-REPO-APLIKACJI.pl.md`). (`skippedStage()` in
+`server/lib/deployment-logic.js`, `server/lib/deployment-sync.js`.)
+
 ### How is "manual" versus "automatic" decided?
 
 A deployment's status history usually links to the GitHub Actions run that performed it. ShipScope asks GitHub what

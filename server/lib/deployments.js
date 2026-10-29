@@ -21,6 +21,7 @@ function toDeployment(row, fullNameByRepo) {
         rollbackToSha: row.rollback_to_sha,
         relatedIssues: row.related_issues,
         rolledBackIssues: row.rolled_back_issues || [],
+        skippedEnv: row.skipped_env || null,
         issueCommitTypes: row.issue_commit_types,
     };
 }

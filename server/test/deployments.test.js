@@ -223,6 +223,49 @@ test('sync: a rollback whose reverse compare fails still syncs, with nothing mar
     assert.deepStrictEqual(deps.map((d) => [d.rollback_to_sha, d.rolled_back_issues]), [[sha(21), []]]);
 });
 
+test('sync: a QA or PROD deploy of a version the stage before never had is marked as skipping it', async (t) => {
+    const web = {
+        deployments: [
+            { id: 235, environment: 'prod', sha: sha(34), created_at: at(10) },
+            { id: 234, environment: 'prod', sha: sha(33), created_at: at(20) },
+            { id: 233, environment: 'prod', sha: sha(32), created_at: at(30) },
+            { id: 232, environment: 'prod', sha: sha(31), created_at: at(40) },
+            { id: 231, environment: 'qa', sha: sha(31), created_at: at(50) },
+            { id: 230, environment: 'test', sha: sha(30), created_at: at(60) },
+        ],
+        statuses: {
+            230: [status('success', 59)], 231: [status('success', 49)], 232: [status('success', 39)],
+            233: [status('success', 29)], 234: [status('success', 19)], 235: [status('failure', 9)],
+        },
+        commits: {},
+        // sha(33) is another commit with QA's code (a deployment branch); sha(32) is code QA never had.
+        treeOf: { [sha(33)]: `tree-${sha(31)}` },
+        compare: () => ({ status: 'ahead', commits: [] }),
+    };
+    const api = {
+        deployments: [{ id: 241, environment: 'prod', sha: sha(41), created_at: at(10) }],
+        statuses: { 241: [status('success', 9)] },
+        commits: {},
+        compare: () => ({ status: 'ahead', commits: [] }),
+    };
+    const { app, alice, tenantId, sync, rows } = await setup(t, { 'acme/web': web, 'acme/api': api });
+    await sync();
+    const deps = await rows('SELECT deployment_id, skipped_env FROM deployments ORDER BY deployment_id');
+    assert.deepStrictEqual(deps.map((d) => [Number(d.deployment_id), d.skipped_env]), [
+        [230, null],
+        [231, 'test'],
+        [232, null],
+        [233, 'qa'],
+        [234, null],
+        [235, null],
+        [241, null],
+    ], 'qa skipped test; prod on QA\'s ref, or its tree, is fine; a failed deploy and a repo that never deployed to QA are never marked');
+
+    const data = (await app.inject({ method: 'GET', url: `/api/tenants/${tenantId}/dashboard-data`, cookies: { sid: alice } })).json();
+    assert.strictEqual(data.deployments.find((d) => d.id === 'gh-233').skippedEnv, 'qa');
+    assert.ok(!('skippedEnv' in data.deployments.find((d) => d.id === 'gh-232')));
+});
+
 test('sync: a repo\'s own environment map decides first; the names seen are kept; a changed map syncs from the start', async (t) => {
     const web = {
         deployments: [
