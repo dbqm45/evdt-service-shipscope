@@ -1,7 +1,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const { fakeGitHub, AUTH, signIn, testGitHubApp } = require('./helpers/auth');
-const { extractPromotedVersion, parseVersionProperty, matchVersionLabel, fetchRefIndex, resolveVersionFile, resolveVersion } = require('../lib/version-resolution');
+const { extractPromotedVersion, parseVersionProperty, matchVersionLabel, fetchRefIndex, resolveVersionFile, resolveVersion, payloadVersion, resolvePayloadVersion } = require('../lib/version-resolution');
 const { computeEnvDrift } = require('../lib/env-drift');
 
 const sha = (n) => n.toString(16).padStart(40, 'a');
@@ -45,6 +45,50 @@ test('resolveVersion: release > tag > version file > commit message label; compa
     assert.deepStrictEqual(resolveVersion({ sha: sha(4), message: 'fix', refIndex, fileRef: null }), { version: null, resolvedRef: sha(4) });
     // The version file says what really shipped (the deployed commit is only a trigger).
     assert.deepStrictEqual(resolveVersion({ sha: sha(2), message: '', refIndex, fileRef: { ref: 'v1.0.0', label: 'v1.0.0' } }), { version: 'v1.0.0', resolvedRef: 'v1.0.0' });
+});
+
+test('resolveVersion: the deployment payload wins over the version file, a release and a tag', async () => {
+    const { fetch } = fakeRepo({ tags: [{ name: 'v2.0.0', commit: { sha: sha(2) } }, { name: 'v1.0.0', commit: { sha: sha(1) } }], releases: [] });
+    const refIndex = await fetchRefIndex({ token: TOKEN, fullName: 'acme/web', fetch });
+    const fileRef = { ref: 'v2.0.0', label: 'v2.0.0' };
+    // The deployed commit (sha(2), tagged v2.0.0) is only the trigger: the pipeline said it shipped v1.0.0.
+    assert.deepStrictEqual(resolveVersion({ sha: sha(2), message: 'chore(release): 2.0.0', refIndex, fileRef, payloadRef: { ref: 'v1.0.0', label: 'v1.0.0' } }),
+        { version: 'v1.0.0', resolvedRef: 'v1.0.0' });
+    // Only the artifact's commit: its tag is the label.
+    assert.deepStrictEqual(resolveVersion({ sha: sha(2), message: '', refIndex, fileRef: null, payloadRef: { ref: sha(1), label: null } }),
+        { version: 'v1.0.0', resolvedRef: sha(1) });
+    // A label no ref matches: shown, never used to compare; the ref comes from the usual rules.
+    assert.deepStrictEqual(resolveVersion({ sha: sha(2), message: '', refIndex, fileRef: null, payloadRef: { ref: null, label: 'build-77' } }),
+        { version: 'build-77', resolvedRef: 'v2.0.0' });
+    assert.deepStrictEqual(resolveVersion({ sha: sha(2), message: '', refIndex, fileRef: null, payloadRef: null }), { version: 'v2.0.0', resolvedRef: 'v2.0.0' });
+});
+
+test('payloadVersion: the version and commit a pipeline put in the deployment payload; anything else is ignored', () => {
+    assert.deepStrictEqual(payloadVersion({ version: 'v1.6.0' }), { version: 'v1.6.0', sha: null });
+    assert.deepStrictEqual(payloadVersion({ version: '1.4.25-okta', sha: sha(1).toUpperCase() }), { version: '1.4.25-okta', sha: sha(1) });
+    assert.deepStrictEqual(payloadVersion(JSON.stringify({ sha: sha(1) })), { version: null, sha: sha(1) }, 'GitHub may return the payload as a JSON string');
+    assert.deepStrictEqual(payloadVersion({ commit: sha(3) }), { version: null, sha: sha(3) }, '`commit` is the same as `sha`');
+    for (const bad of [undefined, null, '', 'not json', '[]', [], 42, {}, { version: '' }, { version: 42 }, { version: 'a b' }, { version: 'x'.repeat(129) },
+        { version: '../etc' }, { sha: 'abc' }, { sha: sha(1) + 'a' }, { sha: 42 }]) {
+        assert.strictEqual(payloadVersion(bad), null, JSON.stringify(bad));
+    }
+    assert.deepStrictEqual(payloadVersion({ version: 'a b', sha: sha(1) }), { version: null, sha: sha(1) }, 'a bad field does not hide a good one');
+});
+
+test('resolvePayloadVersion: a tag for the version, the commit GitHub knows, else only a label (never throws)', async () => {
+    const repo = fakeRepo({ commits: { [sha(1)]: 'feat: ABC-1' } });
+    const calls = repo.calls;
+    // GitHub answers 422 for a commit it does not have (the fake knows every sha).
+    const fetch = (url, init) => (url.endsWith(`/commits/${sha(9)}`) ? Promise.resolve(new Response('{"message":"No commit found"}', { status: 422 })) : repo.fetch(url, init));
+    const tagNames = new Set(['v1.6.0']);
+    const resolve = (payload) => resolvePayloadVersion({ token: TOKEN, fullName: 'acme/web', payload, tagNames, releases: [], at: null, fetch });
+    assert.deepStrictEqual(await resolve({ version: '1.6.0' }), { ref: 'v1.6.0', label: '1.6.0' });
+    assert.ok(!calls.some((c) => c.startsWith('commits/')), 'no commit lookup when a tag matched');
+    assert.deepStrictEqual(await resolve({ version: 'v1.6.0', sha: sha(1) }), { ref: sha(1), label: 'v1.6.0' }, 'the commit is what shipped');
+    assert.deepStrictEqual(await resolve({ sha: sha(9) }), null, 'a commit GitHub does not know');
+    assert.deepStrictEqual(await resolve({ version: 'v9.9.9', sha: sha(9) }), { ref: null, label: 'v9.9.9' });
+    assert.deepStrictEqual(await resolve({ version: 'build-77' }), { ref: null, label: 'build-77' });
+    assert.strictEqual(await resolve({}), null);
 });
 
 test('fetchRefIndex pages through tags and releases', async () => {
@@ -356,6 +400,61 @@ test('sync: version=latest is the release published before the deployment; a suf
     await sync();
     const deps = await rows('SELECT deployment_id, version, resolved_ref FROM deployments ORDER BY deployment_id');
     assert.deepStrictEqual(deps.map((d) => [Number(d.deployment_id), d.version, d.resolved_ref]), [[1, 'v1.0.0', 'v1.0.0'], [2, '1.1.0-okta', 'v1.1.0']]);
+});
+
+test('sync: the payload says what shipped; a prod deploy from a newer trigger commit is not ahead of qa', async (t) => {
+    // The incident: prod's deploy ran on main's head (tagged v1.1.0, 5 commits past qa) but shipped v1.0.0 again.
+    const web = {
+        deployments: [
+            { id: 3, environment: 'prod', sha: sha(2), created_at: at(10), payload: { version: 'v1.0.0' } },
+            { id: 2, environment: 'prod', sha: sha(1), created_at: at(20), payload: '' },
+            { id: 1, environment: 'qa', sha: sha(1), created_at: at(30), payload: {} },
+        ],
+        statuses: { 1: ok(29), 2: ok(19), 3: ok(9) },
+        commits: { [sha(1)]: 'chore(release): 1.0.0', [sha(2)]: 'chore(release): 1.1.0' },
+        tags: [{ name: 'v1.0.0', commit: { sha: sha(1) } }, { name: 'v1.1.0', commit: { sha: sha(2) } }],
+        releases: [],
+        compare: (base, head) => {
+            throw new Error(`unexpected compare ${base}...${head}`);
+        },
+    };
+    const { sync, rows, dashboard } = await setup(t, web);
+    await sync();
+    const deps = await rows('SELECT deployment_id, version, resolved_ref, related_issues FROM deployments ORDER BY deployment_id');
+    assert.deepStrictEqual(deps.map((d) => [Number(d.deployment_id), d.version, d.resolved_ref]), [[1, 'v1.0.0', 'v1.0.0'], [2, 'v1.0.0', 'v1.0.0'], [3, 'v1.0.0', 'v1.0.0']]);
+    const [repo] = await rows('SELECT drift FROM tracked_repos');
+    assert.deepStrictEqual(repo.drift, { inputs: { qa: 'v1.0.0', prod: 'v1.0.0' }, failed: [], envs: {} });
+    const data = await dashboard();
+    assert.ok(data.deployments.every((d) => !('driftBehind' in d)));
+});
+
+test('sync: a version file set later resolves older records with the real tags and releases (latest, suffixed)', async (t) => {
+    const trigger = (n) => sha(300 + n);
+    const web = {
+        deployments: [
+            { id: 2, environment: 'prod', sha: trigger(2), created_at: at(10) },
+            { id: 1, environment: 'qa', sha: trigger(1), created_at: at(20) },
+        ],
+        statuses: { 1: ok(19), 2: ok(9) },
+        commits: { [trigger(1)]: 'trigger', [trigger(2)]: 'trigger' },
+        tags: [{ name: 'v1.0.0', commit: { sha: sha(1) } }, { name: 'v1.1.0', commit: { sha: sha(2) } }],
+        releases: [{ tag_name: 'v1.1.0', published_at: at(60) }],
+        files: { [trigger(1)]: { 'trigger.properties': 'version=1.1.0-okta\n' }, [trigger(2)]: { 'trigger.properties': 'version=latest\n' } },
+        treeOf: { [trigger(1)]: 'tree-a', [trigger(2)]: 'tree-b' },
+        trees: { 'tree-a': tree({ 'a.js': '1' }), 'tree-b': tree({ 'a.js': '2' }) },
+        compare: () => ({ ahead_by: 0, behind_by: 5 }),
+    };
+    const { app, alice, tenantId, sync, rows } = await setup(t, web);
+    await sync();
+    let [repo] = await rows('SELECT drift FROM tracked_repos');
+    assert.ok(repo.drift.envs.prod, 'without the file the trigger commits differ');
+
+    const res = await app.inject({ method: 'PUT', url: `/tenants/${tenantId}/github/repos/1/settings`, cookies: { sid: alice }, payload: { versionFile: 'trigger.properties', driftIgnorePaths: [] } });
+    assert.strictEqual(res.statusCode, 200, res.body);
+    await sync();
+    [repo] = await rows('SELECT drift FROM tracked_repos');
+    // qa's 1.1.0-okta is tag v1.1.0, prod's latest is release v1.1.0: the same ref, no drift.
+    assert.deepStrictEqual(repo.drift, { inputs: { qa: trigger(1), prod: trigger(2) }, failed: [], envs: {} });
 });
 
 test('sync: a failed drift comparison keeps the previous value and is retried on the next pass', async (t) => {

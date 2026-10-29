@@ -2,7 +2,7 @@ const { withScope } = require('./scope');
 const { withTenantClaim, eachLimited } = require('./tenant-claim');
 const { createInstallationToken, githubGet, GitHubApiError, GitHubRateLimitError } = require('./github-app');
 const { buildDeploymentPlan, computeNextCursor, issuesFromMessages, flagLinksFromMessages, firstCommitDates, mergeSeenEnvironments } = require('./deployment-logic');
-const { fetchRefIndex, resolveVersionFile, resolveVersion } = require('./version-resolution');
+const { fetchRefIndex, resolveVersionFile, resolvePayloadVersion, resolveVersion } = require('./version-resolution');
 const { ENV_ORDER, computeEnvDrift } = require('./env-drift');
 const { MAX_RUN_LOOKUPS, createCaches, resolveManual, resolveDisplayName } = require('./deployment-people');
 const { refreshCodeFlags } = require('./code-flags');
@@ -46,7 +46,7 @@ async function fetchNewDeployments({ token, fullName, cursor, fetch, maxPages })
 /** The newest successful deployment per environment already in the database, to compare the first new one against. */
 async function lastSuccessByEnv(client, { tenantId, repoId }) {
     const { rows } = await client.query(
-        `SELECT DISTINCT ON (environment) environment, sha, resolved_ref, version, related_issues, issue_commit_types, commit_url
+        `SELECT DISTINCT ON (environment) environment, sha, resolved_ref, version, related_issues, issue_commit_types, commit_url, deployed_at
          FROM deployments WHERE tenant_id = $1 AND repo_id = $2 AND status = 'success'
          ORDER BY environment, deployed_at DESC, deployment_id DESC`,
         [tenantId, repoId]
@@ -55,6 +55,8 @@ async function lastSuccessByEnv(client, { tenantId, repoId }) {
         // Records synced before version resolution existed have no resolved_ref; their sha is the ref.
         sha: r.sha, ref: r.resolved_ref || r.sha, version: r.version,
         relatedIssues: r.related_issues, issueCommitTypes: r.issue_commit_types, commitUrl: r.commit_url,
+        // The status time, not GitHub's created_at (not stored): what `version=latest` is judged against for old records.
+        deployedAt: r.deployed_at instanceof Date ? r.deployed_at.toISOString() : r.deployed_at,
     }]));
 }
 
@@ -118,13 +120,21 @@ async function refreshDrift({ pool, token, tenantId, repo, fetch: fetchFn }) {
     if (unchanged && !(stored.failed || []).length) return false;
 
     const latestByEnv = {};
+    // Tags and releases only when a record needs the version file resolved (`latest`, a suffixed version).
+    let refIndex = null;
     for (const [env, rec] of Object.entries(latest)) {
         let { ref, version } = rec;
         // A record whose ref is still its own sha (synced before version resolution, or before the version file
         // was configured) points at the trigger commit; drift must compare the code the version file names
         // (resolved on the fly, as the file-based sync does for old records).
         if (repo.versionFile && ref === rec.sha) {
-            const fileRef = await resolveVersionFile({ token, fullName: repo.fullName, versionFile: repo.versionFile, sha: rec.sha, tagNames: new Set(), fetch: fetchFn });
+            refIndex = refIndex || await fetchRefIndex({ token, fullName: repo.fullName, fetch: fetchFn }).catch((err) => {
+                if (err instanceof GitHubRateLimitError) throw err;
+                return { tagNames: new Set(), releases: [] };
+            });
+            const fileRef = await resolveVersionFile({
+                token, fullName: repo.fullName, versionFile: repo.versionFile, sha: rec.sha, tagNames: refIndex.tagNames, releases: refIndex.releases, at: rec.deployedAt, fetch: fetchFn,
+            });
             if (fileRef) ({ ref, label: version } = fileRef);
         }
         latestByEnv[env] = { ref, version };
@@ -189,15 +199,19 @@ async function syncRepo({ pool, token, tenantId, repo, fetch: fetchFn = fetch, n
         const sha = entry.dep.sha;
         const commit = await githubGet({ token, path: `/repos/${fullName}/commits/${sha}`, fetch: fetchFn });
         const message = commit?.commit?.message || '';
-        const fileRef = repo.versionFile
+        // What the pipeline said it shipped comes first; the version file is read only when that names no ref.
+        const payloadRef = await resolvePayloadVersion({
+            token, fullName, payload: entry.dep.payload, tagNames: refIndex.tagNames, releases: refIndex.releases, at: entry.dep.created_at, fetch: fetchFn,
+        });
+        const fileRef = repo.versionFile && !payloadRef?.ref
             ? await resolveVersionFile({
                 token, fullName, versionFile: repo.versionFile, sha, tagNames: refIndex.tagNames, releases: refIndex.releases, at: entry.dep.created_at, fetch: fetchFn,
             })
             : null;
-        const { version, resolvedRef } = resolveVersion({ sha, message, refIndex, fileRef });
+        const { version, resolvedRef } = resolveVersion({ sha, message, refIndex, fileRef, payloadRef });
         const previous = previousByEnv[entry.environment] || null;
         const range = await describeRange({
-            token, fullName, previous, current: { sha, ref: resolvedRef, message, commit: commit?.commit, fromFile: Boolean(fileRef) }, fetch: fetchFn,
+            token, fullName, previous, current: { sha, ref: resolvedRef, message, commit: commit?.commit, fromFile: Boolean(fileRef || payloadRef?.ref) }, fetch: fetchFn,
         });
         const record = {
             deploymentId: entry.dep.id,
