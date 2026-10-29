@@ -2,7 +2,7 @@ const { withScope } = require('./scope');
 const { withTenantClaim, eachLimited } = require('./tenant-claim');
 const { createInstallationToken, githubGet, GitHubApiError, GitHubRateLimitError } = require('./github-app');
 const { buildDeploymentPlan, computeNextCursor, issuesFromMessages, flagLinksFromMessages, firstCommitDates, mergeSeenEnvironments } = require('./deployment-logic');
-const { fetchRefIndex, resolveVersionFile, resolvePayloadVersion, resolveVersion } = require('./version-resolution');
+const { fetchRefIndex, resolveVersionFile, resolvePayloadVersion, resolveVersion, planVersionBackfill } = require('./version-resolution');
 const { ENV_ORDER, computeEnvDrift } = require('./env-drift');
 const { MAX_RUN_LOOKUPS, createCaches, resolveManual, resolveDisplayName } = require('./deployment-people');
 const { refreshCodeFlags } = require('./code-flags');
@@ -120,6 +120,39 @@ async function rolledBackKeys({ token, fullName, from, to, fetch }) {
         if (err instanceof GitHubRateLimitError) throw err;
         return [];
     }
+}
+
+// How far back a deploy synced as a bare sha still gets the tag its commit was given later.
+const BACKFILL_HOURS = 48;
+
+/**
+ * Fills in the version of the repo's recent deploys that were synced before their commit had a release or tag (a
+ * pipeline that tags after it deploys): no version at all, the ref still the sha, at most BACKFILL_HOURS old.
+ * Never for a repo with a version file, whose deployed commit is only a trigger. Lists the tags only when such a
+ * record exists, reusing the pass's listing when there is one.
+ *
+ * @returns {Promise<number>} records updated
+ */
+async function backfillVersions({ pool, token, tenantId, repo, refIndex, now, fetch: fetchFn }) {
+    if (repo.versionFile) return 0;
+    const { rows } = await withScope(pool, { tenantId }, (client) => client.query(
+        `SELECT deployment_id, sha FROM deployments
+         WHERE tenant_id = $1 AND repo_id = $2 AND version IS NULL AND resolved_ref = sha AND deployed_at > $3`,
+        [tenantId, repo.repoId, new Date(now - BACKFILL_HOURS * 3600000)]
+    ));
+    if (!rows.length) return 0;
+    const index = refIndex || await fetchRefIndex({ token, fullName: repo.fullName, fetch: fetchFn });
+    const updates = planVersionBackfill(rows.map((r) => ({ deploymentId: Number(r.deployment_id), sha: r.sha })), index);
+    if (!updates.length) return 0;
+    await withScope(pool, { tenantId }, async (client) => {
+        for (const u of updates) {
+            await client.query(
+                'UPDATE deployments SET version = $3, resolved_ref = $4 WHERE tenant_id = $1 AND deployment_id = $2 AND version IS NULL',
+                [tenantId, u.deploymentId, u.version, u.resolvedRef]
+            );
+        }
+    });
+    return updates.length;
 }
 
 /**
@@ -322,6 +355,8 @@ async function syncRepo({ pool, token, tenantId, repo, fetch: fetchFn = fetch, n
     // A cut-short repo's latest deploys may still change this pass's picture; drift waits for a complete pass.
     if (written.untracked || written.partial) return { ...written, driftRecomputed: false, codeFlags: { read: 0, failed: 0 } };
 
+    // Before drift, so a deploy tagged after it was synced is compared by its tag.
+    await backfillVersions({ pool, token, tenantId, repo, refIndex, now, fetch: fetchFn });
     const driftRecomputed = await refreshDrift({ pool, token, tenantId, repo, fetch: fetchFn });
     // Flags kept in the repo's code, read at what each environment now runs (ADR-003). Never fails the sync.
     const codeFlags = await refreshCodeFlags({ pool, token, tenantId, repo, fetch: fetchFn, now: new Date(now), log });

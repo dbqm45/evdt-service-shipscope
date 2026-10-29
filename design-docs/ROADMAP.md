@@ -108,9 +108,10 @@ Zmiany w repozytoriach aplikacji (payload, tagi, bramka QA → PROD, jeden Deplo
 
 - [x] Wersja z `payload` wdrożenia (`version`, `sha`) przed plikiem wersji, releasem i tagiem; starsze rekordy przy
   pliku wersji rozwiązywane z prawdziwymi tagami. (#121)
-- [ ] Status po rollbacku: zadania cofnięte rollbackiem nie są już „wdrożone” na tym środowisku
-  ([plan](ROLLBACK-STATUS-PLAN.pl.md)).
-- [ ] Wersja uzupełniana później: rekord z ostatnich dni, który ma ref = SHA, dostaje tag/release, gdy się pojawi.
+- [x] Status po rollbacku: zadania cofnięte rollbackiem nie są już „wdrożone” na tym środowisku
+  ([plan](ROLLBACK-STATUS-PLAN.pl.md)). (#122)
+- [x] Wersja uzupełniana później: rekord z ostatnich 48 godzin bez wersji, z ref = SHA i bez pliku wersji, dostaje
+  release/tag, gdy się pojawi.
 - [ ] Znacznik „PROD bez QA” oparty na wersji (ref na PROD nigdy nie miał udanego wdrożenia na QA), zamiast liczby
   commitów.
 - [ ] Metryki API usług bez duplikatów: kilka rekordów tego samego komponentu, środowiska i refu w krótkim oknie

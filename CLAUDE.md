@@ -181,7 +181,9 @@ the web service fills once a minute (`sampleStatus()`, web.js); a day is an outa
   version file's or payload's label goes through `matchVersionLabel()`: the tag as written, the `v` prefix toggled, the base `X.Y.Z` tag
   of a suffixed label (`1.4.25-okta`; label kept, tag used), and `latest` = the newest published non-prerelease
   release before the deployment's `created_at` (its tag becomes the label); records synced before the file was set
-  are resolved for drift with the repo's real tags and releases. Drift
+  are resolved for drift with the repo's real tags and releases. A deploy synced as a bare sha (no version, ref = sha,
+  no version file) gets the release/tag its commit was given later, for `BACKFILL_HOURS` (48) (`backfillVersions()`,
+  `planVersionBackfill()`, before drift). Drift
   (`lib/env-drift.js` + `lib/tree-diff.js`) is stored per repo in `tracked_repos.drift = { inputs, failed, envs }`,
   recomputed only when a latest successful deploy changed or the last attempt failed; a failed comparison keeps the
   previous value. Per-repo `version_file`/`drift_ignore_paths` are set by an admin
