@@ -100,6 +100,31 @@ Możliwości:
 Po zmianie planu albo widoczności: powtórzyć dwa pierwsze sprawdzenia (API odpowie listą rulesetów, `protected`
 będzie `true`) i zaktualizować tę sekcję.
 
+## Tryb lokalny: odbiornik pdi na pętli zwrotnej
+
+`lib/safe-fetch.js` chroni przed SSRF: każdy adres podany przez klienta to https na porcie 443 z publicznym adresem.
+Żeby cały przepływ działał na jednym komputerze (`npm run dev` obok pdi-receivera, decyzja DL2 w dbqm45/pdi), jest
+jeden wyjątek (`design-docs/LOCAL-PDI-PLAN.pl.md`). Dlaczego jest bezpieczny:
+
+- **Tylko z lokalnym `PUBLIC_BASE_URL`.** Tryb lokalny (`localModeEnabled()`, `lib/local-mode.js`) włącza się tylko,
+  gdy `PUBLIC_BASE_URL` to `http://localhost[:port]` albo `http://127.0.0.1[:port]` i `NODE_ENV` nie jest `production`
+  — ten sam warunek co `SHIPSCOPE_MOCK_DATA`. Wdrożenie na Renderze ma publiczny adres https (inaczej nie działałoby
+  logowanie przez GitHub ani bezpieczne ciasteczka), więc tam tryb jest wyłączony. Decyzja zapada raz przy starcie i
+  jest przekazywana jawnie; oba procesy logują ją ostrzeżeniem, więc nie da się jej przeoczyć w logach.
+- **Tylko pętla zwrotna.** Dopuszczone są wyłącznie nazwy hosta `localhost`, `127.0.0.1` i `::1`; połączenie idzie
+  wprost na adres pętli, bez DNS, więc nazwa publiczna wskazująca na 127.0.0.1 (rebinding) nadal jest odrzucana.
+  Sieci prywatne (10/8, 172.16/12, 192.168/16), metadane chmury (169.254.169.254), inne adresy 127/8 i http albo inny
+  port na publicznym hoście — odrzucane jak dotąd. Bez przekierowań, z limitem czasu i rozmiaru.
+- **Tylko odbiornik pdi.** Opcję `loopback` dostają: adres odbiornika przy łączeniu, ping i dostawy do subskrypcji
+  należącej do aktywnego połączenia z pdi. Zwykłe subskrypcje zdarzeń i źródła flag z endpointów zostają przy
+  pełnych regułach także w trybie lokalnym.
+- **Kogo to dotyczy.** Na komputerze dewelopera administrator workspace'u to ta sama osoba, która uruchomiła serwer i
+  ma dostęp do pętli zwrotnej tak czy inaczej; tryb nie daje mu nic, czego nie miał.
+
+Testy: `server/test/local-mode.test.js`, `server/test/safe-fetch.test.js` (pętla odrzucana bez trybu, przyjmowana z
+nim; adresy prywatne, publiczny http, przekierowanie odrzucone), `server/test/pdi-connection.test.js` (Connect, ping
+i dostawa do lokalnego serwera http).
+
 ## Do zrobienia ręcznie (ustawienia, nie kod)
 
 - Rulesety na tagi `v*` (blokada tworzenia, przesuwania i usuwania poza administratorami) i na `main` (blokada

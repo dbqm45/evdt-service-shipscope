@@ -10,6 +10,7 @@ const { handOverAccessToken } = require('./lib/jira-connections');
 const { flagSourceHealth } = require('./lib/flags');
 const { detectReleaseEvents, deliverEvents } = require('./lib/outgoing-events');
 const { pingPdiConnections, backfillPdiConnections } = require('./lib/pdi-connection');
+const { localModeEnabled, LOCAL_MODE_WARNING } = require('./lib/local-mode');
 const { safeFetch } = require('./lib/safe-fetch');
 const { pendingSyncRequests, finishSyncRequests } = require('./lib/webhooks');
 const { recordRun } = require('./lib/worker-status');
@@ -311,19 +312,19 @@ async function eventsTick(pool, logger = defaultLogger, deps = { detectReleaseEv
 }
 
 /** Delivers the queued events that are due (lib/outgoing-events.js deliverEvents()), signed, through safeFetch(). */
-async function eventDeliveryTick(pool, encryptionKey, logger = defaultLogger, deps = { deliverEvents, fetchImpl: safeFetch }) {
+async function eventDeliveryTick(pool, encryptionKey, logger = defaultLogger, deps = { deliverEvents, fetchImpl: safeFetch }, { localMode = false } = {}) {
     await runJob(pool, {
         job: 'event-delivery', lock: EVENT_DELIVERY_LOCK, logger, deps,
-        run: () => deps.deliverEvents(pool, { encryptionKey, fetchImpl: deps.fetchImpl, log: syncLogger(logger.child({ job: 'event-delivery' })) }),
+        run: () => deps.deliverEvents(pool, { encryptionKey, fetchImpl: deps.fetchImpl, localMode, log: syncLogger(logger.child({ job: 'event-delivery' })) }),
         summary: (r) => `events delivered: ${r.delivered}, ${r.retried} to retry, ${r.failed} given up`,
     });
 }
 
 /** Pings every active pdi connection (lib/pdi-connection.js pingPdiConnections()), signed, through safeFetch(). */
-async function pdiPingTick(pool, encryptionKey, logger = defaultLogger, deps = { pingPdiConnections, fetchImpl: safeFetch }) {
+async function pdiPingTick(pool, encryptionKey, logger = defaultLogger, deps = { pingPdiConnections, fetchImpl: safeFetch }, { localMode = false } = {}) {
     await runJob(pool, {
         job: 'pdi-ping', lock: PDI_PING_LOCK, logger, deps,
-        run: () => deps.pingPdiConnections(pool, { encryptionKey, fetchImpl: deps.fetchImpl, log: syncLogger(logger.child({ job: 'pdi-ping' })) }),
+        run: () => deps.pingPdiConnections(pool, { encryptionKey, fetchImpl: deps.fetchImpl, localMode, log: syncLogger(logger.child({ job: 'pdi-ping' })) }),
         summary: (r) => `pdi connections pinged: ${r.pinged}, ${r.failed} not reached`,
     });
 }
@@ -354,6 +355,9 @@ if (require.main === module) {
     logProcessFailures(defaultLogger);
     pool.on('error', (err) => defaultLogger.error('idle database connection failed', { err }));
     defaultLogger.info('worker started', { syncIntervalMinutes: syncMinutes, tenantBudgetSeconds: budgetMs / 1000, concurrency, github: !!app, jira: !!loadAtlassianConfig(process.env) });
+    // Local mode (lib/local-mode.js): decided once here; only the connection with pdi uses it.
+    const localMode = localModeEnabled(process.env);
+    if (localMode) defaultLogger.warn(LOCAL_MODE_WARNING);
     const timers = [setInterval(() => heartbeatTick(pool), HEARTBEAT_INTERVAL_MS)];
     heartbeatTick(pool);
 
@@ -392,9 +396,9 @@ if (require.main === module) {
     if (encryptionKey) {
         // Events are signed with the workspace's signing secret, sealed by TOKEN_ENCRYPTION_KEY.
         timers.push(setInterval(() => eventsTick(pool), EVENTS_INTERVAL_MS));
-        timers.push(setInterval(() => eventDeliveryTick(pool, encryptionKey), EVENT_DELIVERY_INTERVAL_MS));
-        timers.push(setInterval(() => pdiPingTick(pool, encryptionKey), PDI_PING_INTERVAL_MS));
-        pdiPingTick(pool, encryptionKey);
+        timers.push(setInterval(() => eventDeliveryTick(pool, encryptionKey, undefined, undefined, { localMode }), EVENT_DELIVERY_INTERVAL_MS));
+        timers.push(setInterval(() => pdiPingTick(pool, encryptionKey, undefined, undefined, { localMode }), PDI_PING_INTERVAL_MS));
+        pdiPingTick(pool, encryptionKey, undefined, undefined, { localMode });
     }
     // Workspaces that used the service API or events before the connection with pdi existed get one (pending), once.
     backfillPdiConnections(pool)

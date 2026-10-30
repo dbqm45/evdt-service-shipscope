@@ -156,3 +156,17 @@ test('eventsTick looks at every tenant and goes on past a failing one; eventDeli
     assert.match(lines.at(-1).msg, /events delivered: 1, 0 to retry, 0 given up/);
     assert.deepStrictEqual(runs.map((r) => r.job), ['events', 'event-delivery']);
 });
+
+test('eventDeliveryTick and pdiPingTick pass local mode on, off unless the worker decided it at start', async () => {
+    const { eventDeliveryTick, pdiPingTick } = require('../worker');
+    const { logger } = memoryLogger();
+    const { recordRun } = recorder();
+    const seen = [];
+    const deliverEvents = async (p, input) => { seen.push(['deliver', input.localMode]); return { delivered: 0, retried: 0, failed: 0 }; };
+    const pingPdiConnections = async (p, input) => { seen.push(['ping', input.localMode]); return { pinged: 0, failed: 0 }; };
+    await eventDeliveryTick(lockPool(true).pool, Buffer.alloc(32), logger, { recordRun, fetchImpl: null, deliverEvents });
+    await pdiPingTick(lockPool(true).pool, Buffer.alloc(32), logger, { recordRun, fetchImpl: null, pingPdiConnections });
+    await eventDeliveryTick(lockPool(true).pool, Buffer.alloc(32), logger, { recordRun, fetchImpl: null, deliverEvents }, { localMode: true });
+    await pdiPingTick(lockPool(true).pool, Buffer.alloc(32), logger, { recordRun, fetchImpl: null, pingPdiConnections }, { localMode: true });
+    assert.deepStrictEqual(seen, [['deliver', false], ['ping', false], ['deliver', true], ['ping', true]]);
+});

@@ -37,7 +37,13 @@ the server's dependencies, creates `server/.env`, starts Postgres in Docker (`sh
 database owned by the non-superuser role `shipscope_app` (RLS applies, as on Render), creates a GitHub App on the
 first run through GitHub's manifest flow (one click on a local page; the keys go to `server/.env`), applies the
 migrations, starts `web.js` and `worker.js`, and prints `http://localhost:3000/`. A `DATABASE_URL` pointing elsewhere is
-used as is. Pure helpers are tested in `server/test/dev.test.js`. `npm run dev:mock` (`--mock`) runs the same, but with
+used as is. When `server/.env` has no `TOKEN_ENCRYPTION_KEY` it writes one (32 random bytes, base64, `encryptionKeyUpdate()`)
+and says so; an existing value is never replaced (the key alone does not turn Jira on: `loadAtlassianConfig()` needs
+`ATLASSIAN_CLIENT_ID`/`_SECRET`). **Local mode** (`lib/local-mode.js`, `localModeEnabled(env)`, design-docs/LOCAL-PDI-PLAN.pl.md):
+`PUBLIC_BASE_URL` `http://localhost[:port]`/`http://127.0.0.1[:port]` outside `NODE_ENV=production`, decided once at
+start of `web.js` (`buildApp({ localMode })` → `ctx.localMode`) and `worker.js` (`eventDeliveryTick`/`pdiPingTick`
+`{ localMode }`), logged as `LOCAL_MODE_WARNING`; it lets only the connection with pdi reach a receiver on loopback
+(e.g. pdi-receiver at `http://127.0.0.1:8787`, no tunnel). Pure helpers are tested in `server/test/dev.test.js`. `npm run dev:mock` (`--mock`) runs the same, but with
 `SHIPSCOPE_MOCK_DATA=1`: the dashboard-data and jira-issues routes answer members with the `FALLBACK` sample dataset
 (`server/lib/mock-dashboard.js` builds it once by running `docs/app-*.js` in a `vm` sandbox, so there is one copy of
 it) and the badge reads "Mock". Sign-in, workspaces and settings stay real; refused unless `PUBLIC_BASE_URL` is
@@ -245,6 +251,9 @@ the web service fills once a minute (`sampleStatus()`, web.js); a day is an outa
   Every request to an address a customer gives goes through `safeFetch()` (`lib/safe-fetch.js`): https:443, every
   DNS answer public (`forbiddenAddress()`, a `net.BlockList`), the connection pinned to the checked address, no
   redirects, a time limit and a size limit after decompression (`server/test/safe-fetch.test.js`, a local TLS server).
+  Its one exception is `loopback: true` (`checkUrl()`/`safeFetch()`), passed as the local mode only for the pdi
+  receiver: a host exactly `localhost`/`127.0.0.1`/`::1`, http or https, any port, connected to the loopback address
+  without DNS, still no redirects and the same limits; every other address keeps the rules (design-docs/SECURITY.md).
   Flags from an endpoint (migration `023`, `lib/endpoint-flags.js`): a runtime source with `origin: 'endpoint'`,
   `endpoint_config` checked by `checkEndpointConfig()` (`urls` per environment through `checkUrl()`, `format`
   json/yaml else the content type, the file reading fields, `tokenHeader`), the customer's token sealed in
@@ -378,7 +387,9 @@ the web service fills once a minute (`sampleStatus()`, web.js); a day is an outa
   `lib/flow-model.js`, pure; `server/test/flow-model.test.js`).
 - **Connection with pdi** (`lib/pdi-connection.js`, migration `044`, `pdi_connections`, RLS; design-docs/PDI-CONNECTION-PLAN.pl.md,
   step 1 of the decision "ShipScope bez pdi i z pdi"): Settings → Integrations → pdi
-  (`renderPdi()`); `POST …/pdi-connection { receiverUrl }` (admin, 409 when active) creates in one transaction a
+  (`renderPdi()`); `POST …/pdi-connection { receiverUrl }` (admin, 409 when active; in local mode the receiver may be on
+  loopback: `connectPdi({ localMode })`, `pingPdi()`/`testPdiConnection()` and `deliverEvents()` pass `loopback` only for
+  the active connection's own subscription) creates in one transaction a
   service token "pdi" (`insertServiceToken()`), an event subscription to `<receiverUrl>/events/shipscope` with its own
   sealed secret (`event_subscriptions.signing_secret_enc`, `subscriptionSigningSecret()`, AAD
   `subscriptionSecretAad()`; re-sealed by `secretsTick()`, tried by the restore check) and the connection; the answer

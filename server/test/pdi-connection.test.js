@@ -49,7 +49,7 @@ const { pingPdiConnections } = require('../lib/pdi-connection');
 const KEY = crypto.randomBytes(32);
 const sign = (secret, timestamp, body) => `v1=${crypto.createHmac('sha256', secret).update(`${timestamp}.${body}`).digest('hex')}`;
 
-async function setup(t) {
+async function setup(t, { localMode = false, safeFetch = null } = {}) {
     const { pool, teardown } = await createTestDb();
     t.after(teardown);
     const fetch = fakeGitHub({ alice: { id: 850_500_001, login: 'alice' }, bob: { id: 850_500_002, login: 'bob' } });
@@ -60,7 +60,7 @@ async function setup(t) {
         if (answer instanceof Error) throw answer;
         return { status: answer, headers: {}, contentType: 'application/json', body: '{}' };
     };
-    const app = buildApp({ pool, auth: AUTH, fetch, encryptionKey: KEY, safeFetch: receiver });
+    const app = buildApp({ pool, auth: AUTH, fetch, encryptionKey: KEY, safeFetch: safeFetch || receiver, localMode });
     t.after(() => app.close());
     const alice = await signIn(app, 'alice');
     const bob = await signIn(app, 'bob');
@@ -159,6 +159,78 @@ test('disconnecting revokes the token and the subscription; the workspace can co
     assert.notStrictEqual(again.json().env.PDI_SHIPSCOPE_TOKEN, env.PDI_SHIPSCOPE_TOKEN);
     const kinds = (await as(alice)('GET', '/audit-events')).json().events.map((e) => e.kind);
     assert.deepStrictEqual(kinds.filter((k) => k.startsWith('pdi_')).sort(), ['pdi_connected', 'pdi_connected', 'pdi_disconnected']);
+});
+
+// Local mode (design-docs/LOCAL-PDI-PLAN.pl.md): with a localhost PUBLIC_BASE_URL the pdi receiver may run on this
+// machine; the real safeFetch() reaches it over plain http, and only for the connection with pdi.
+test('local mode: Connect to http://127.0.0.1:8787; refused as today without local mode', async (t) => {
+    const strict = await setup(t);
+    assert.match((await strict.as(strict.alice)('POST', '/pdi-connection', { receiverUrl: 'http://127.0.0.1:8787' })).json().error, /Only https/);
+    assert.deepStrictEqual(await strict.rows('SELECT id FROM service_tokens'), []);
+
+    const { as, alice, rows } = await setup(t, { localMode: true });
+    for (const receiverUrl of ['http://10.0.0.5:8787', 'http://pdi.example.com', 'https://192.168.1.20']) {
+        assert.strictEqual((await as(alice)('POST', '/pdi-connection', { receiverUrl })).statusCode, 400, receiverUrl);
+    }
+    const res = await as(alice)('POST', '/pdi-connection', { receiverUrl: 'http://127.0.0.1:8787/' });
+    assert.strictEqual(res.statusCode, 201, res.body);
+    assert.deepStrictEqual([res.json().connection.state, res.json().connection.receiverUrl], ['pending', 'http://127.0.0.1:8787']);
+    assert.deepStrictEqual((await rows('SELECT name FROM service_tokens')).map((r) => r.name), ['pdi']);
+    assert.deepStrictEqual((await rows('SELECT url FROM event_subscriptions')).map((r) => r.url), ['http://127.0.0.1:8787/events/shipscope']);
+    assert.strictEqual((await rows('SELECT receiver_url FROM pdi_connections'))[0].receiver_url, 'http://127.0.0.1:8787');
+    // Only the connection with pdi: a plain event subscription keeps today's rules.
+    assert.match((await as(alice)('POST', '/event-subscriptions', { url: 'http://127.0.0.1:9999/hook', types: ['feature.released'] })).json().error, /Only https/);
+});
+
+test('local mode: the ping and an event reach a receiver on 127.0.0.1 over http; then connected', async (t) => {
+    const http = require('http');
+    const { safeFetch } = require('../lib/safe-fetch');
+    const got = [];
+    const receiverServer = http.createServer((req, res) => {
+        let body = '';
+        req.on('data', (c) => { body += c; });
+        req.on('end', () => { got.push({ method: req.method, url: req.url, headers: req.headers, body }); res.end('{}'); });
+    });
+    await new Promise((resolve) => receiverServer.listen(0, '127.0.0.1', resolve));
+    t.after(() => { receiverServer.closeAllConnections(); receiverServer.close(); });
+    const receiverUrl = `http://127.0.0.1:${receiverServer.address().port}`;
+
+    const { as, alice, service, rows, pool, tenantId } = await setup(t, { localMode: true, safeFetch });
+    const { env } = (await as(alice)('POST', '/pdi-connection', { receiverUrl })).json();
+    assert.strictEqual((await service(env.PDI_SHIPSCOPE_TOKEN, '/api/service/v1/connection')).statusCode, 200);
+    const tested = await as(alice)('POST', '/pdi-connection/test');
+    assert.strictEqual(tested.statusCode, 200, tested.body);
+    assert.strictEqual(tested.json().connection.state, 'connected', JSON.stringify(tested.json().connection.checks));
+    const ping = got.at(-1);
+    assert.deepStrictEqual([ping.method, ping.url, ping.headers['x-shipscope-event']], ['GET', '/events/shipscope', 'ping']);
+    assert.strictEqual(ping.headers['x-shipscope-signature'], sign(env.PDI_SHIPSCOPE_SIGNING_SECRET, ping.headers['x-shipscope-timestamp'], ''));
+
+    // The worker's hourly ping and the deliveries: without local mode the same address is refused.
+    assert.deepStrictEqual(await pingPdiConnections(pool, { encryptionKey: KEY, fetchImpl: safeFetch, localMode: true }), { pinged: 1, failed: 0 });
+    assert.deepStrictEqual(await pingPdiConnections(pool, { encryptionKey: KEY, fetchImpl: safeFetch }), { pinged: 1, failed: 1 });
+
+    const [sub] = await rows('SELECT id FROM event_subscriptions');
+    const event = { id: 'shipscope-1', type: 'feature.released', source: 'shipscope', occurred_at: '2026-10-30T12:00:00Z', contract_version: '0.4.0', payload: {} };
+    await rows('INSERT INTO event_outbox (tenant_id, subscription_id, event) VALUES ($1, $2, $3)', [tenantId, sub.id, JSON.stringify(event)]);
+    assert.deepStrictEqual(await deliverEvents(pool, { encryptionKey: KEY, fetchImpl: safeFetch }), { delivered: 0, failed: 0, retried: 1 }, 'not without local mode');
+    await rows('UPDATE event_outbox SET next_attempt_at = now()');
+    assert.deepStrictEqual(await deliverEvents(pool, { encryptionKey: KEY, fetchImpl: safeFetch, localMode: true }), { delivered: 1, failed: 0, retried: 0 });
+    const sent = got.at(-1);
+    assert.deepStrictEqual([sent.method, sent.url, JSON.parse(sent.body).id], ['POST', '/events/shipscope', 'shipscope-1']);
+    assert.strictEqual(sent.headers['x-shipscope-signature'], sign(env.PDI_SHIPSCOPE_SIGNING_SECRET, sent.headers['x-shipscope-timestamp'], sent.body));
+});
+
+test('local mode: deliveries to a subscription that is not the connection with pdi keep today\'s rules', async (t) => {
+    const { as, alice, rows, pool, tenantId } = await setup(t, { localMode: true });
+    await as(alice)('POST', '/pdi-connection', { receiverUrl: 'http://127.0.0.1:8787' });
+    // A loopback subscription only a direct write could make (e.g. left from before): never reached in local mode.
+    const [other] = await rows("INSERT INTO event_subscriptions (tenant_id, url, types, created_by) SELECT tenant_id, 'http://127.0.0.1:9999/hook', types, created_by FROM event_subscriptions RETURNING id");
+    const event = { id: 'shipscope-2', type: 'feature.released', source: 'shipscope', occurred_at: '2026-10-30T12:00:00Z', contract_version: '0.4.0', payload: {} };
+    await rows('INSERT INTO event_outbox (tenant_id, subscription_id, event) VALUES ($1, $2, $3)', [tenantId, other.id, JSON.stringify(event)]);
+    const calls = [];
+    const fetchImpl = async (url, init) => { calls.push([url, init.loopback]); return { status: 200 }; };
+    await deliverEvents(pool, { encryptionKey: KEY, fetchImpl, localMode: true });
+    assert.deepStrictEqual(calls, [['http://127.0.0.1:9999/hook', false]]);
 });
 
 test('RLS: pdi_connections is invisible and unwritable without the tenant\'s scope', async (t) => {

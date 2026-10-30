@@ -146,8 +146,8 @@ function loadSealingKeys(env, { withPrivate }) {
 
 /**
  * Reads the Atlassian OAuth 2.0 (3LO) app's credentials and the key that encrypts stored Jira tokens (FR-007).
- * Optional as a whole -- without them the Jira routes are off -- but a partial set fails fast.
- * TOKEN_ENCRYPTION_KEY is 32 random bytes, base64-encoded (`openssl rand -base64 32`).
+ * Optional as a whole -- without them the Jira routes are off -- but a partial set fails fast. TOKEN_ENCRYPTION_KEY
+ * alone is not a partial set (it seals other secrets too). It is 32 random bytes, base64-encoded (`openssl rand -base64 32`).
  *
  * @param {NodeJS.ProcessEnv} env
  * PUBLIC_BASE_URL (optional here) is where Atlassian sends Jira webhooks (`<url>/webhooks/jira`): the worker
@@ -160,7 +160,8 @@ function loadSealingKeys(env, { withPrivate }) {
  */
 function loadAtlassianConfig(env) {
     const keys = ['ATLASSIAN_CLIENT_ID', 'ATLASSIAN_CLIENT_SECRET', 'TOKEN_ENCRYPTION_KEY'];
-    if (!keys.some((key) => env[key])) return null;
+    // The key alone is not Jira: it also seals flags' and pdi's secrets (and `npm run dev` writes one).
+    if (!env.ATLASSIAN_CLIENT_ID && !env.ATLASSIAN_CLIENT_SECRET) return null;
 
     const problems = keys.filter((key) => !env[key]).map((key) => `${key} is not set (the other Atlassian variables are)`);
     let encryptionKey = null;

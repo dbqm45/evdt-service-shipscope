@@ -27,6 +27,8 @@ test('loadAtlassianConfig: off when unset, all three or nothing, a 32-byte base6
     const good = { ATLASSIAN_CLIENT_ID: 'id', ATLASSIAN_CLIENT_SECRET: 'secret', TOKEN_ENCRYPTION_KEY: KEY.toString('base64') };
     assert.deepStrictEqual(loadAtlassianConfig(good).encryptionKey, KEY);
     assert.throws(() => loadAtlassianConfig({ ATLASSIAN_CLIENT_ID: 'id' }), /ATLASSIAN_CLIENT_SECRET is not set.*TOKEN_ENCRYPTION_KEY is not set/);
+    // The key alone seals flags, events and pdi's secrets too (npm run dev writes one): not a half-set Jira.
+    assert.strictEqual(loadAtlassianConfig({ TOKEN_ENCRYPTION_KEY: KEY.toString('base64') }), null);
     for (const bad of ['short', crypto.randomBytes(16).toString('base64'), crypto.randomBytes(32).toString('hex')]) {
         assert.throws(() => loadAtlassianConfig({ ...good, TOKEN_ENCRYPTION_KEY: bad }), /32 bytes, base64/);
     }

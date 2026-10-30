@@ -19,6 +19,7 @@ const { InstallationNotFoundError, InstallationTakenError } = require('./lib/git
 const { IngestTokenError, IngestScopeError, IngestBusyError, IngestPayloadError, FlagSourceNotFoundError, FlagSourceConflictError, FlagSourceConfigError, FlagNotFoundError } = require('./lib/flags');
 const { getSessionUser } = require('./lib/sessions');
 const { mockDataEnabled, loadMockDashboard } = require('./lib/mock-dashboard');
+const { localModeEnabled, LOCAL_MODE_WARNING } = require('./lib/local-mode');
 
 const { registerHealthRoutes } = require('./routes/health');
 const { registerAuthRoutes } = require('./routes/auth');
@@ -149,13 +150,14 @@ function splitCookie(value, first, second) {
  * the small set of cross-domain helpers (requireUser, assertAdminOf, ...) every route file receives through
  * `ctx` instead of its own copy.
  *
- * @param {{ pool: import('pg').Pool, auth?: ReturnType<typeof loadAuthConfig>, githubApp?: ReturnType<typeof loadGitHubAppConfig>, atlassian?: ReturnType<typeof loadAtlassianConfig>, fetch?: typeof fetch, logger?: boolean|object, dashboardDir?: string, mockDashboard?: { data: object, issuesByPi: Record<string, object[]> }|null, ingestRateLimit?: { capacity: number, refillPerSecond: number }, syncIntervalMinutes?: number, encryptionKey?: Buffer|null, sealingKeys?: { publicKey: object, privateKeys: object[] }|null, safeFetch?: Function, oidcVerifier?: { verify: Function }|null, metricsToken?: string|null }} options
+ * @param {{ pool: import('pg').Pool, auth?: ReturnType<typeof loadAuthConfig>, githubApp?: ReturnType<typeof loadGitHubAppConfig>, atlassian?: ReturnType<typeof loadAtlassianConfig>, fetch?: typeof fetch, logger?: boolean|object, dashboardDir?: string, mockDashboard?: { data: object, issuesByPi: Record<string, object[]> }|null, ingestRateLimit?: { capacity: number, refillPerSecond: number }, syncIntervalMinutes?: number, encryptionKey?: Buffer|null, sealingKeys?: { publicKey: object, privateKeys: object[] }|null, safeFetch?: Function, oidcVerifier?: { verify: Function }|null, metricsToken?: string|null, localMode?: boolean }} options
  *   `encryptionKey` (TOKEN_ENCRYPTION_KEY, default the Atlassian config's) seals endpoint tokens and signs endpoint
  *   requests; `sealingKeys` (the public key only) seals endpoint tokens for the worker; `safeFetch` replaces
- *   lib/safe-fetch.js's in tests
+ *   lib/safe-fetch.js's in tests; `localMode` (lib/local-mode.js, decided once at start) lets the connection with pdi
+ *   reach a receiver on loopback
  * @returns {import('fastify').FastifyInstance}
  */
-function buildApp({ pool, auth, githubApp = null, atlassian = null, fetch: fetchFn = fetch, logger = false, dashboardDir = DEFAULT_DASHBOARD_DIR, mockDashboard = null, ingestRateLimit = null, syncIntervalMinutes = 15, encryptionKey = atlassian ? atlassian.encryptionKey : null, sealingKeys = null, safeFetch = null, oidcVerifier = undefined, metricsToken = null }) {
+function buildApp({ pool, auth, githubApp = null, atlassian = null, fetch: fetchFn = fetch, logger = false, dashboardDir = DEFAULT_DASHBOARD_DIR, mockDashboard = null, ingestRateLimit = null, syncIntervalMinutes = 15, encryptionKey = atlassian ? atlassian.encryptionKey : null, sealingKeys = null, safeFetch = null, oidcVerifier = undefined, metricsToken = null, localMode = false }) {
     const app = Fastify({
         // A request id on every log line of a request and in the response (X-Request-Id), so a user's report can be
         // matched to the logs; one sent by the caller (Render's proxy, a load balancer) is kept.
@@ -235,7 +237,7 @@ function buildApp({ pool, auth, githubApp = null, atlassian = null, fetch: fetch
     }
 
     const ctx = {
-        pool, auth, githubApp, atlassian, fetchFn, baseCookie, encryptionKey, sealingKeys, safeFetch,
+        pool, auth, githubApp, atlassian, fetchFn, baseCookie, encryptionKey, sealingKeys, safeFetch, localMode,
         // GitHub Actions OIDC tokens on the flags ingest are addressed to this server's public origin (lib/github-oidc.js).
         oidcVerifier: oidcVerifier !== undefined ? oidcVerifier : auth && auth.publicBaseUrl ? createOidcVerifier({ audience: auth.publicBaseUrl }) : null,
         requireUser, requireUserOrSignIn, assertAdminOf,
@@ -280,9 +282,11 @@ if (require.main === module) {
     logProcessFailures(log);
     pool.on('error', (err) => log.error('idle database connection failed', { err }));
     if (mockDashboard) log.warn('SHIPSCOPE_MOCK_DATA=1: every dashboard shows the built-in sample data');
+    const localMode = localModeEnabled(process.env);
+    if (localMode) log.warn(LOCAL_MODE_WARNING);
     const syncIntervalMinutes = Number(process.env.SYNC_INTERVAL_MINUTES) || 15;
     const metricsToken = loadMetricsToken(process.env);
-    const app = buildApp({ pool, auth, githubApp, atlassian, encryptionKey, sealingKeys, logger: loggerOptions({ level, version: APP_VERSION }), dashboardDir, mockDashboard, syncIntervalMinutes, metricsToken });
+    const app = buildApp({ pool, auth, githubApp, atlassian, encryptionKey, sealingKeys, logger: loggerOptions({ level, version: APP_VERSION }), dashboardDir, mockDashboard, syncIntervalMinutes, metricsToken, localMode });
     // Once a minute, today's sample for the status page (lib/status-page.js); a failure is logged, never fatal.
     const expectWorker = { deployments: !!githubApp, jira: !!atlassian, flags: !!encryptionKey };
     setInterval(() => {

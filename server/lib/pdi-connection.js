@@ -24,11 +24,14 @@ class PdiConnectionError extends Error {}
 class PdiConnectionConflictError extends Error {}
 class NoPdiConnectionError extends Error {}
 
-/** The receiver's base address, checked like every address a customer gives (https, public). */
-function receiverBase(raw) {
+/**
+ * The receiver's base address, checked like every address a customer gives (https, public); in local mode
+ * (lib/local-mode.js) it may also be on loopback (http or https, any port: design-docs/LOCAL-PDI-PLAN.pl.md).
+ */
+function receiverBase(raw, { localMode = false } = {}) {
     let url;
     try {
-        url = checkUrl(String(raw).trim());
+        url = checkUrl(String(raw).trim(), { loopback: localMode });
     } catch (err) {
         if (err instanceof SafeFetchError) throw new PdiConnectionError(err.message);
         throw err;
@@ -56,14 +59,15 @@ async function getPdiConnection(pool, { tenantId, actorUserId, now = new Date() 
  * needs are in the answer only.
  *
  * @param {import('pg').Pool} pool
- * @param {{ tenantId: string, actorUserId: string, receiverUrl: string, publicBaseUrl: string, encryptionKey: Buffer|object|null, now?: Date }} input
+ * @param {{ tenantId: string, actorUserId: string, receiverUrl: string, publicBaseUrl: string, encryptionKey: Buffer|object|null, localMode?: boolean, now?: Date }} input
+ *   `localMode`: the receiver may be on loopback
  * @returns {Promise<{ connection: ReturnType<typeof judgePdiConnection>, env: { PDI_SHIPSCOPE_URL: string, PDI_SHIPSCOPE_TOKEN: string, PDI_SHIPSCOPE_SIGNING_SECRET: string } }>}
  * @throws {PdiConnectionError|PdiConnectionConflictError}
  */
-async function connectPdi(pool, { tenantId, actorUserId, receiverUrl, publicBaseUrl, encryptionKey, now = new Date() }) {
+async function connectPdi(pool, { tenantId, actorUserId, receiverUrl, publicBaseUrl, encryptionKey, localMode = false, now = new Date() }) {
     if (!encryptionKey) throw new PdiConnectionError('This server cannot connect pdi: TOKEN_ENCRYPTION_KEY is not set');
     if (!publicBaseUrl) throw new PdiConnectionError('This server cannot connect pdi: PUBLIC_BASE_URL is not set');
-    const base = receiverBase(receiverUrl);
+    const base = receiverBase(receiverUrl, { localMode });
     return withScope(pool, { tenantId }, async (client) => {
         await assertAdmin(client, { tenantId, userId: actorUserId });
         const { rows: [existing] } = await client.query('SELECT disconnected_at FROM pdi_connections WHERE tenant_id = $1 FOR UPDATE', [tenantId]);
@@ -117,10 +121,11 @@ async function disconnectPdi(pool, { tenantId, actorUserId, now = new Date() }) 
  * signature over an empty body; the result is kept on the connection.
  *
  * @param {import('pg').Pool} pool
- * @param {{ tenantId: string, encryptionKey: Buffer|object, fetchImpl: Function, now?: Date }} input
+ * @param {{ tenantId: string, encryptionKey: Buffer|object, fetchImpl: Function, localMode?: boolean, now?: Date }} input
+ *   `localMode`: a receiver on loopback may be reached
  * @returns {Promise<boolean|null>} reached pdi; null without an active connection
  */
-async function pingPdi(pool, { tenantId, encryptionKey, fetchImpl, now = new Date() }) {
+async function pingPdi(pool, { tenantId, encryptionKey, fetchImpl, localMode = false, now = new Date() }) {
     const target = await withScope(pool, { tenantId }, async (client) => {
         const { rows: [connection] } = await client.query('SELECT receiver_url, subscription_id FROM pdi_connections WHERE tenant_id = $1 AND disconnected_at IS NULL', [tenantId]);
         if (!connection) return null;
@@ -141,7 +146,7 @@ async function pingPdi(pool, { tenantId, encryptionKey, fetchImpl, now = new Dat
     let error = null;
     try {
         const res = await fetchImpl(target.url, {
-            method: 'GET',
+            method: 'GET', loopback: localMode,
             headers: { 'x-shipscope-timestamp': timestamp, 'x-shipscope-event': 'ping', 'x-shipscope-signature': eventSignature({ secret: target.secret, timestamp, body: '' }) },
         });
         if (res.status < 200 || res.status >= 300) error = `${new URL(target.url).host} answered HTTP ${res.status}`;
@@ -191,15 +196,15 @@ async function backfillPdiConnections(pool) {
  * Pings every active connection (the worker, hourly). Never throws for one tenant.
  *
  * @param {import('pg').Pool} pool
- * @param {{ encryptionKey: Buffer|object, fetchImpl: Function, now?: Date, log?: Function }} input
+ * @param {{ encryptionKey: Buffer|object, fetchImpl: Function, localMode?: boolean, now?: Date, log?: Function }} input
  * @returns {Promise<{ pinged: number, failed: number }>}
  */
-async function pingPdiConnections(pool, { encryptionKey, fetchImpl, now = new Date(), log = () => {} }) {
+async function pingPdiConnections(pool, { encryptionKey, fetchImpl, localMode = false, now = new Date(), log = () => {} }) {
     const totals = { pinged: 0, failed: 0 };
     const { rows: tenants } = await pool.query('SELECT id FROM tenants ORDER BY created_at');
     for (const { id: tenantId } of tenants) {
         try {
-            const ok = await pingPdi(pool, { tenantId, encryptionKey, fetchImpl, now });
+            const ok = await pingPdi(pool, { tenantId, encryptionKey, fetchImpl, localMode, now });
             if (ok === null) continue;
             totals.pinged += 1;
             if (!ok) totals.failed += 1;
@@ -215,14 +220,14 @@ async function pingPdiConnections(pool, { encryptionKey, fetchImpl, now = new Da
  * Settings' Test: a ping now, then the state. Admins only.
  *
  * @param {import('pg').Pool} pool
- * @param {{ tenantId: string, actorUserId: string, encryptionKey: Buffer|object|null, fetchImpl: Function, now?: Date }} input
+ * @param {{ tenantId: string, actorUserId: string, encryptionKey: Buffer|object|null, fetchImpl: Function, localMode?: boolean, now?: Date }} input
  * @returns {Promise<ReturnType<typeof judgePdiConnection>>}
  * @throws {NoPdiConnectionError|PdiConnectionError}
  */
-async function testPdiConnection(pool, { tenantId, actorUserId, encryptionKey, fetchImpl, now = new Date() }) {
+async function testPdiConnection(pool, { tenantId, actorUserId, encryptionKey, fetchImpl, localMode = false, now = new Date() }) {
     await withScope(pool, { tenantId }, (client) => assertAdmin(client, { tenantId, userId: actorUserId }));
     if (!encryptionKey) throw new PdiConnectionError('This server cannot test pdi: TOKEN_ENCRYPTION_KEY is not set');
-    if ((await pingPdi(pool, { tenantId, encryptionKey, fetchImpl, now })) === null) throw new NoPdiConnectionError('This workspace is not connected with pdi');
+    if ((await pingPdi(pool, { tenantId, encryptionKey, fetchImpl, localMode, now })) === null) throw new NoPdiConnectionError('This workspace is not connected with pdi');
     return withScope(pool, { tenantId }, (client) => readPdiConnection(client, { tenantId, now }));
 }
 

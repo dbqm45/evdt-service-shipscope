@@ -120,3 +120,59 @@ test('POST (outgoing events): the method, a JSON body with its length, the calle
     await assert.rejects(safeFetch('https://10.0.0.1/events', { method: 'POST', body: '{}' }), /private or reserved/);
     await assert.rejects(get('/events', { method: 'DELETE' }), /GET or POST/);
 });
+
+// Local mode (design-docs/LOCAL-PDI-PLAN.pl.md): with `loopback` the pdi receiver may be on this machine. Only the
+// names localhost, 127.0.0.1 and ::1, http or https, any port, connected to the loopback address without DNS.
+const http = require('http');
+
+test('checkUrl: loopback refused without local mode; with `loopback` only localhost, 127.0.0.1 and ::1 are let through', () => {
+    for (const url of ['http://127.0.0.1:8787', 'https://localhost:8787/x', 'http://[::1]:8787', 'https://127.0.0.1/x']) {
+        assert.throws(() => checkUrl(url), SafeFetchError, url);
+        assert.ok(checkUrl(url, { loopback: true }), url);
+    }
+    for (const [url, why] of [
+        ['http://10.0.0.5:8787', /Only https/],
+        ['https://10.0.0.5', /private or reserved/],
+        ['https://192.168.1.20', /private or reserved/],
+        ['http://127.0.0.2:8787', /Only https/],
+        ['https://127.0.0.2', /private or reserved/],
+        ['https://[::ffff:127.0.0.1]', /private or reserved/],
+        ['http://pdi.example.com', /Only https/],
+        ['https://pdi.example.com:8787', /Only port 443/],
+        ['http://localhost.example.com:8787', /Only https/],
+        ['https://pdi.localhost', /not a public name/],
+        ['http://user:pw@127.0.0.1:8787', /user name or password/],
+        ['ftp://127.0.0.1/x', /Only https/],
+    ]) assert.throws(() => checkUrl(url, { loopback: true }), (err) => err instanceof SafeFetchError && why.test(err.message), url);
+});
+
+test('local mode: an http receiver on 127.0.0.1 is reached without DNS; redirects, size and time limits still apply', async (t) => {
+    const handlers = {
+        '/events/shipscope': (req, res) => {
+            let body = '';
+            req.on('data', (c) => { body += c; });
+            req.on('end', () => res.end(JSON.stringify({ method: req.method, event: req.headers['x-shipscope-event'], body })));
+        },
+        '/moved': (req, res) => { res.statusCode = 302; res.setHeader('location', 'http://169.254.169.254/'); res.end(); },
+        '/big': (req, res) => res.end('x'.repeat(2000)),
+        '/slow': () => {},
+    };
+    const receiver = http.createServer((req, res) => (handlers[req.url] || ((q, r) => { r.statusCode = 404; r.end(); }))(req, res));
+    await new Promise((resolve) => receiver.listen(0, '127.0.0.1', resolve));
+    t.after(() => { receiver.closeAllConnections(); receiver.close(); });
+    const base = `127.0.0.1:${receiver.address().port}`;
+    const noDns = () => { throw new Error('must not resolve a loopback name'); };
+
+    await assert.rejects(safeFetch(`http://${base}/events/shipscope`), /Only https/, 'refused without local mode');
+    const ping = await safeFetch(`http://${base}/events/shipscope`, { loopback: true, lookup: noDns, headers: { 'x-shipscope-event': 'ping' } });
+    assert.deepStrictEqual([ping.status, ping.address, JSON.parse(ping.body)], [200, '127.0.0.1', { method: 'GET', event: 'ping', body: '' }]);
+    const named = await safeFetch(`http://localhost:${receiver.address().port}/events/shipscope`, { loopback: true, lookup: noDns, method: 'POST', body: '{"a":1}' });
+    assert.deepStrictEqual([named.address, JSON.parse(named.body).body], ['127.0.0.1', '{"a":1}'], 'localhost goes to 127.0.0.1 itself');
+
+    await assert.rejects(safeFetch(`http://${base}/moved`, { loopback: true }), /answered with a redirect \(HTTP 302\)/);
+    await assert.rejects(safeFetch(`http://${base}/big`, { loopback: true, maxBytes: 1000 }), /larger than 1 KB/);
+    await assert.rejects(safeFetch(`http://${base}/slow`, { loopback: true, timeoutMs: 300 }), /did not answer within/);
+    await assert.rejects(safeFetch('http://10.0.0.5:8787/events/shipscope', { loopback: true }), /Only https/, 'a private network is not loopback');
+    await assert.rejects(safeFetch('https://rebind.example.com/x', { loopback: true, lookup: (h, o, cb) => cb(null, [{ address: '127.0.0.1', family: 4 }]) }),
+        /resolves to a private or reserved address/, 'a public name that resolves to loopback is still refused');
+});

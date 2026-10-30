@@ -140,6 +140,19 @@ button{font:inherit;padding:.6rem 1.2rem;border-radius:6px;border:0;background:#
 code{background:#f0f0f0;padding:0 .3rem;border-radius:4px}</style></head><body>${body}</body></html>`;
 }
 
+/**
+ * The TOKEN_ENCRYPTION_KEY to write when server/.env has none (32 random bytes, base64), so pdi, endpoint flags and
+ * outgoing events work locally; null when one is set, whatever its value (it is never replaced).
+ *
+ * @param {Record<string, string>} fileEnv server/.env as parseEnvFile() read it
+ * @param {(size: number) => Buffer} [randomBytes]
+ * @returns {{ TOKEN_ENCRYPTION_KEY: string }|null}
+ */
+function encryptionKeyUpdate(fileEnv, randomBytes = crypto.randomBytes) {
+    if (fileEnv.TOKEN_ENCRYPTION_KEY) return null;
+    return { TOKEN_ENCRYPTION_KEY: randomBytes(32).toString('base64') };
+}
+
 function readEnvFile() {
     return fs.existsSync(ENV_FILE) ? fs.readFileSync(ENV_FILE, 'utf8') : null;
 }
@@ -370,6 +383,12 @@ async function main() {
     ensureEnvFile();
     let fileEnv = parseEnvFile(readEnvFile());
 
+    const keyUpdate = encryptionKeyUpdate(fileEnv);
+    if (keyUpdate) {
+        writeEnvValues(keyUpdate);
+        step('Created TOKEN_ENCRYPTION_KEY in server/.env (32 random bytes; kept from now on, never replaced)');
+        fileEnv = parseEnvFile(readEnvFile());
+    }
     if (!fileEnv.DATABASE_URL) {
         writeEnvValues({ DATABASE_URL: devDatabaseUrl(DEFAULT_PG_PORT), DATABASE_SSL: 'false' });
         fileEnv = parseEnvFile(readEnvFile());
@@ -456,4 +475,4 @@ if (require.main === module) {
     });
 }
 
-module.exports = { parseEnvFile, setEnvValues, devDatabasePort, buildManifest, envFromConversion };
+module.exports = { parseEnvFile, setEnvValues, devDatabasePort, buildManifest, envFromConversion, encryptionKeyUpdate };
