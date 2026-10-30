@@ -92,3 +92,55 @@ test('connect gives the three variables once; again is exit 4 unless --replace; 
     const kinds = (await app.inject({ method: 'GET', url: `/tenants/${tenantId}/audit-events`, cookies: { sid: alice } })).json().events.map((e) => e.kind);
     assert.deepStrictEqual(kinds.filter((k) => k.startsWith('pdi_')).sort(), ['pdi_connected', 'pdi_connected', 'pdi_disconnected']);
 });
+
+test('track: the repo of a linked installation, and its flags read from code; again changes nothing', async (t) => {
+    const { pool, teardown } = await createTestDb();
+    t.after(teardown);
+    const { withScope } = require('../lib/scope');
+    const app = buildApp({ pool, auth: AUTH, fetch: fakeGitHub({ alice: { id: 850_600_002, login: 'alice' } }), encryptionKey: KEY });
+    t.after(() => app.close());
+    const alice = await signIn(app, 'alice');
+    const tenantId = (await app.inject({ method: 'POST', url: '/tenants', cookies: { sid: alice }, payload: { name: 'Lokalnie' } })).json().tenant.id;
+    const listed = [];
+    const listRepos = async (installationId) => {
+        listed.push(installationId);
+        return [{ id: 901, fullName: 'alice/sdlc-proba', private: true }, { id: 902, fullName: 'alice/inne', private: false }];
+    };
+    const flags = JSON.stringify({ file: 'config/flags.{env}.json', path: 'flags' });
+    const track = (argv) => {
+        const c = capture();
+        return run({ argv: ['track', ...argv], env: LOCAL, pool, io: c.io, listRepos }).then((code) => ({ code, c }));
+    };
+
+    let { code, c } = await track(['--repo', 'alice/sdlc-proba', '--flags', flags]);
+    assert.strictEqual(code, 5, 'no installation linked yet');
+    assert.match(c.err.join(''), /Install the ShipScope GitHub App.*alice/);
+
+    const { rows: [user] } = await pool.query('SELECT id FROM users LIMIT 1');
+    await withScope(pool, { tenantId }, (cl) => cl.query(
+        "INSERT INTO github_installations (tenant_id, installation_id, account_login, account_type, created_by) VALUES ($1, 77, 'alice', 'User', $2)", [tenantId, user.id]
+    ));
+    ({ code, c } = await track(['--repo', 'alice/nie-ma', '--flags', flags]));
+    assert.strictEqual(code, 5, 'the installation cannot see that repo');
+    assert.match(c.err.join(''), /alice\/nie-ma/);
+
+    ({ code, c } = await track(['--repo', 'alice/sdlc-proba', '--flags', flags]));
+    assert.strictEqual(code, 0, c.err.join(''));
+    const first = c.json();
+    assert.deepStrictEqual([first.workspace.id, first.repo, first.flagSource.created], [tenantId, { repoId: 901, fullName: 'alice/sdlc-proba', installationId: 77 }, true]);
+    const sources = (await app.inject({ method: 'GET', url: `/tenants/${tenantId}/flag-sources`, cookies: { sid: alice } })).json().sources;
+    assert.strictEqual(sources.length, 1);
+    assert.deepStrictEqual([sources[0].origin, sources[0].kind, sources[0].repoIds, sources[0].code.file], ['code', 'build', [901], 'config/flags.{env}.json']);
+    const repos = await withScope(pool, { tenantId }, async (cl) => (await cl.query('SELECT full_name, installation_id FROM tracked_repos')).rows);
+    assert.deepStrictEqual(repos, [{ full_name: 'alice/sdlc-proba', installation_id: '77' }]);
+
+    ({ code, c } = await track(['--repo', 'alice/sdlc-proba', '--flags', flags]));
+    assert.strictEqual(code, 0);
+    assert.strictEqual(c.json().flagSource.created, false, 'the same source is kept');
+    assert.strictEqual((await app.inject({ method: 'GET', url: `/tenants/${tenantId}/flag-sources`, cookies: { sid: alice } })).json().sources.length, 1);
+
+    for (const argv of [['--repo', 'zła nazwa'], ['--repo', 'alice/sdlc-proba', '--flags', '{"file":"../x.json"}'], ['--repo', 'alice/sdlc-proba', '--flags', 'nie json']]) {
+        ({ code, c } = await track(argv));
+        assert.strictEqual(code, 2, argv.join(' '));
+    }
+});

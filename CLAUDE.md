@@ -46,7 +46,9 @@ start of `web.js` (`buildApp({ localMode })` → `ctx.localMode`) and `worker.js
 (e.g. pdi-receiver at `http://127.0.0.1:8787`, no tunnel). `npm run pdi:local --prefix server -- connect|test`
 (`server/scripts/local-pdi.js`, `run()`, local mode only, for pdi's `sdlc up`) connects or tests that receiver as the oldest
 workspace's first admin without the browser and prints the three `PDI_SHIPSCOPE_*` values as JSON on stdout (exit 3: no
-workspace yet, 4: already connected; `--replace`) (`server/test/local-pdi.test.js`). Pure helpers are tested in `server/test/dev.test.js`. `npm run dev:mock` (`--mock`) runs the same, but with
+workspace yet, 4: already connected; `--replace`); `track --repo <owner/name> [--flags <code config JSON>]` (pdi's
+`sdlc sandbox`, L5) tracks a repo of a linked installation and adds its code flags source, both idempotent (exit 5: the
+App cannot see the repo yet) (`server/test/local-pdi.test.js`). Pure helpers are tested in `server/test/dev.test.js`. `npm run dev:mock` (`--mock`) runs the same, but with
 `SHIPSCOPE_MOCK_DATA=1`: the dashboard-data and jira-issues routes answer members with the `FALLBACK` sample dataset
 (`server/lib/mock-dashboard.js` builds it once by running `docs/app-*.js` in a `vm` sandbox, so there is one copy of
 it) and the badge reads "Mock". Sign-in, workspaces and settings stay real; refused unless `PUBLIC_BASE_URL` is

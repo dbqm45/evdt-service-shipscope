@@ -473,8 +473,12 @@ workspace, `npm run pdi:local --prefix server -- connect [--receiver http://127.
 server/scripts/local-pdi.js …`) does what Settings → Integrations → pdi → Connect does, as the oldest workspace's first
 admin, and prints `{ workspace, connection, env }` as JSON on stdout, `env` being the three `PDI_SHIPSCOPE_*` values
 (once; `--replace` disconnects first and gives new ones). `… test` pings the receiver like Test and prints the state.
-Exit codes: 0 done, 2 refused, 3 no workspace yet, 4 already connected. It reads `server/.env` like `npm run dev`;
-outside local mode it refuses before touching the database.
+`… track --repo <owner/name> [--flags '{"file":"config/flags.{env}.json"}']` is Track repository for a repo of
+an installation already linked to the workspace (installing the GitHub App stays a click in the browser), plus, with
+`--flags`, a build source read from that repo's code (the JSON is its `code` config, checked by `checkCodeConfig()`);
+both idempotent; it prints `{ workspace, repo, flagSource }`. Exit codes: 0 done, 2 refused, 3 no workspace yet, 4
+already connected, 5 the App is not installed on the repo's account or cannot see the repo. It reads `server/.env` like
+`npm run dev`; outside local mode it refuses before touching the database.
 
 **First run: the GitHub App.** Signing in needs a GitHub App. When `server/.env` has none, `npm run dev` first
 prints a link to a local page with one button; GitHub then creates a private App for this server from a manifest
