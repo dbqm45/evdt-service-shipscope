@@ -468,6 +468,14 @@ receiver at `localhost`, `127.0.0.1` or `[::1]`, over http or https, on any port
 addresses (`127.0.0.2`), names that resolve to loopback, http or another port on a public host, flag endpoint sources
 and other event subscriptions.
 
+**Connecting pdi without the browser** (local mode only, for pdi's `sdlc up`): after someone has signed in and created a
+workspace, `npm run pdi:local --prefix server -- connect [--receiver http://127.0.0.1:8787] [--replace]` (or `node
+server/scripts/local-pdi.js …`) does what Settings → Integrations → pdi → Connect does, as the oldest workspace's first
+admin, and prints `{ workspace, connection, env }` as JSON on stdout, `env` being the three `PDI_SHIPSCOPE_*` values
+(once; `--replace` disconnects first and gives new ones). `… test` pings the receiver like Test and prints the state.
+Exit codes: 0 done, 2 refused, 3 no workspace yet, 4 already connected. It reads `server/.env` like `npm run dev`;
+outside local mode it refuses before touching the database.
+
 **First run: the GitHub App.** Signing in needs a GitHub App. When `server/.env` has none, `npm run dev` first
 prints a link to a local page with one button; GitHub then creates a private App for this server from a manifest
 (callback `http://localhost:3000/auth/github/callback`, setup URL `/github/setup` with redirect on update,

@@ -13,6 +13,7 @@
     "test": "node --test \"test/*.test.js\"",
     "dev": "node scripts/dev.js",
     "dev:mock": "node scripts/dev.js --mock",
+    "pdi:local": "node scripts/local-pdi.js",
     "sealing-keys": "node scripts/sealing-keys.js",
     "verify-restore": "node scripts/verify-restore.js"
   },
