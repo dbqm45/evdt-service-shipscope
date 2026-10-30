@@ -7,6 +7,8 @@
 //   X-ShipScope-Timestamp: <unix seconds>
 //   X-ShipScope-Signature: v1=<hex HMAC-SHA256(secret, "<timestamp>.<body>")>
 //   X-ShipScope-Event: <type>
+// In local mode (lib/local-mode.js) only the connection with pdi's own subscription may be on loopback
+// (design-docs/LOCAL-PDI-PLAN.pl.md); every other subscription keeps those rules.
 // A failed delivery is tried again after 1, 2, 4… minutes up to an hour; after MAX_ATTEMPTS it is given up. The last
 // error shows on the subscription in Settings. Receivers deduplicate by the event's `id`.
 const crypto = require('crypto');
@@ -194,16 +196,19 @@ async function detectReleaseEvents(pool, { tenantId, now = new Date(), log = () 
  * Delivers what is due, oldest first, for every tenant. Never throws for one delivery.
  *
  * @param {import('pg').Pool} pool
- * @param {{ encryptionKey: Buffer, fetchImpl: Function, now?: Date, log?: Function }} input
+ * @param {{ encryptionKey: Buffer, fetchImpl: Function, localMode?: boolean, now?: Date, log?: Function }} input
+ *   `localMode`: the active pdi connection's subscription may be on loopback
  * @returns {Promise<{ delivered: number, failed: number, retried: number }>} failed: given up this time
  */
-async function deliverEvents(pool, { encryptionKey, fetchImpl, now = new Date(), log = () => {} }) {
+async function deliverEvents(pool, { encryptionKey, fetchImpl, localMode = false, now = new Date(), log = () => {} }) {
     const totals = { delivered: 0, failed: 0, retried: 0 };
     const { rows: tenants } = await pool.query('SELECT id FROM tenants ORDER BY created_at');
     for (const { id: tenantId } of tenants) {
         const due = await withScope(pool, { tenantId }, async (client) => {
             const { rows } = await client.query(
-                `SELECT o.id, o.event, o.attempts, s.id AS subscription_id, s.url FROM event_outbox o
+                `SELECT o.id, o.event, o.attempts, s.id AS subscription_id, s.url,
+                        EXISTS (SELECT 1 FROM pdi_connections p WHERE p.tenant_id = s.tenant_id AND p.subscription_id = s.id AND p.disconnected_at IS NULL) AS pdi
+                 FROM event_outbox o
                  JOIN event_subscriptions s ON s.tenant_id = o.tenant_id AND s.id = o.subscription_id
                  WHERE o.tenant_id = $1 AND o.delivered_at IS NULL AND o.failed_at IS NULL AND o.next_attempt_at <= $2
                  ORDER BY o.created_at LIMIT $3`,
@@ -222,7 +227,7 @@ async function deliverEvents(pool, { encryptionKey, fetchImpl, now = new Date(),
             let error = null;
             try {
                 const res = await fetchImpl(row.url, {
-                    method: 'POST', body,
+                    method: 'POST', body, loopback: localMode && row.pdi,
                     headers: {
                         'content-type': 'application/json', 'x-shipscope-timestamp': timestamp, 'x-shipscope-event': row.event.type,
                         'x-shipscope-signature': eventSignature({ secret: due.secrets.get(row.subscription_id), timestamp, body }),

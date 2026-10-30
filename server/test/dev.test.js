@@ -1,7 +1,7 @@
 // The pure parts of scripts/dev.js (`npm run dev`); the Docker/GitHub/process side is checked by running it.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { parseEnvFile, setEnvValues, devDatabasePort, buildManifest, envFromConversion } = require('../scripts/dev');
+const { parseEnvFile, setEnvValues, devDatabasePort, buildManifest, envFromConversion, encryptionKeyUpdate } = require('../scripts/dev');
 
 test('parseEnvFile: KEY=value lines, comments skipped, quotes stripped, escapes kept as written', () => {
     const env = parseEnvFile([
@@ -58,4 +58,16 @@ test('envFromConversion: the five GITHUB_APP_* values, the key on one line, a mi
         GITHUB_APP_PRIVATE_KEY: '-----BEGIN\\nabc\\n-----END',
     });
     assert.throws(() => envFromConversion({ id: 1, slug: 's', client_id: 'c', pem: 'p' }), /client_secret/);
+});
+
+test('encryptionKeyUpdate: a TOKEN_ENCRYPTION_KEY of 32 random bytes once; an existing one is kept', () => {
+    const text = 'PUBLIC_BASE_URL=http://localhost:3000\nTOKEN_ENCRYPTION_KEY=\n';
+    const update = encryptionKeyUpdate(parseEnvFile(text));
+    assert.match(update.TOKEN_ENCRYPTION_KEY, /^[A-Za-z0-9+/]{43}=$/);
+    assert.equal(Buffer.from(update.TOKEN_ENCRYPTION_KEY, 'base64').length, 32);
+    const written = setEnvValues(text, update);
+    assert.equal(parseEnvFile(written).TOKEN_ENCRYPTION_KEY, update.TOKEN_ENCRYPTION_KEY);
+    assert.equal(encryptionKeyUpdate(parseEnvFile(written)), null, 'generated once');
+    assert.equal(encryptionKeyUpdate({ TOKEN_ENCRYPTION_KEY: 'mine' }), null, 'never replaces a value, even one that is not valid');
+    assert.notEqual(encryptionKeyUpdate({}).TOKEN_ENCRYPTION_KEY, update.TOKEN_ENCRYPTION_KEY, 'random');
 });

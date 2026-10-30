@@ -10,7 +10,13 @@
 // - a time limit for the whole request and a size limit on the body as read, after decompression (gzip, deflate,
 //   br), so a small compressed answer cannot expand into gigabytes;
 // - the caller's headers only, never cookies or the service's own credentials.
+//
+// One exception, `loopback` (design-docs/LOCAL-PDI-PLAN.pl.md): in local mode (lib/local-mode.js) the caller passes it
+// for the pdi receiver only, and then a URL whose host is exactly localhost, 127.0.0.1 or ::1 may be http or https on
+// any port; it is connected to the loopback address itself, never through DNS. Redirects, time and size limits stay.
+// Every other address keeps the rules above, with or without it.
 const dns = require('dns');
+const http = require('http');
 const https = require('https');
 const net = require('net');
 const zlib = require('zlib');
@@ -47,25 +53,41 @@ function forbiddenAddress(address) {
     return true;
 }
 
+// The loopback host names `loopback` lets through, and the address each is connected to.
+const LOOPBACK_HOSTS = new Map([['localhost', { address: '127.0.0.1', family: 4 }], ['127.0.0.1', { address: '127.0.0.1', family: 4 }], ['::1', { address: '::1', family: 6 }]]);
+
+const hostOf = (url) => url.hostname.replace(/^\[|\]$/g, '');
+
+/** The loopback address a URL names, when `loopback` lets it through; else null. */
+function loopbackTarget(url, loopback) {
+    if (!loopback || !['http:', 'https:'].includes(url.protocol)) return null;
+    return LOOPBACK_HOSTS.get(hostOf(url)) || null;
+}
+
 /**
- * Checks a URL a customer gave: https, port 443 (or the one allowed), no user info, a host name or a public IP.
+ * Checks a URL a customer gave: https, port 443 (or the one allowed), no user info, a host name or a public IP. With
+ * `loopback` (local mode, the pdi receiver only) also http or https to localhost, 127.0.0.1 or ::1 on any port.
  *
  * @param {string} raw
- * @param {{ port?: number }} [options]
+ * @param {{ port?: number, loopback?: boolean }} [options]
  * @returns {URL}
  * @throws {SafeFetchError}
  */
-function checkUrl(raw, { port = DEFAULTS.port } = {}) {
+function checkUrl(raw, { port = DEFAULTS.port, loopback = false } = {}) {
     let url;
     try {
         url = new URL(raw);
     } catch {
         throw new SafeFetchError('Not a valid URL');
     }
+    if (loopbackTarget(url, loopback)) {
+        if (url.username || url.password) throw new SafeFetchError('An address may not carry a user name or password; use a token');
+        return url;
+    }
     if (url.protocol !== 'https:') throw new SafeFetchError('Only https:// addresses are allowed');
     if (url.username || url.password) throw new SafeFetchError('An address may not carry a user name or password; use a token');
     if ((url.port ? Number(url.port) : 443) !== port) throw new SafeFetchError(`Only port ${port} is allowed`);
-    const host = url.hostname.replace(/^\[|\]$/g, '');
+    const host = hostOf(url);
     if (net.isIP(host) && forbiddenAddress(host)) throw new SafeFetchError('That address is not reachable from ShipScope (a private or reserved network)');
     if (!net.isIP(host) && (!host.includes('.') || /\.(localhost|local|internal|localdomain)$/i.test(host) || host === 'localhost')) {
         throw new SafeFetchError('That host name is not reachable from ShipScope (not a public name)');
@@ -121,18 +143,22 @@ function readBody(res, maxBytes) {
  * under the same rules.
  *
  * @param {string} rawUrl
- * @param {{ method?: 'GET'|'POST', body?: string, headers?: Record<string, string>, timeoutMs?: number, maxBytes?: number, port?: number, lookup?: Function, request?: Function, ca?: string }} [options]
- *   `lookup`, `request`, `port` and `ca` exist for tests (a local server); production passes none of them
+ * @param {{ method?: 'GET'|'POST', body?: string, headers?: Record<string, string>, timeoutMs?: number, maxBytes?: number, port?: number, loopback?: boolean, lookup?: Function, request?: Function, ca?: string }} [options]
+ *   `loopback`: local mode's pdi receiver (see above); `lookup`, `request`, `port` and `ca` exist for tests (a local
+ *   server); production passes none of them
  * @returns {Promise<{ status: number, headers: object, contentType: string, body: string, address: string }>}
  * @throws {SafeFetchError} with a message fit to show the admin (no response body in it)
  */
-async function safeFetch(rawUrl, { method = 'GET', body = null, headers = {}, timeoutMs = DEFAULTS.timeoutMs, maxBytes = DEFAULTS.maxBytes, port = DEFAULTS.port, lookup = dns.lookup, request = https.request, ca } = {}) {
+async function safeFetch(rawUrl, { method = 'GET', body = null, headers = {}, timeoutMs = DEFAULTS.timeoutMs, maxBytes = DEFAULTS.maxBytes, port = DEFAULTS.port, loopback = false, lookup = dns.lookup, request = null, ca } = {}) {
     if (method !== 'GET' && method !== 'POST') throw new SafeFetchError('Only GET or POST requests are sent');
-    const url = checkUrl(rawUrl, { port });
-    const host = url.hostname.replace(/^\[|\]$/g, '');
+    const url = checkUrl(rawUrl, { port, loopback });
+    const host = hostOf(url);
     const deadline = Date.now() + timeoutMs;
-    const addresses = await resolvePublic(host, lookup);
-    const pinned = addresses[0];
+    const local = loopbackTarget(url, loopback);
+    const pinned = local || (await resolvePublic(host, lookup))[0];
+    const plain = local && url.protocol === 'http:';
+    if (local) port = url.port ? Number(url.port) : plain ? 80 : 443;
+    const send = request || (plain ? http.request : https.request);
     const remaining = () => Math.max(1, deadline - Date.now());
     return new Promise((resolve, reject) => {
         let settled = false;
@@ -143,10 +169,10 @@ async function safeFetch(rawUrl, { method = 'GET', body = null, headers = {}, ti
             req.destroy();
             reject(err instanceof SafeFetchError ? err : new SafeFetchError(`Could not reach ${host} (${err.code || 'connection failed'})`));
         };
-        const req = request({
+        const req = send({
             method,
             host,
-            servername: net.isIP(host) ? undefined : host,
+            servername: plain || net.isIP(host) ? undefined : host,
             port,
             path: `${url.pathname}${url.search}`,
             headers: {
@@ -157,7 +183,7 @@ async function safeFetch(rawUrl, { method = 'GET', body = null, headers = {}, ti
             // The connection goes to the address checked above, never to what a second lookup might answer.
             lookup: (hostname, opts, cb) => (opts && opts.all ? cb(null, [pinned]) : cb(null, pinned.address, pinned.family)),
             agent: false,
-            ca,
+            ...(plain ? {} : { ca }),
         }, (res) => {
             if (res.statusCode >= 300 && res.statusCode < 400) {
                 res.resume();

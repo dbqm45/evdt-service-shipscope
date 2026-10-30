@@ -274,6 +274,8 @@ not stripped or coerced).
   (`forbiddenAddress()`) -- and the connection goes to that checked address (the certificate is still checked
   against the name), so DNS rebinding cannot redirect it. A redirect is an error, the whole request has a time
   limit (10 s) and the body a size limit counted after decompression (1 MB), and only the caller's headers are sent.
+  One exception, **local mode** (below, "Running locally"): only for the connection with pdi, a receiver on this
+  machine is allowed.
 - **Endpoint sources** (`lib/endpoint-flags.js`): the customer's read-only token is sealed with `TOKEN_ENCRYPTION_KEY`
   (`lib/secret-box.js`) bound to the tenant, the source and its purpose, so a value copied elsewhere fails to open; no
   route returns it. Each request is signed per workspace (HMAC-SHA256 with a secret derived from the key). The answer
@@ -348,7 +350,8 @@ Check it in constant time, and refuse a timestamp more than a few minutes old.
 
 Settings → Integrations → pdi (admins; `GET/POST/DELETE /tenants/:tenantId/pdi-connection`,
 `POST …/pdi-connection/test`; design-docs/PDI-CONNECTION-PLAN.pl.md). `POST { receiverUrl }` takes pdi-receiver's
-public https address and, in one step, creates a service token named "pdi", an event subscription to
+public https address (in local mode also `http://127.0.0.1:8787` and other loopback addresses, see "Running locally")
+and, in one step, creates a service token named "pdi", an event subscription to
 `<receiverUrl>/events/shipscope` signed with a secret of its own, and the connection. The answer carries, once, what pdi
 reads from its environment: `PDI_SHIPSCOPE_URL`, `PDI_SHIPSCOPE_TOKEN`, `PDI_SHIPSCOPE_SIGNING_SECRET`.
 
@@ -447,6 +450,24 @@ switches `server/.env` to the database it manages. Any other address that doesn'
 against every visual state without real repositories or Jira. Sign-in, workspaces and settings stay real. It sets
 `SHIPSCOPE_MOCK_DATA=1`, which the server refuses unless `PUBLIC_BASE_URL` is localhost.
 
+**`TOKEN_ENCRYPTION_KEY`.** When `server/.env` has none, `npm run dev` writes one (32 random bytes, base64) and says
+so (`Created TOKEN_ENCRYPTION_KEY in server/.env`); an existing value is never replaced. It seals the workspace's
+secrets (pdi's signing secret, endpoint tokens, Jira tokens), so connecting pdi, endpoint flags and outgoing events
+work locally. On its own it does not turn Jira on (that needs `ATLASSIAN_CLIENT_ID`/`_SECRET` too). Keep it: secrets
+sealed with it cannot be read with another.
+
+**Local mode and pdi on the same machine** (design-docs/LOCAL-PDI-PLAN.pl.md). When `PUBLIC_BASE_URL` is
+`http://localhost[:port]` or `http://127.0.0.1[:port]` and `NODE_ENV` is not `production` (what `npm run dev` sets), the
+web service and the worker start in local mode and log `Local mode (PUBLIC_BASE_URL is http://localhost): …`. It is
+decided once at start (`lib/local-mode.js`, `localModeEnabled()`) and allows one thing: the connection with pdi
+(Settings → Integrations → pdi: Connect, its event subscription, event deliveries, the ping and Test) may use a
+receiver at `localhost`, `127.0.0.1` or `[::1]`, over http or https, on any port, e.g. pdi-receiver at
+`http://127.0.0.1:8787`, without a tunnel. ShipScope connects to the loopback address itself (`localhost` →
+`127.0.0.1`, no DNS), follows no redirects and keeps the time and size limits. Everything else keeps the rules of
+"Calls to customers' addresses", in local mode too: private networks (10/8, 172.16/12, 192.168/16, …), other loopback
+addresses (`127.0.0.2`), names that resolve to loopback, http or another port on a public host, flag endpoint sources
+and other event subscriptions.
+
 **First run: the GitHub App.** Signing in needs a GitHub App. When `server/.env` has none, `npm run dev` first
 prints a link to a local page with one button; GitHub then creates a private App for this server from a manifest
 (callback `http://localhost:3000/auth/github/callback`, setup URL `/github/setup` with redirect on update,
@@ -459,8 +480,8 @@ repo connections) in `server/.env` yourself. The deployed environment needs its 
 
 **Jira** is optional: create an Atlassian OAuth 2.0 (3LO) app (callback `http://localhost:3000/auth/atlassian/callback`, scopes
 in [SETUP.pl.md](SETUP.pl.md))
-and put `ATLASSIAN_CLIENT_ID`, `ATLASSIAN_CLIENT_SECRET` and `TOKEN_ENCRYPTION_KEY` (`openssl rand -base64 32`) into
-`server/.env`, then restart `npm run dev`.
+and put `ATLASSIAN_CLIENT_ID` and `ATLASSIAN_CLIENT_SECRET` into `server/.env` (`TOKEN_ENCRYPTION_KEY` is already
+there, see above), then restart `npm run dev`.
 
 After signing in you land on `/start` (create a workspace) until you have one, and on its dashboard
 (`/t/<tenantId>/`) afterwards; configuration is on `/t/<tenantId>/settings`. A manual test checklist for everything

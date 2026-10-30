@@ -19,7 +19,7 @@ const { listDeployments, getSettings, updateSettings, MAX_LIMIT } = require('../
  * @param {object} ctx see web.js's buildApp() for the full shape
  */
 function registerTenantRoutes(app, ctx) {
-    const { pool, auth, atlassian, fetchFn, requireUser, UUID_PARAM, GITHUB_ID_PARAM, encryptionKey, safeFetch } = ctx;
+    const { pool, auth, atlassian, fetchFn, requireUser, UUID_PARAM, GITHUB_ID_PARAM, encryptionKey, safeFetch, localMode } = ctx;
     const tenantOnlyParams = { type: 'object', required: ['tenantId'], properties: { tenantId: UUID_PARAM } };
 
     app.post('/tenants', {
@@ -197,14 +197,14 @@ function registerTenantRoutes(app, ctx) {
         },
     }, async (request, reply) => reply.code(201).send(await connectPdi(pool, {
         tenantId: request.params.tenantId, actorUserId: request.user.id, receiverUrl: request.body.receiverUrl,
-        publicBaseUrl: auth && auth.publicBaseUrl, encryptionKey,
+        publicBaseUrl: auth && auth.publicBaseUrl, encryptionKey, localMode,
     })));
 
     app.post('/tenants/:tenantId/pdi-connection/test', {
         preHandler: requireUser,
         schema: { params: tenantOnlyParams },
     }, async (request) => ({ connection: await testPdiConnection(pool, {
-        tenantId: request.params.tenantId, actorUserId: request.user.id, encryptionKey, fetchImpl: safeFetch || defaultSafeFetch,
+        tenantId: request.params.tenantId, actorUserId: request.user.id, encryptionKey, fetchImpl: safeFetch || defaultSafeFetch, localMode,
     }) }));
 
     app.delete('/tenants/:tenantId/pdi-connection', {
