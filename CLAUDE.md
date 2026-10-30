@@ -43,7 +43,10 @@ and says so; an existing value is never replaced (the key alone does not turn Ji
 `PUBLIC_BASE_URL` `http://localhost[:port]`/`http://127.0.0.1[:port]` outside `NODE_ENV=production`, decided once at
 start of `web.js` (`buildApp({ localMode })` → `ctx.localMode`) and `worker.js` (`eventDeliveryTick`/`pdiPingTick`
 `{ localMode }`), logged as `LOCAL_MODE_WARNING`; it lets only the connection with pdi reach a receiver on loopback
-(e.g. pdi-receiver at `http://127.0.0.1:8787`, no tunnel). Pure helpers are tested in `server/test/dev.test.js`. `npm run dev:mock` (`--mock`) runs the same, but with
+(e.g. pdi-receiver at `http://127.0.0.1:8787`, no tunnel). `npm run pdi:local --prefix server -- connect|test`
+(`server/scripts/local-pdi.js`, `run()`, local mode only, for pdi's `sdlc up`) connects or tests that receiver as the oldest
+workspace's first admin without the browser and prints the three `PDI_SHIPSCOPE_*` values as JSON on stdout (exit 3: no
+workspace yet, 4: already connected; `--replace`) (`server/test/local-pdi.test.js`). Pure helpers are tested in `server/test/dev.test.js`. `npm run dev:mock` (`--mock`) runs the same, but with
 `SHIPSCOPE_MOCK_DATA=1`: the dashboard-data and jira-issues routes answer members with the `FALLBACK` sample dataset
 (`server/lib/mock-dashboard.js` builds it once by running `docs/app-*.js` in a `vm` sandbox, so there is one copy of
 it) and the badge reads "Mock". Sign-in, workspaces and settings stay real; refused unless `PUBLIC_BASE_URL` is
