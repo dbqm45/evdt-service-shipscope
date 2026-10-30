@@ -113,7 +113,7 @@ GitHub App routes (only when the `GITHUB_APP_*` variables are set):
 |---|---|---|
 | `GET /tenants/:tenantId/github` | session + member | `{ installations: [{ installationId, accountLogin, accountType }], repos: [{ repoId, fullName, installationId }] }`. |
 | `GET /tenants/:tenantId/github/install` | session + admin | Redirects to GitHub to install the App (state cookie). |
-| `GET /github/setup` | session | The App's Setup URL. Checks the state, then signs the user in again so the callback can verify the installation (below) and link it; ends on the settings page (`/t/:tenantId/settings#github`). `setup_action=request` (an org owner must approve) returns 202. |
+| `GET /github/setup` | session | The App's Setup URL. Checks the state, then signs the user in again so the callback can verify the installation (below) and link it; ends on the settings page (`/t/:tenantId/settings#github`). `setup_action=request` (an org owner must approve) returns 202. Without `state` (the App was installed or changed on GitHub itself) it links nothing and answers a page that says to start from Settings → GitHub → Install. |
 | `GET /tenants/:tenantId/github/installations/:installationId/repositories` | session + admin | The installation's repos from GitHub, each with `tracked`. |
 | `PUT /tenants/:tenantId/github/repos/:repoId` | session + admin | Body `{ "installationId": 123 }`. Tracks the repo if GitHub lists it for that installation. Idempotent. |
 | `DELETE /tenants/:tenantId/github/repos/:repoId` | session + admin | Stops tracking (and drops the repo from every flag source's scope). 204, or 404. |

@@ -9,6 +9,26 @@ const {
 
 const INSTALL_COOKIE = 'gh_install';
 
+// GitHub's Setup URL redirect carries `state` only when the installation started from ShipScope. Without it there is
+// nothing to link (an installation is linked only through ShipScope's own flow), so the page only says what to do.
+const SETUP_WITHOUT_STATE_PAGE = `<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>ShipScope · GitHub</title></head>
+<body>
+<main>
+<h1>Back from GitHub</h1>
+<p>This change was made on GitHub directly, so ShipScope has nothing to link here.</p>
+<ul>
+<li>If your workspace already shows this GitHub account in Settings → GitHub, the change already applies: repositories
+you gave the App access to appear there within a minute.</li>
+<li>Otherwise connect it from ShipScope: open your workspace, then Settings → GitHub → Install.</li>
+</ul>
+<p><a href="/">Back to ShipScope</a></p>
+</main>
+</body>
+</html>
+`;
+
 /**
  * FR-004/FR-006: connecting a tenant to GitHub through the App, and choosing tracked repos. Only
  * registered when `githubApp` is configured (see web.js's buildApp()).
@@ -19,7 +39,7 @@ const INSTALL_COOKIE = 'gh_install';
 function registerGitHubRoutes(app, ctx) {
     const {
         pool, githubApp, fetchFn, requireUser, assertAdminOf, safeEqual, splitCookie, baseCookie,
-        cookies: { LINK_COOKIE }, UUID_PATTERN, UUID_PARAM, GITHUB_ID_PARAM, STATE_TTL_SECONDS,
+        cookies: { LINK_COOKIE }, UUID_PATTERN, UUID_PARAM, GITHUB_ID_PARAM, STATE_TTL_SECONDS, DASHBOARD_HEADERS,
     } = ctx;
     const tenantParams = { type: 'object', required: ['tenantId'], properties: { tenantId: UUID_PARAM } };
     const installCookie = { ...baseCookie, path: '/github', maxAge: STATE_TTL_SECONDS };
@@ -46,7 +66,8 @@ function registerGitHubRoutes(app, ctx) {
         schema: {
             querystring: {
                 type: 'object',
-                required: ['state', 'setup_action'],
+                // No state: the App was installed or reconfigured on GitHub itself, not from ShipScope.
+                required: ['setup_action'],
                 properties: {
                     installation_id: GITHUB_ID_PARAM,
                     setup_action: { type: 'string', enum: ['install', 'update', 'request'] },
@@ -55,6 +76,10 @@ function registerGitHubRoutes(app, ctx) {
             },
         },
     }, async (request, reply) => {
+        if (request.query.state === undefined) {
+            return reply.headers({ ...DASHBOARD_HEADERS, 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' })
+                .send(SETUP_WITHOUT_STATE_PAGE);
+        }
         const pending = splitCookie(request.cookies[INSTALL_COOKIE], /^[A-Za-z0-9_-]{22}$/, UUID_PATTERN);
         reply.clearCookie(INSTALL_COOKIE, installCookie);
         if (!pending || !safeEqual(pending[0], request.query.state)) {

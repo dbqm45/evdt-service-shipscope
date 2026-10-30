@@ -168,6 +168,23 @@ test('setup rejects a missing or mismatched state, and reports an owner-approval
     assert.strictEqual(requested.json().status, 'pending-approval');
 });
 
+test('a return from GitHub without state (installed or changed on GitHub itself) explains what to do and links nothing', async (t) => {
+    const { app, newTenant } = await setup(t);
+    const alice = await signIn(app, 'alice');
+    await newTenant(alice, 'Acme');
+
+    for (const action of ['install', 'update']) {
+        const res = await app.inject({ method: 'GET', url: `/github/setup?installation_id=${ACME}&setup_action=${action}`, cookies: { sid: alice } });
+        assert.strictEqual(res.statusCode, 200, res.body);
+        assert.match(res.headers['content-type'], /^text\/html/);
+        assert.ok(res.headers['content-security-policy'], 'served with the pages\' headers');
+        assert.match(res.body, /Settings → GitHub → Install/);
+        assert.match(res.body, /href="\/"/);
+        assert.doesNotMatch(res.body, new RegExp(String(ACME)), 'nothing from the query is echoed');
+        assert.ok(!res.cookies.some((c) => c.name === 'gh_link' && c.value), 'never links an installation without state');
+    }
+});
+
 test('only admins connect and manage; members can see what is connected; outsiders get 404', async (t) => {
     const { app, newTenant } = await setup(t);
     const alice = await signIn(app, 'alice');
