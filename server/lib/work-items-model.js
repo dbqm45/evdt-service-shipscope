@@ -54,9 +54,11 @@ function parseFrontMatter(text) {
 const clean = (s) => s.replace(/[*`]+/g, '').replace(/(^|\s)_+|_+(\s|$)/g, '$1$2').replace(/\s+/g, ' ').trim();
 
 /**
- * The title and status of each task from plan.md's body (the contract leaves its layout to tf's template): the first
- * line naming the whole key. In a table row, the title is the first non-empty cell after the key that is no status
- * and no release line; in a list item or heading, the text after the key. A status is one of task.schema.json's.
+ * The title and status of each task from plan.md's body (the contract leaves its layout to tf's template): the table
+ * row whose key column holds the key, else the first other line naming the whole key. In a row under a header with a
+ * title column (`Wartość`, `Tytuł`, `Title`, …) the title and status are those columns; without one, the first
+ * non-empty cell after the key that is no status and no release line. In a list item or heading, the text after the
+ * key. A status is one of task.schema.json's.
  *
  * @param {string} body
  * @param {string[]} keys the header's `tasks`
@@ -64,22 +66,31 @@ const clean = (s) => s.replace(/[*`]+/g, '').replace(/(^|\s)_+|_+(\s|$)/g, '$1$2
  */
 function planTasks(body, keys) {
     const lines = String(body).split('\n');
+    const rows = tableRows(lines);
     const isStatus = (s) => TASK_STATUSES.includes(s.toLowerCase());
     return keys.map((key) => {
-        const word = new RegExp(`(^|[^A-Za-z0-9-])${key}(?![0-9])`);
-        const line = lines.find((l) => word.test(l));
-        if (!line) return { key, title: key, status: null };
         let title = null;
         let status = null;
-        if (line.trim().startsWith('|')) {
-            const cells = line.trim().replace(/^\||\|$/g, '').split('|').map(clean);
-            const at = cells.findIndex((c) => c.includes(key));
-            for (const c of cells.slice(at + 1)) {
-                if (!c) continue;
-                if (isStatus(c)) status = status || c.toLowerCase();
-                else if (!title && !/^R[0-9]+$/i.test(c) && !WORK_ITEM_KEY.test(c)) title = c;
+        const row = rows.find((r) => keyCell(r) === key);
+        if (row) {
+            const column = (names) => (row.header ? row.header.findIndex((h) => names.includes(h)) : -1);
+            const titleAt = column(TITLE_COLUMNS);
+            const statusAt = column(STATUS_COLUMNS);
+            if (titleAt >= 0) {
+                title = filled(row.cells[titleAt]);
+                const s = statusAt >= 0 ? filled(row.cells[statusAt]) : null;
+                status = s && isStatus(s) ? s.toLowerCase() : null;
+            } else {
+                for (const c of row.cells.slice(row.cells.indexOf(key) + 1)) {
+                    if (!filled(c)) continue;
+                    if (isStatus(c)) status = status || c.toLowerCase();
+                    else if (!title && !/^R[0-9]+$/i.test(c) && !WORK_ITEM_KEY.test(c)) title = c;
+                }
             }
         } else {
+            const word = new RegExp(`(^|[^A-Za-z0-9-])${key}(?![0-9])`);
+            const line = lines.find((l) => !l.trim().startsWith('|') && word.test(l));
+            if (!line) return { key, title: key, status: null };
             let rest = clean(line.slice(line.indexOf(key) + key.length)).replace(/^[\s:—–-]+/, '');
             const paren = /\((planned|in_progress|in_review|done|dropped)\)\s*$/i.exec(rest);
             const trailing = /,\s*(planned|in_progress|in_review|done|dropped)\s*$/i.exec(rest);
@@ -92,6 +103,42 @@ function planTasks(body, keys) {
         }
         return { key, title: (title || key).slice(0, TITLE_MAX), status };
     });
+}
+
+// Column names of plan.md's task tables (tf's template: Cięcie | Rodzaj | Wydanie | Flaga | Wartość | …), lower case.
+const KEY_COLUMNS = ['cięcie', 'zadanie', 'task', 'klucz', 'key'];
+const TITLE_COLUMNS = ['wartość', 'tytuł', 'title', 'value', 'nazwa', 'name'];
+const STATUS_COLUMNS = ['status', 'stan'];
+const EMPTY_CELL = /^[—–-]?$/;
+
+const filled = (c) => (c && !EMPTY_CELL.test(c) ? c : null);
+const cellsOf = (line) => line.trim().replace(/^\||\|$/g, '').split('|').map(clean);
+const isSeparator = (line) => /^\|?(\s*:?-{3,}:?\s*\|)*\s*:?-{3,}:?\s*\|?$/.test(line.trim());
+
+/** Every table row of a body with its table's header (lower-case cells, or null for a table without one). */
+function tableRows(lines) {
+    const rows = [];
+    let header = null;
+    lines.forEach((line, i) => {
+        if (!line.trim().startsWith('|')) {
+            header = null;
+            return;
+        }
+        if (isSeparator(line)) return;
+        if (i + 1 < lines.length && isSeparator(lines[i + 1])) {
+            header = cellsOf(line).map((c) => c.toLowerCase());
+            return;
+        }
+        rows.push({ cells: cellsOf(line), header });
+    });
+    return rows;
+}
+
+/** The key a row is about: its key column's cell, else its first cell shaped like a work item key. */
+function keyCell(row) {
+    const at = row.header ? row.header.findIndex((h) => KEY_COLUMNS.includes(h)) : -1;
+    if (at >= 0) return row.cells[at];
+    return row.cells.find((c) => WORK_ITEM_KEY.test(c)) || null;
 }
 
 /** The first `# ` heading of a body, or null. */
