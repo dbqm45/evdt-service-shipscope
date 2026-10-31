@@ -345,9 +345,10 @@ the web service fills once a minute (`sampleStatus()`, web.js); a day is an outa
   (`change` = folder, `source`/`tasks` keys), the title = intent's first `# ` heading, `intentProblem()` = its
   `## Problem` section as one line (≤ 600, without tf's `<…>` placeholders; `work_items.problem`, migration `041`,
   `WORK_ITEMS_VERSION` 2; a change's `problem` in `workItemIssues()`), the header's `created` and
-  `source_reported_at` (pdi contract 0.5.0; only `YYYY-MM-DD`, migrations `042`/`043`, `WORK_ITEMS_VERSION` 4; a
-  change's `intentCreated`, `sourceKey`, `sourceReportedAt`), `planTasks()` (the first body
-  line naming a task: table cells or list text, a task.schema.json status; `dropped` left out). A bad file is recorded
+  `source_reported_at` (pdi contract 0.5.0; only `YYYY-MM-DD`, migrations `042`/`043`; a
+  change's `intentCreated`, `sourceKey`, `sourceReportedAt`), `planTasks()` (the table row whose key column holds the
+  task, its title column — tf's `Wartość`, or `Tytuł`/`Title` — and `Status`; else the first other line naming it:
+  list text; a task.schema.json status; `dropped` left out; `WORK_ITEMS_VERSION` 5). A bad file is recorded
   in `tracked_repos.work_items_error` (Settings → GitHub, "changes folder: N problems") and only its change is left
   out; a GitHub failure keeps the stored items; a rate limit is rethrown. `tracked_repos.work_items_version`
   (`WORK_ITEMS_VERSION`, migration `038`) makes a folder read by an older reader be read again. The dashboard data appends the increment

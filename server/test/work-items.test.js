@@ -73,6 +73,28 @@ test('planTasks: title and status from a table row or a list line; a task the bo
     assert.deepStrictEqual(planTasks('Mentions TSK-570 only', ['TSK-57']), [{ key: 'TSK-57', title: 'TSK-57', status: null }], 'whole keys only');
 });
 
+test("planTasks: tf's plan template takes the title from its Wartość column and each task from its own row", () => {
+    const body = `
+# Plan
+
+Najpierw TSK-2 czeka na TSK-1 (fundament).
+
+| Cięcie | Rodzaj | Wydanie | Flaga | Wartość | Wymagania | Odblokowuje | Pliki | Weryfikacja |
+|---|---|---|---|---|---|---|---|---|
+| TSK-1 | fundament | R1 | — | (fundament) \`config/build.json\` z polem \`deployedAt\` | — | TSK-2 | \`config/build.json\` | \`npm test\` |
+| TSK-2 | cięcie | R1 | show_last_deployed | użytkownik widzi datę ostatniego wdrożenia | US-1 | — | \`src/page.js\` | \`npm test\` |
+
+| Zadanie | Status |
+|---|---|
+| TSK-3 | done |
+`;
+    assert.deepStrictEqual(planTasks(body, ['TSK-1', 'TSK-2', 'TSK-3']), [
+        { key: 'TSK-1', title: '(fundament) config/build.json z polem deployedAt', status: null },
+        { key: 'TSK-2', title: 'użytkownik widzi datę ostatniego wdrożenia', status: null },
+        { key: 'TSK-3', title: 'TSK-3', status: 'done' },
+    ]);
+});
+
 test('buildWorkItems: a change with its tasks; a bad file is an error for its change and the others still count', () => {
     const { items, errors } = buildWorkItems([
         { dir: 'CHG-12', intent: INTENT, plan: PLAN },
@@ -135,7 +157,7 @@ const { connectPdiForTest } = require('./helpers/pdi');
 const { fakeGitHub, AUTH, signIn } = require('./helpers/auth');
 const { buildApp } = require('../web');
 const { withScope } = require('../lib/scope');
-const { refreshWorkItems } = require('../lib/work-items');
+const { refreshWorkItems, WORK_ITEMS_VERSION } = require('../lib/work-items');
 
 const sha = (n) => n.toString(16).padStart(40, 'c');
 const DIR = 'docs/project/changes';
@@ -189,7 +211,7 @@ test('sync: changes and tasks from the default branch; unchanged folder = one re
     // A folder read by an older version of the reader (before release.yaml, migration 038) is read again.
     await rows('UPDATE tracked_repos SET work_items_version = 0');
     assert.deepStrictEqual(await read(), { read: 4, errors: 0, plans: 0 });
-    assert.strictEqual((await rows('SELECT work_items_version FROM tracked_repos'))[0].work_items_version, 4);
+    assert.strictEqual((await rows('SELECT work_items_version FROM tracked_repos'))[0].work_items_version, WORK_ITEMS_VERSION);
     assert.strictEqual((await rows("SELECT to_char(source_reported_at, 'YYYY-MM-DD') AS d FROM work_items WHERE item_key = 'CHG-12'"))[0].d, '2026-10-15');
     assert.strictEqual((await rows("SELECT to_char(intent_created, 'YYYY-MM-DD') AS d FROM work_items WHERE item_key = 'CHG-12'"))[0].d, '2026-10-20');
     assert.match((await rows("SELECT problem FROM work_items WHERE item_key = 'CHG-12'"))[0].problem, /^Customers whose card payment fails/);

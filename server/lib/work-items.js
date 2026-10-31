@@ -16,8 +16,9 @@ const ARTIFACT = new RegExp(`^${CHANGES_DIR}/([^/]+)/(intent\\.md|plan\\.md|rele
 const ARTIFACT_FIELD = { 'intent.md': 'intent', 'plan.md': 'plan', 'release.yaml': 'release' };
 // What a read understands (tracked_repos.work_items_version, migration 038): 1 = work items and release.yaml, 2 = the
 // intent's Problem (migration 041), 3 = the intent's date (migration 042), 4 = the report day of its problem (migration
-// 043). A folder read by an older version is read again even when no commit touched it.
-const WORK_ITEMS_VERSION = 4;
+// 043), 5 = task titles from plan.md's title column and the task's own row (planTasks()). A folder read by an older
+// version is read again even when no commit touched it.
+const WORK_ITEMS_VERSION = 5;
 const ERROR_MAX = 1000;
 
 /** A file's text at a commit; null when it is too big or not a file. */
