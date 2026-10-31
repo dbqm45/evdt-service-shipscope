@@ -75,6 +75,7 @@ function fakeGitHub(usersByCode, github = {}) {
         // tags: [{ name, commit: { sha } }], releases: [{ tag_name }], files: { [sha]: { [path]: text } },
         // treeOf: { [commitSha]: treeSha } (default `tree-<sha>`), trees: { [treeSha]: listing },
         // runs: { [runId]: { event } }, fileCommits: { [path]: [sha, ...] }, commitDates: { [sha]: ISO author date },
+        // history: { [sha]: [{ message, date? }, ...] } (commits?sha=… without a path, newest first),
         // fail: HTTP status to answer everything with }. Refs in commits/compare
         // may be tag names. github.users[login] = { name } answers GET /users/<login> (the sync's display names).
         m = url.match(/^https:\/\/api\.github\.com\/users\/([^/?]+)$/);
@@ -93,9 +94,14 @@ function fakeGitHub(usersByCode, github = {}) {
             if (rest.startsWith('deployments?')) return json(pageOf(repo.deployments, url));
             if (rest.startsWith('tags?')) return json(pageOf(repo.tags || [], url));
             if (rest.startsWith('releases?')) return json(pageOf(repo.releases || [], url));
-            // The commits touching one file up to a ref (fileCommits: { [path]: [sha, ...] newest first }).
+            // The commits touching one file up to a ref (fileCommits: { [path]: [sha, ...] newest first }), or without
+            // a path the history up to a ref (history: { [sha]: [{ message, date? }, ...] newest first }).
             if (rest.startsWith('commits?')) {
                 const params = new URL(url).searchParams;
+                if (!params.get('path') && repo.history) {
+                    const list = repo.history[shaOf(params.get('sha') || '')] || [];
+                    return json(pageOf(list.map((c, i) => ({ sha: `h${i}`, commit: { message: c.message, ...(c.date && { author: { date: c.date } }) } })), url));
+                }
                 return json((repo.fileCommits?.[params.get('path')] || []).map((sha) => ({ sha })));
             }
             let sub = rest.match(/^deployments\/(\d+)\/statuses/);

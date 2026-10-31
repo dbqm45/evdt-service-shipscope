@@ -24,6 +24,8 @@ const DEFAULTS = { maxPerRun: 200, stuckMaxAgeHours: 48, maxPages: 20 };
 /** A tenant's share of one pass (worker.js SYNC_TENANT_BUDGET_SECONDS); a large backlog continues next pass. */
 const DEFAULT_TENANT_BUDGET_MS = 120_000;
 const ERROR_MAX_LENGTH = 500;
+// The first deploy on an environment ships the history up to its ref; at most this many of its newest commits are read.
+const FIRST_DEPLOY_COMMITS = 100;
 
 /** New deployments (id > cursor), newest-first from GitHub, stopping at the first already-synced id. */
 async function fetchNewDeployments({ token, fullName, cursor, fetch, maxPages }) {
@@ -129,11 +131,15 @@ async function describeRange({ token, fullName, previous, current, fetch }) {
         const commit = current.fromFile
             ? (await githubGet({ token, path: `/repos/${fullName}/commits/${encodeURIComponent(current.ref)}`, fetch }))?.commit
             : current.commit;
-        const message = commit?.message;
-        const { keys, typesByKey } = issuesFromMessages([message || '']);
+        // Nothing was deployed here before, so the environment now has the history up to this ref, not only its head
+        // (often a merge commit without keys): its newest FIRST_DEPLOY_COMMITS commits.
+        const history = await firstDeployHistory({ token, fullName, ref: current.ref, fetch });
+        const commits = [{ commit }, ...history];
+        const messages = commits.map((c) => c?.commit?.message || '');
+        const { keys, typesByKey } = issuesFromMessages(messages);
         return {
             keys, typesByKey, commitUrl: `https://github.com/${fullName}/commit/${current.sha}`, rollbackTo: null, rolledBack: [],
-            flagLinks: flagLinksFromMessages([message || '']), firstCommits: firstCommitDates([{ commit }]),
+            flagLinks: flagLinksFromMessages(messages), firstCommits: firstCommitDates(commits),
         };
     }
     const comparison = await githubGet({
@@ -155,6 +161,23 @@ async function describeRange({ token, fullName, previous, current, fetch }) {
         rollbackTo,
         rolledBack: rollbackTo ? await rolledBackKeys({ token, fullName, from: current.ref, to: previous.ref, fetch }) : [],
     };
+}
+
+/**
+ * The newest FIRST_DEPLOY_COMMITS commits up to a ref, for the first deploy on an environment. Display-only context
+ * like the people lookups: a failure other than a rate limit gives [] and the deploy keeps its own commit's keys.
+ *
+ * @param {{ token: string, fullName: string, ref: string, fetch?: typeof fetch }} input
+ * @returns {Promise<Array<{ commit?: { message?: string, author?: { date?: string } } }>>}
+ */
+async function firstDeployHistory({ token, fullName, ref, fetch }) {
+    try {
+        const list = await githubGet({ token, path: `/repos/${fullName}/commits?sha=${encodeURIComponent(ref)}&per_page=${FIRST_DEPLOY_COMMITS}`, fetch });
+        return Array.isArray(list) ? list : [];
+    } catch (err) {
+        if (err instanceof GitHubRateLimitError) throw err;
+        return [];
+    }
 }
 
 /**
