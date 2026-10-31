@@ -476,7 +476,7 @@ The `FALLBACK` sample data has the same shape.
   `PUT …/github/repos/:repoId/environments`, which syncs the repo again from the start when it changes — else
   `mapEnvironment()` by substring, `production` → `prod`, `dev` → `test`, `preprod` never `prod`, anything else is
   skipped; the sync keeps the names it saw in `seen_environments` for Settings), status, `deployedAt`,
-  `version`, `relatedIssues` (Jira keys from commit messages in the compare range), `workflowRunUrl`, `durationMs`
+  `version`, `relatedIssues` (Jira keys from commit messages in the compare range; the first deploy on an environment reads the newest `FIRST_DEPLOY_COMMITS` (100) commits up to its ref, `firstDeployHistory()`, a non-rate-limit failure falling back to its own commit), `workflowRunUrl`, `durationMs`
   (between the first and last status, ignoring GitHub's `inactive`), `manual`, `commitUrl`, `deployedBy` (display
   name, else login), `rollback: { toRef }` (GitHub's compare with the previous deploy on that env says `behind`), `rolledBackIssues`
   (only on a rollback: the keys of the commits it took off, `compare/<new>...<previous>`, `deployments.rolled_back_issues`,

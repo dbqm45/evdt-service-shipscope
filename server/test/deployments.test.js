@@ -125,6 +125,42 @@ test('sync: records, issue keys from the commit range, rollback, skips, and a cu
     assert.strictEqual(Number(after.deployments_cursor), 107);
 });
 
+test('sync: the first deploy on an environment takes the keys and Flag: trailers of the history it ships, not only its own commit', async (t) => {
+    // pdi's trial repo: main's head is a merge commit without keys; the slices' commits sit below it.
+    const history = [
+        { message: 'Merge pull request #6 from acme/story/tsk-2' },
+        { message: 'feat(page): show the date\n\nChange: TSK-2\nFlag: show_last_deployed', date: '2026-10-31T16:32:31Z' },
+        { message: 'feat(build): build info\n\nChange: TSK-1', date: '2026-10-31T16:27:49Z' },
+    ];
+    const web = {
+        deployments: [
+            { id: 302, environment: 'prod', sha: sha(31), created_at: at(10) },
+            { id: 301, environment: 'test', sha: sha(31), created_at: at(20) },
+        ],
+        statuses: { 301: [status('success', 19)], 302: [status('success', 9)] },
+        commits: { [sha(31)]: 'Merge pull request #6 from acme/story/tsk-2' },
+        history: { [sha(31)]: history },
+        compare: () => ({ status: 'ahead', commits: [] }),
+    };
+    const { sync, rows, calls } = await setup(t, { 'acme/web': web, 'acme/api': emptyRepo() });
+    await sync();
+    const deps = await rows('SELECT deployment_id, related_issues FROM deployments ORDER BY deployment_id');
+    assert.deepStrictEqual(deps.map((d) => [Number(d.deployment_id), [...d.related_issues].sort()]), [
+        [301, ['TSK-1', 'TSK-2']],
+        [302, ['TSK-1', 'TSK-2']],
+    ]);
+    const links = await rows('SELECT flag_key, item_key FROM flag_commit_links ORDER BY item_key');
+    assert.deepStrictEqual(links.map((l) => [l.flag_key, l.item_key]), [['show_last_deployed', 'TSK-2']]);
+    const facts = await rows("SELECT issue_key, first_commit_at FROM issue_deployments WHERE environment = 'test' ORDER BY issue_key");
+    assert.deepStrictEqual(facts.map((f) => [f.issue_key, f.first_commit_at && f.first_commit_at.toISOString()]), [
+        ['TSK-1', '2026-10-31T16:27:49.000Z'],
+        ['TSK-2', '2026-10-31T16:32:31.000Z'],
+    ]);
+    const historyCalls = calls.filter((u) => /\/repos\/acme\/web\/commits\?sha=/.test(u));
+    assert.strictEqual(historyCalls.length, 2, 'one history read per first deploy on an environment');
+    assert.match(historyCalls[0], /per_page=100/);
+});
+
 test('sync: a deploy that moves an environment back to an older commit is marked as a rollback', async (t) => {
     const web = {
         deployments: [

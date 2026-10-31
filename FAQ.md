@@ -365,7 +365,9 @@ that don't work in PIs the "increment" is the sprint, the release or the month, 
 
 ### How is an issue linked to a deployment, and why can it say "Not deployed"?
 
-Through the Jira keys in the deployment's commit messages. An issue counts as deployed on an environment when a
+Through the Jira keys in the deployment's commit messages: the commits between the previous successful deployment on
+that environment and this one, or, for the first deployment there, the newest 100 commits up to the deployed one (its
+head is often a merge commit without keys). An issue counts as deployed on an environment when a
 successful deployment there names its key or the key of one of its sub-tasks, and no later rollback there took that
 key off again (see "How is rollback decided?"). An issue with no deployment of its own
 and no flag also counts as deployed where **every** issue it "is blocked by" is deployed (each blocker matched on its
