@@ -302,6 +302,45 @@ test('sync: a QA or PROD deploy of a version the stage before never had is marke
     assert.ok(!('skippedEnv' in data.deployments.find((d) => d.id === 'gh-232')));
 });
 
+test('resync (PRB-19): an admin drops a repo\'s stored deployments and their issue history; the next sync reads them again', async (t) => {
+    const web = {
+        deployments: [{ id: 252, environment: 'prod', sha: sha(52), created_at: at(10) }, { id: 251, environment: 'prod', sha: sha(51), created_at: at(20) }],
+        statuses: { 251: [status('success', 19)], 252: [status('success', 9)] },
+        commits: { [sha(51)]: 'feat: OLD-1' },
+        // A reader that missed the keys first (an older ShipScope), then finds them.
+        compare: () => ({ status: 'ahead', commits: [{ commit: { message: web.fixed ? 'feat: NEW-5' : 'chore: merge' } }] }),
+    };
+    const { app, alice, tenantId, sync, rows, pool } = await setup(t, { 'acme/web': web, 'acme/api': emptyRepo() });
+    await sync();
+    let deps = await rows('SELECT deployment_id, related_issues FROM deployments WHERE repo_id = 1 ORDER BY deployment_id');
+    assert.deepStrictEqual(deps.map((d) => d.related_issues), [['OLD-1'], []]);
+
+    web.fixed = true;
+    await sync();
+    deps = await rows('SELECT related_issues FROM deployments WHERE deployment_id = 252');
+    assert.deepStrictEqual(deps[0].related_issues, [], 'a plain sync never re-reads a stored deployment');
+
+    const resync = (repoId) => app.inject({ method: 'POST', url: `/tenants/${tenantId}/github/repos/${repoId}/resync`, cookies: { sid: alice } });
+    assert.strictEqual((await resync(99)).statusCode, 404);
+    const res = await resync(1);
+    assert.strictEqual(res.statusCode, 200, res.body);
+    assert.deepStrictEqual(res.json(), { repoId: 1, removed: 2 });
+    assert.deepStrictEqual(await rows('SELECT deployment_id FROM deployments WHERE repo_id = 1'), []);
+    assert.deepStrictEqual(await rows('SELECT issue_key FROM issue_deployments WHERE repo_id = 1'), []);
+    const [repo] = await rows('SELECT deployments_cursor, drift FROM tracked_repos WHERE repo_id = 1');
+    assert.deepStrictEqual([Number(repo.deployments_cursor), repo.drift], [0, {}]);
+    assert.strictEqual((await rows('SELECT deployment_id FROM deployments WHERE repo_id = 2')).length, 0, 'acme/api has none either way');
+    const { rows: queued } = await pool.query("SELECT external_key FROM sync_requests WHERE source = 'github'");
+    assert.ok(queued.some((q) => q.external_key === '1'), 'queued, so the worker reads it within a minute');
+    const [event] = await rows("SELECT kind, subject FROM audit_events WHERE kind = 'repo_resynced'");
+    assert.deepStrictEqual(event, { kind: 'repo_resynced', subject: 'acme/web' });
+
+    await sync();
+    deps = await rows('SELECT deployment_id, related_issues FROM deployments WHERE repo_id = 1 ORDER BY deployment_id');
+    assert.deepStrictEqual(deps.map((d) => [Number(d.deployment_id), d.related_issues]), [[251, ['OLD-1']], [252, ['NEW-5']]]);
+    assert.deepStrictEqual((await rows("SELECT issue_key FROM issue_deployments WHERE repo_id = 1 ORDER BY issue_key")).map((r) => r.issue_key), ['NEW-5', 'OLD-1']);
+});
+
 test('sync: a repo\'s own environment map decides first; the names seen are kept; a changed map syncs from the start', async (t) => {
     const web = {
         deployments: [

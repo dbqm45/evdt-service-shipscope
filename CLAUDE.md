@@ -198,7 +198,9 @@ the web service fills once a minute (`sampleStatus()`, web.js); a day is an outa
   (`lib/env-drift.js` + `lib/tree-diff.js`) is stored per repo in `tracked_repos.drift = { inputs, failed, envs }`,
   recomputed only when a latest successful deploy changed or the last attempt failed; a failed comparison keeps the
   previous value. Per-repo `version_file`/`drift_ignore_paths` are set by an admin
-  (`PUT /tenants/:tenantId/github/repos/:repoId/settings`). Installation tokens are minted read only
+  (`PUT /tenants/:tenantId/github/repos/:repoId/settings`). An admin can read a repo's deployments again from the start
+  (`POST …/github/repos/:repoId/resync`, `resyncRepo()`, PRB-19: its `deployments` and `issue_deployments` dropped, cursor
+  and drift reset, a `github` sync request queued, audited `repo_resynced`; Settings → GitHub pencil → Sync deployments again). Installation tokens are minted read only
   (`TOKEN_PERMISSIONS` in `lib/github-app.js`: actions, contents, deployments, metadata; on a 422 the subset the
   installation has). `workflowRunUrl` is a status's `log_url` only when `trustedRunUrl()` sees a run of that very
   repository on github.com. `manual` (needs the App's Actions read permission) and

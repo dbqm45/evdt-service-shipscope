@@ -130,6 +130,8 @@ test('settings page: GitHub -- installations, the tracked repositories table, th
     assert.match(admin, /data-action="edit-repo" data-repo-id="101"/);
     assert.match(admin, /data-action="untrack-repo" data-repo-id="101" data-installation-id="7" aria-label="Stop tracking acme\/web-service-frontend"/);
     assert.ok(!/save-repo-settings|data-action="track-repo"/.test(admin), 'no edit form or picker until asked');
+    const editCard = str(ui.renderGitHub({ enabled: true, github, installationRepos, admin: true, editing: 101 }));
+    assert.match(editCard, /data-action="resync-repo" data-repo-id="101"/, 'the edit card offers reading the deployments again');
 
     const picker = str(ui.renderGitHub({ enabled: true, github, installationRepos, admin: true, picker: true }));
     assert.match(picker, /data-action="track-repo" data-repo-id="102" data-installation-id="7">Track/);
@@ -610,6 +612,16 @@ test('settings page: actions send what the API expects, then reload their sectio
     await ui.runAction('save-repo-settings', envForm([['staging', 'auto'], ['Production', 'skip']]));
     assert.deepStrictEqual(calls.find((c) => c.url.endsWith('/environments')), { method: 'PUT', url: `${base}/github/repos/101/environments`, body: { envMap: { Production: 'skip' } } });
     assert.strictEqual(ui.settingsState.editingRepo, null, 'saved: the row closes');
+
+    // PRB-19: read a repo's deployments again from the start; asks first.
+    global.confirm = () => false;
+    calls.length = 0;
+    await ui.runAction('resync-repo', button({ repoId: '101' }, 'github'));
+    assert.deepStrictEqual(calls, [], 'cancelled: nothing sent');
+    global.confirm = () => true;
+    await ui.runAction('resync-repo', button({ repoId: '101' }, 'github'));
+    assert.deepStrictEqual(calls[0], { method: 'POST', url: `${base}/github/repos/101/resync`, body: undefined });
+    delete global.confirm;
 
     ui.settingsState.installationRepos[7] = [{ id: 102, fullName: 'acme/api', tracked: false }];
     calls.length = 0;

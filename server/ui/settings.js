@@ -775,7 +775,8 @@ function renderGitHub({ enabled, webhooks, github, installationRepos, admin, pic
             <label>Feature flags <select name="flagStance">${Object.entries(FLAG_STANCE_CHOICES).map(([value, label]) => html`<option value="${value}" ${value === (r.flagStance || 'unknown') ? raw('selected') : ''}>${label}</option>`)}</select></label>
             <label>Role <select name="serviceRole">${Object.entries(SERVICE_ROLE_CHOICES).map(([value, label]) => html`<option value="${value}" ${value === (r.serviceRole || '') ? raw('selected') : ''}>${label}</option>`)}</select></label>
             <button type="submit" class="btn btn-primary">Save</button>
-            <button type="button" class="btn" data-action="edit-repo" data-repo-id="${r.repoId}">Cancel</button></form>
+            <button type="button" class="btn" data-action="edit-repo" data-repo-id="${r.repoId}">Cancel</button>
+            <button type="button" class="btn" data-action="resync-repo" data-repo-id="${r.repoId}" title="Drop its stored deployments and read them from GitHub again">Sync deployments again</button></form>
             ${RepoFlagsCard({ r, sources, wizard })}</td></tr>`;
     });
     const table = rows.length
@@ -1215,7 +1216,7 @@ const AUDIT_EVENT_LABELS = {
     member_joined: 'joined as', member_removed: 'removed the member', member_left: 'left the workspace',
     github_linked: 'connected the GitHub account', github_unlinked: 'disconnected the GitHub account',
     repo_tracked: 'started tracking', repo_untracked: 'stopped tracking', repo_settings_changed: 'changed version and drift settings of',
-    repo_environments_changed: 'changed the environments of', repo_flag_stance_changed: 'changed whether flags are used in',
+    repo_environments_changed: 'changed the environments of', repo_resynced: 'read the deployments again of', repo_flag_stance_changed: 'changed whether flags are used in',
     repo_role_changed: 'changed the role of',
     flag_source_created: 'added the flag source', flag_source_updated: 'changed the flag source', flag_source_deleted: 'deleted the flag source',
     ingest_token_created: 'created a token for', ingest_token_revoked: 'revoked a token of',
@@ -1690,6 +1691,14 @@ const actions = {
         await api('DELETE', tenantPath(`/github/repos/${data.repoId}`));
         markTracked(data.installationId, data.repoId, false);
         return { section: 'github', ok: 'Repository no longer tracked.' };
+    },
+    'resync-repo': async (el, data) => {
+        if (!confirmed('Read this repository\'s deployments again from GitHub? Its stored deployments and their issue links are rebuilt with the next sync, within a minute.')) {
+            return null;
+        }
+        await api('POST', tenantPath(`/github/repos/${data.repoId}/resync`));
+        settingsState.editingRepo = null;
+        return { section: 'github', ok: 'Deployments are read again with the next sync.' };
     },
     'unlink-installation': async (el, data) => {
         if (!confirmed('Unlink this installation and stop tracking its repositories? The App stays installed on GitHub.')) {

@@ -82,6 +82,7 @@ const EXPECTED_ROUTES = `\
     │       │       ├── /flag-files (GET, HEAD)
     │       │       ├── /flag-preview (POST)
     │       │       ├── /role (PUT)
+    │       │       ├── /resync (POST)
     │       │       └── /environments (PUT)
     │       └── /jira (GET, HEAD, DELETE)
     │           ├── /connect (GET, HEAD)

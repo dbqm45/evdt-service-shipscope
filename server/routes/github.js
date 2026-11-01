@@ -3,8 +3,9 @@ const { listInstallationRepos, createInstallationToken } = require('../lib/githu
 const { discoverFlagFiles, previewCodeSource } = require('../lib/flag-discovery');
 const { checkCodeConfig } = require('../lib/flags-logic');
 const { CODE_CONFIG } = require('../schemas/flag-code-config');
+const { requestSync } = require('../lib/webhooks');
 const {
-    listConnections, trackedRepoIdsForAdmin, trackRepo, untrackRepo, updateRepoSettings, setRepoFlagStance, setRepoServiceRole, setRepoEnvironments, unlinkInstallation,
+    listConnections, trackedRepoIdsForAdmin, trackRepo, untrackRepo, resyncRepo, updateRepoSettings, setRepoFlagStance, setRepoServiceRole, setRepoEnvironments, unlinkInstallation,
 } = require('../lib/github-connections');
 
 const INSTALL_COOKIE = 'gh_install';
@@ -235,6 +236,18 @@ function registerGitHubRoutes(app, ctx) {
         });
         if (!updated) return reply.code(404).send({ error: 'That repository is not tracked' });
         return updated;
+    });
+
+    // Reads the repo's deployments again from the start (PRB-19: a fix in how they are read reaches the stored ones).
+    app.post('/tenants/:tenantId/github/repos/:repoId/resync', {
+        preHandler: requireUser,
+        schema: { params: repoParams },
+    }, async (request, reply) => {
+        const repoId = Number(request.params.repoId);
+        const done = await resyncRepo(pool, { tenantId: request.params.tenantId, actorUserId: request.user.id, repoId });
+        if (!done) return reply.code(404).send({ error: 'That repository is not tracked' });
+        await requestSync(pool, { source: 'github', keys: [String(repoId)] });
+        return done;
     });
 
     // Setting up flags in code (lib/flag-discovery.js): files that look like flags files, and how a reading would come

@@ -157,6 +157,31 @@ async function untrackRepo(pool, { tenantId, actorUserId, repoId }) {
 }
 
 /**
+ * Reads a tracked repo's deployments again from the start (PRB-19): drops its stored deployments and their issue
+ * history (`issue_deployments`), resets the cursor and the drift, in one transaction. The next sync rebuilds them from
+ * GitHub with today's rules (up to the newest `maxPages` × 100 deployments); the caller queues that sync. Admins only.
+ *
+ * @param {import('pg').Pool} pool
+ * @param {{ tenantId: string, actorUserId: string, repoId: number }} input
+ * @returns {Promise<{ repoId: number, removed: number }|null>} null if it isn't tracked
+ */
+async function resyncRepo(pool, { tenantId, actorUserId, repoId }) {
+    return withScope(pool, { tenantId }, async (client) => {
+        await assertAdmin(client, { tenantId, userId: actorUserId });
+        const { rows: [repo] } = await client.query(
+            `UPDATE tracked_repos SET deployments_cursor = 0, drift = '{}', last_sync_error = NULL
+             WHERE tenant_id = $1 AND repo_id = $2 RETURNING full_name`,
+            [tenantId, repoId]
+        );
+        if (!repo) return null;
+        const { rowCount } = await client.query('DELETE FROM deployments WHERE tenant_id = $1 AND repo_id = $2', [tenantId, repoId]);
+        await client.query('DELETE FROM issue_deployments WHERE tenant_id = $1 AND repo_id = $2', [tenantId, repoId]);
+        await recordAuditEvent(client, { tenantId, actorUserId, kind: 'repo_resynced', subject: repo.full_name });
+        return { repoId, removed: rowCount };
+    });
+}
+
+/**
  * A tracked repo's version/drift settings (`version_file`, `drift_ignore_paths`). Clears the stored drift, so the next sync recomputes it under the new settings. Admins only.
  *
  * @param {import('pg').Pool} pool
@@ -263,7 +288,7 @@ module.exports = {
     listConnections,
     trackedRepoIdsForAdmin,
     trackRepo,
-    untrackRepo,
+    untrackRepo, resyncRepo,
     updateRepoSettings,
     setRepoFlagStance, setRepoServiceRole,
     setRepoEnvironments,
