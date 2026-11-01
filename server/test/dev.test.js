@@ -1,7 +1,8 @@
 // The pure parts of scripts/dev.js (`npm run dev`); the Docker/GitHub/process side is checked by running it.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { parseEnvFile, setEnvValues, devDatabasePort, buildManifest, envFromConversion, encryptionKeyUpdate } = require('../scripts/dev');
+const { EventEmitter } = require('node:events');
+const { parseEnvFile, setEnvValues, devDatabasePort, buildManifest, envFromConversion, encryptionKeyUpdate, stopChildren } = require('../scripts/dev');
 
 test('parseEnvFile: KEY=value lines, comments skipped, quotes stripped, escapes kept as written', () => {
     const env = parseEnvFile([
@@ -70,4 +71,31 @@ test('encryptionKeyUpdate: a TOKEN_ENCRYPTION_KEY of 32 random bytes once; an ex
     assert.equal(encryptionKeyUpdate(parseEnvFile(written)), null, 'generated once');
     assert.equal(encryptionKeyUpdate({ TOKEN_ENCRYPTION_KEY: 'mine' }), null, 'never replaces a value, even one that is not valid');
     assert.notEqual(encryptionKeyUpdate({}).TOKEN_ENCRYPTION_KEY, update.TOKEN_ENCRYPTION_KEY, 'random');
+});
+
+/** A child process stand-in: `exitCode` null while running; `kill()` records the signal and, unless stubborn, exits. */
+function fakeChild({ stubborn = false } = {}) {
+    const child = new EventEmitter();
+    child.exitCode = null;
+    child.signals = [];
+    child.kill = (signal) => {
+        child.signals.push(signal);
+        if (!stubborn || signal === 'SIGKILL') setImmediate(() => { child.exitCode = 0; child.emit('exit', 0); });
+    };
+    return child;
+}
+
+test('stopChildren: waits until web and worker have exited, so none is left behind (PRB-8); SIGKILL after the grace', async () => {
+    const web = fakeChild();
+    const worker = fakeChild();
+    await stopChildren([web, worker], { graceMs: 1000 });
+    assert.deepEqual([web.signals, worker.signals], [['SIGTERM'], ['SIGTERM']]);
+    assert.deepEqual([web.exitCode, worker.exitCode], [0, 0], 'both have exited when it resolves');
+
+    const stuck = fakeChild({ stubborn: true });
+    const done = fakeChild();
+    done.exitCode = 1;
+    await stopChildren([stuck, done], { graceMs: 20 });
+    assert.deepEqual(stuck.signals, ['SIGTERM', 'SIGKILL'], 'still running after the grace: killed');
+    assert.deepEqual(done.signals, [], 'one that already exited is left alone');
 });

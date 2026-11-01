@@ -444,8 +444,7 @@ async function main() {
     const stop = (code) => {
         if (stopping) return;
         stopping = true;
-        for (const child of children) if (child.exitCode === null) child.kill('SIGTERM');
-        setTimeout(() => process.exit(code), 500).unref();
+        stopChildren(children).then(() => process.exit(code));
     };
     process.on('exit', () => children.forEach((child) => child.exitCode === null && child.kill('SIGTERM')));
     process.on('SIGINT', () => stop(0));
@@ -468,6 +467,30 @@ async function main() {
         : '  Ctrl+C stops ShipScope.\n');
 }
 
+// How long web and worker get to finish after SIGTERM before they are killed.
+const STOP_GRACE_MS = 8000;
+
+/**
+ * Stops the running children and resolves once every one has exited: SIGTERM, then SIGKILL for any still running
+ * after `graceMs`. The script must not exit before them: they run in their own process groups, so a child still
+ * running when it exits is left behind as an orphan (PRB-8, pdi's `sdlc down`).
+ *
+ * @param {Array<import('child_process').ChildProcess>} children
+ * @param {{ graceMs?: number }} [options]
+ * @returns {Promise<void>}
+ */
+function stopChildren(children, { graceMs = STOP_GRACE_MS } = {}) {
+    const running = children.filter((child) => child.exitCode === null && child.signalCode == null);
+    return Promise.all(running.map((child) => new Promise((resolve) => {
+        const timer = setTimeout(() => child.kill('SIGKILL'), graceMs);
+        child.once('exit', () => {
+            clearTimeout(timer);
+            resolve();
+        });
+        child.kill('SIGTERM');
+    }))).then(() => undefined);
+}
+
 if (require.main === module) {
     main().catch((err) => {
         console.error(`\n✗ ${err instanceof DevError ? err.message : err.stack || err}`);
@@ -475,4 +498,4 @@ if (require.main === module) {
     });
 }
 
-module.exports = { parseEnvFile, setEnvValues, devDatabasePort, buildManifest, envFromConversion, encryptionKeyUpdate };
+module.exports = { parseEnvFile, setEnvValues, devDatabasePort, buildManifest, envFromConversion, encryptionKeyUpdate, stopChildren };
