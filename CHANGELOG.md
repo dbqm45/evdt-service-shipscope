@@ -7,6 +7,12 @@ dashboard, not a published package), so entries are grouped by date instead. See
 ShipScope is, `CLAUDE.md` for the technical reference, and `FAQ.md` for how specific numbers/badges are
 calculated.
 
+## [0.2.66] - 2026-11-01
+
+### Added
+
+- **SHP:** let an admin read a repo's deployments again from the start (PRB-19) (#132)
+
 ## [0.2.65] - 2026-11-01
 
 ### Added
