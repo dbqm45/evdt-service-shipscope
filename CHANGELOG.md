@@ -7,6 +7,12 @@ dashboard, not a published package), so entries are grouped by date instead. See
 ShipScope is, `CLAUDE.md` for the technical reference, and `FAQ.md` for how specific numbers/badges are
 calculated.
 
+## [0.2.67] - 2026-11-01
+
+### Fixed
+
+- **SHP:** make npm run dev wait for web and worker before it exits (#133)
+
 ## [0.2.66] - 2026-11-01
 
 ### Added
