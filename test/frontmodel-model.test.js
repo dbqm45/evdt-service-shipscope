@@ -172,6 +172,22 @@ test('an issue with no deployment of its own counts as deployed where all its bl
     assert.equal(run('issueStatusForEnv({key:"BUG-5"},"test").level'), 'none', 'synced before the field');
 });
 
+test('a flag linked to a sub-task or task gates its parent too (PRB-20: a change whose task carries the flag)', () => {
+    const { j, run, setState } = loadApp();
+
+    setState({
+        deployments: [dep('c', 'prod', { relatedIssues: ['TSK-1'] })],
+        flagsMeta: { newCheckout: { jiraKeys: ['TSK-1'], components: ['c'] } },
+        flagStatesByComponent: { newCheckout: { prod: { c: { state: 'off', rollout: null, enabled: false } } } },
+    });
+    const change = '{key:"CHG-1",type:"Epic",subtaskKeys:["TSK-1","TSK-2"]}';
+    assert.deepEqual(j(`issueLinks(${change})`), [{ component: 'c', flagKey: 'newCheckout' }]);
+    assert.equal(run(`issueStatusForEnv(${change},"prod").level`), 'deployed', 'the task\'s flag is off: deployed, hidden');
+    run('state.flagStatesByComponent.newCheckout.prod.c = { state: "on", rollout: null, enabled: true }');
+    assert.equal(run(`issueStatusForEnv(${change},"prod").level`), 'released');
+    assert.deepEqual(j('issueLinks({key:"CHG-2"})'), [], 'without subtaskKeys only its own key');
+});
+
 test('issueStatusForEnv without linked flags: raw deployment presence', () => {
     const { j, setState } = loadApp();
 

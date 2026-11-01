@@ -145,7 +145,8 @@ Only from the services the issue's code reached on that environment
   - all off → off;
   - anything else → partial, including a rollout below 100%.
 
-  A service with no linked flag is neutral.
+  A service with no linked flag is neutral. A flag linked to one of the issue's sub-tasks counts as linked to the
+  issue, the same way a sub-task's deployments do; for a change from a repo, its tasks' flags gate the change.
 - **Status from the gates.**
   - All gates on → **Released**.
   - All off → **Deployed (hidden)**.

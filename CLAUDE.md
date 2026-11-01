@@ -513,7 +513,8 @@ The `FALLBACK` sample data has the same shape.
   (design-docs/ROLLBACK-STATUS-PLAN.pl.md); `earliestProdDeployedAt()` keeps the history. An issue with no deployment of its own and no flag also counts as deployed where every issue in its
   `blockedByKeys` is (`deployedViaBlockers()`, one level, each blocker on its key plus its loaded `subtaskKeys`): a
   bug fixed in a Story's sub-task. `issueStatusForEnv()` (ADR-003) works per service the issue's code reached:
-  a service with a linked flag is a gate (all on / all off / else partial, a rollout below 100% included; values from
+  a service with a linked flag (`issueLinks()`: flags linked to any of `issueKeys(issue)`, so a task's flag gates its
+  change, PRB-20) is a gate (all on / all off / else partial, a rollout below 100% included; values from
   `flagStateFor()`: `flagStatesByComponent`, or the legacy slots for data without it), one without is neutral, one
   with a linked flag but not the code makes it partial. It gives `none` / `deployed` (every gate off) / `released`
   (every gate on) / `partial` / `deployed_code_only` (no gate), plus `uncertain`: reached services with

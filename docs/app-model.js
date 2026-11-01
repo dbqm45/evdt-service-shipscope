@@ -100,9 +100,10 @@ function flagStateFor(flagKey, component, env){
 
     return { ...fs, state: flagState, rollout: fs.rollout ?? null, enabled: flagState === 'on' };
 }
-/** The (component, flag) pairs of an issue: every service a linked flag is reported for. */
+/** The (component, flag) pairs of an issue: every service a flag linked to it — or to one of its sub-tasks, the way
+ *  deployments match (issueKeys()) — is reported for. A change from a repo is an Epic whose tasks carry its flags. */
 function issueLinks(issue){
-    const flags = flagsForIssue(issue.key);
+    const flags = [...new Map(issueKeys(issue).flatMap(k => flagsForIssue(k)).map(f => [f.key, f])).values()];
     const pairs = [];
 
     flags.forEach(f => {
