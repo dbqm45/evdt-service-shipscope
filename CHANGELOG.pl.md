@@ -7,6 +7,21 @@ dashboard, nie publikowany pakiet), dlatego wpisy są pogrupowane według dat. I
 ShipScope, znajdują się w `README.pl.md`, pełne techniczne odniesienie w `CLAUDE.md` (po angielsku), a
 wyjaśnienie sposobu liczenia poszczególnych wartości/badge'y w `FAQ.pl.md`.
 
+## [0.2.65] - 2026-11-01
+
+### Nowe
+
+- **SHP:** track a repo and its code flags source from the local CLI (#127)
+- **SHP:** connect a local pdi receiver without the browser for sdlc up (#126)
+- **SHP:** connect pdi on the same machine in local mode (#125)
+
+### Poprawione
+
+- **SHP:** let a task's flag gate its change (PRB-20) (#131)
+- **server:** read task titles from plan.md's title column and own row (#130)
+- **SHP:** link the first deploy on an environment to the history it ships (#129)
+- **SHP:** explain a GitHub setup return without state instead of a 400 (#128)
+
 ## [0.2.64] - 2026-10-29
 
 ### Nowe
