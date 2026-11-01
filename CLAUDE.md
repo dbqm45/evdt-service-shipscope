@@ -36,7 +36,8 @@ any static file server) the frontend shows the built-in `FALLBACK` sample data a
 the server's dependencies, creates `server/.env`, starts Postgres in Docker (`shipscope-dev-pg`, port 54329) with a
 database owned by the non-superuser role `shipscope_app` (RLS applies, as on Render), creates a GitHub App on the
 first run through GitHub's manifest flow (one click on a local page; the keys go to `server/.env`), applies the
-migrations, starts `web.js` and `worker.js`, and prints `http://localhost:3000/`. A `DATABASE_URL` pointing elsewhere is
+migrations, starts `web.js` and `worker.js`, and prints `http://localhost:3000/`. On Ctrl+C or SIGTERM it exits only once both
+have (SIGKILL after 8 s, `stopChildren()`), so none is left behind in its own process group (PRB-8). A `DATABASE_URL` pointing elsewhere is
 used as is. When `server/.env` has no `TOKEN_ENCRYPTION_KEY` it writes one (32 random bytes, base64, `encryptionKeyUpdate()`)
 and says so; an existing value is never replaced (the key alone does not turn Jira on: `loadAtlassianConfig()` needs
 `ATLASSIAN_CLIENT_ID`/`_SECRET`). **Local mode** (`lib/local-mode.js`, `localModeEnabled(env)`, design-docs/LOCAL-PDI-PLAN.pl.md):
