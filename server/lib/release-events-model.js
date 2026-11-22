@@ -1,4 +1,4 @@
-// Outgoing release events, the pure rules (G1.5 of the pdi G1/G2 plan; contract 0.4.0 event.schema.json). From the
+// Outgoing release events, the pure rules (G1.5 of the pdi G1/G2 plan; contract 0.14.0 event.schema.json). From the
 // Release plan tab's model (releasePlanModel() in docs/app-model.js, run on the server by lib/release-status.js) and
 // what was seen last time (event_state, migration 039):
 // - release.stage_changed: a flag of a repo plan is in another rollout stage on PROD than last time;
@@ -7,9 +7,9 @@
 // lib/outgoing-events.js.
 const crypto = require('crypto');
 const { validate } = require('./json-schema-lite');
-const EVENT_SCHEMA = require('../schemas/event.v0.4.0.schema.json');
+const EVENT_SCHEMA = require('../schemas/event.v0.14.0.schema.json');
 
-const CONTRACT_VERSION = '0.4.0';
+const CONTRACT_VERSION = '0.14.0';
 const EVENT_TYPES = ['release.stage_changed', 'feature.released'];
 const CHANGE_KEY = /^[A-Z][A-Z0-9]+-[0-9]+$/;
 

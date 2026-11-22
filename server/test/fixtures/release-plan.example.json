@@ -54,5 +54,32 @@
         }
       ]
     }
-  ]
+  ],
+  "targets": {
+    "coverage": {
+      "kind": "changed_lines",
+      "min_percent": 90,
+      "tool": "pytest-cov",
+      "exclusions": [
+        {
+          "pattern": "src/legacy/retry.py",
+          "reason": "stary moduł do usunięcia po CHG-18"
+        }
+      ]
+    },
+    "mutation": {
+      "kind": "changed_lines",
+      "tool": "mutmut",
+      "min_score": 70
+    },
+    "performance": [
+      {
+        "name": "retry_endpoint_p95",
+        "metric": "response_time_p95_ms",
+        "limit": "<= 400",
+        "note": "próg wynika z SLO 99,5% w 28 dni"
+      }
+    ],
+    "evaluations": []
+  }
 }

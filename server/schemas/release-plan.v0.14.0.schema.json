@@ -1,0 +1,340 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/dbqm45/pdi/contract/release-plan.schema.json",
+  "title": "Plan wydania zmiany (pdi, kontrakt 0.14.0)",
+  "description": "Plik changes/CHG-n/release.yaml: MVP z miarą, linie wydań R1…Rn z cięciami, flagi z etapami udostępniania; od 0.12.0 opcjonalnie cele zmiany (`targets`: pokrycie i mutacje zmienionego kodu, wydajność, ewaluacje aplikacji AI). Schemat sprawdza strukturę; spójność (mvp.release wśród linii, TSK zgodne z plan.md, flaga z etapami i remove_by, kompletność `targets` dla produktu AI) sprawdzają tf (check) i ci_for_sdlc (REL-001…008, Z7b-1b).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "change",
+    "releases"
+  ],
+  "properties": {
+    "change": {
+      "type": "string",
+      "pattern": "^[A-Z][A-Z0-9]+-[0-9]+$",
+      "description": "Zmiana, domyślnie CHG-n."
+    },
+    "mvp": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "release"
+      ],
+      "properties": {
+        "release": {
+          "type": "string",
+          "pattern": "^R[0-9]+$"
+        },
+        "outcome": {
+          "type": "string",
+          "minLength": 1
+        },
+        "metric": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "name",
+            "target"
+          ],
+          "properties": {
+            "name": {
+              "type": "string",
+              "minLength": 1
+            },
+            "target": {
+              "type": "string",
+              "minLength": 1
+            },
+            "horizon_days": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        },
+        "guardrails": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "Metryki ochronne."
+        }
+      }
+    },
+    "releases": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "tasks"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^R[0-9]+$"
+          },
+          "name": {
+            "type": "string"
+          },
+          "tasks": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^[A-Z][A-Z0-9]+-[0-9]+$",
+              "description": "TSK"
+            }
+          }
+        }
+      }
+    },
+    "flags": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "key"
+        ],
+        "properties": {
+          "key": {
+            "type": "string",
+            "minLength": 1
+          },
+          "tasks": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^[A-Z][A-Z0-9]+-[0-9]+$",
+              "description": "TSK"
+            }
+          },
+          "owner": {
+            "type": "string",
+            "minLength": 1
+          },
+          "remove_by": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+          },
+          "rollout": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "stage"
+              ],
+              "properties": {
+                "stage": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "np. internal, 10%, 100%"
+                },
+                "min_days": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "exit": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "Kryterium wyjścia z etapu."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "targets": {
+      "$ref": "#/$defs/targets"
+    }
+  },
+  "$defs": {
+    "targets": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Cele zmiany (Z7b-1, DZ7, kontrakt 0.14.0): architekt proponuje je w planie, człowiek zatwierdza na B3; sprawdzane przed B4 przez ci_for_sdlc (Z7b-1b, wynik w event.readiness_changed.targets_status). Wszystkie pola są opcjonalne — brak pola to „nie postawiono progu”. Kolejne kroki planu dodają w tym samym miejscu opcjonalne pola slo (Z10a) i accessibility (Z10e) bez łamania zgodności wstecz.",
+      "properties": {
+        "coverage": {
+          "$ref": "#/$defs/coverage_target"
+        },
+        "mutation": {
+          "$ref": "#/$defs/mutation_target"
+        },
+        "performance": {
+          "type": "array",
+          "description": "Opcjonalne budżety wydajności dla zmienionych ścieżek (Z10e dopuszczony tutaj; p95 czasu odpowiedzi, budżet rozmiaru paczki itp.).",
+          "items": {
+            "$ref": "#/$defs/performance_target"
+          }
+        },
+        "evaluations": {
+          "type": "array",
+          "description": "Progi ewaluacji aplikacji AI (DZ7 obowiązkowe dla produktu AI): zestaw danych, metryka i próg minimalny. Obowiązkowość dla produktu AI pilnuje tf (persona tomasz), nie ten schemat, bo kontrakt nie zna „typ produktu”.",
+          "items": {
+            "$ref": "#/$defs/evaluation_target"
+          }
+        }
+      }
+    },
+    "coverage_target": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Próg pokrycia testami. `kind: changed_lines` (N4) — pokrycie liczone tylko po zmienionym kodzie; `kind: whole_project` — po całości (zostawione dla zmiany, która to uzasadnia). Wyjątki (`exclusions`) wymagają powodu, który człowiek widzi na bramce B3.",
+      "required": [
+        "min_percent"
+      ],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "changed_lines",
+            "whole_project"
+          ],
+          "default": "changed_lines"
+        },
+        "min_percent": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "tool": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Narzędzie, które liczy pokrycie (np. `coverage.py`, `pytest-cov`, `jest --coverage`); dla ci_for_sdlc nie enum, bo narzędzia się zmieniają."
+        },
+        "exclusions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/exclusion"
+          }
+        }
+      }
+    },
+    "mutation_target": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Próg testów mutacyjnych na zmienionym kodzie (N4): StrykerJS dla JS/TS, mutmut dla Pythona. Uruchamianie tylko na zmienionym kodzie — cały projekt trwa za długo.",
+      "required": [
+        "min_score"
+      ],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "changed_lines",
+            "whole_project"
+          ],
+          "default": "changed_lines"
+        },
+        "tool": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Narzędzie mutacji (np. `stryker`, `mutmut`); pole tekstowe, nie enum."
+        },
+        "min_score": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100,
+          "description": "Minimalny procent zabitych mutantów."
+        },
+        "exclusions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/exclusion"
+          }
+        }
+      }
+    },
+    "performance_target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "metric",
+        "limit"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Nazwa budżetu widoczna dla człowieka na bramce B3 (np. `p95_login`, `bundle_initial`)."
+        },
+        "metric": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Metryka (np. `response_time_p95_ms`, `bundle_size_kb`)."
+        },
+        "limit": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Próg jako czytelny tekst (`<= 400ms`, `<= 250kb`)."
+        },
+        "note": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Krótkie uzasadnienie od architekta (dlaczego ten próg)."
+        }
+      }
+    },
+    "evaluation_target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "dataset",
+        "metric",
+        "min"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Nazwa ewaluacji (np. `rag_answer_quality`)."
+        },
+        "dataset": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Zestaw danych ewaluacji (ścieżka w repo albo nazwa rejestrowanego zestawu)."
+        },
+        "metric": {
+          "type": "string",
+          "minLength": 1
+        },
+        "min": {
+          "type": "number",
+          "description": "Minimalny wynik (liczba w jednostce metryki)."
+        },
+        "note": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "exclusion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "pattern",
+        "reason"
+      ],
+      "properties": {
+        "pattern": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Wzorzec plików / ścieżek wyjętych spod progu (`glob`)."
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Jawny powód wyjęcia (N4: wyjątki nie są domyślne)."
+        }
+      }
+    }
+  }
+}
