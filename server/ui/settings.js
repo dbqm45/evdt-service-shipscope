@@ -439,7 +439,7 @@ function EventSubscriptions(subs){
         <button type="button" class="btn-link btn" data-action="remove-event-subscription" data-subscription-id="${s.id}">remove</button></li>`);
     return Card({
         title: 'Outgoing events',
-        body: html`<p class="settings-hint">ShipScope posts release events (pdi contract 0.4.0) to these https addresses, signed with this workspace's signing secret
+        body: html`<p class="settings-hint">ShipScope posts release events (pdi contract 0.14.0) to these https addresses, signed with this workspace's signing secret
             (Settings → Sources): <span class="mono">X-ShipScope-Signature: v1=HMAC-SHA256(secret, "&lt;timestamp&gt;.&lt;body&gt;")</span>. A failed delivery is tried again for a few hours.</p>
             ${rows.length ? html`<ul class="settings-list">${rows}</ul>` : html`<p class="settings-hint">No address yet.</p>`}
             <form class="settings-form" data-action="add-event-subscription">

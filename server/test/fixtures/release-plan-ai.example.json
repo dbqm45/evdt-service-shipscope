@@ -1,0 +1,51 @@
+{
+  "change": "CHG-21",
+  "mvp": {
+    "release": "R1",
+    "outcome": "Asystent odpowiada w kontekście regulaminu z cytatem ze źródła",
+    "metric": {
+      "name": "odpowiedzi_z_cytatem",
+      "target": ">= 80%",
+      "horizon_days": 30
+    },
+    "guardrails": [
+      "odpowiedzi_bez_zrodla = 0"
+    ]
+  },
+  "releases": [
+    {
+      "id": "R1",
+      "name": "MVP",
+      "tasks": [
+        "TSK-71"
+      ]
+    }
+  ],
+  "targets": {
+    "coverage": {
+      "kind": "changed_lines",
+      "min_percent": 85,
+      "tool": "pytest-cov"
+    },
+    "mutation": {
+      "kind": "changed_lines",
+      "tool": "mutmut",
+      "min_score": 65
+    },
+    "evaluations": [
+      {
+        "name": "rag_answer_quality",
+        "dataset": "eval/rag/v3.jsonl",
+        "metric": "faithfulness",
+        "min": 0.9,
+        "note": "Próg DZ7: produkt AI nie wchodzi bez ewaluacji."
+      },
+      {
+        "name": "rag_citation_coverage",
+        "dataset": "eval/rag/v3.jsonl",
+        "metric": "cited_pct",
+        "min": 95
+      }
+    ]
+  }
+}

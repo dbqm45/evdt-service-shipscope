@@ -1,4 +1,4 @@
-// Outgoing release events (G1.5, pdi contract 0.4.0): release.stage_changed when a planned flag moves to another
+// Outgoing release events (G1.5, pdi contract 0.14.0): release.stage_changed when a planned flag moves to another
 // rollout stage on PROD, feature.released (with `release`) when every item of a line is with users. The plan is pure
 // (lib/release-events-model.js); the statuses come from the real docs/app-model.js run on the server
 // (lib/release-status.js); delivery is signed and retried (lib/outgoing-events.js).
@@ -63,14 +63,14 @@ test('feature.released once per line when all its items are on PROD, with `relea
 test('eventEnvelope: the contract\'s envelope; checkEvent refuses what the schema refuses', () => {
     const e = eventEnvelope('feature.released', { change: 'CHG-12', released_at: '2026-11-10T09:00:00Z' }, NOW);
     assert.match(e.id, /^[0-9a-f-]{36}$/);
-    assert.deepStrictEqual([e.type, e.source, e.contract_version, e.occurred_at], ['feature.released', 'shipscope', '0.4.0', '2026-11-10T09:00:00Z']);
+    assert.deepStrictEqual([e.type, e.source, e.contract_version, e.occurred_at], ['feature.released', 'shipscope', '0.14.0', '2026-11-10T09:00:00Z']);
     assert.deepStrictEqual(checkEvent(e), []);
     assert.match(checkEvent({ ...e, payload: { change: 'chg-12', released_at: 'now' } }).join('\n'), /payload\.change: does not match[\s\S]*payload\.released_at: does not match/);
     assert.match(checkEvent({ ...e, payload: { ...e.payload, extra: 1 } }).join('\n'), /payload\.extra: is not allowed/);
     assert.match(checkEvent({ ...e, type: 'release.stage_changed', payload: { change: 'CHG-12', flag: 'f', to_stage: 'x', rollout: 101 } }).join('\n'), /payload\.rollout: above 100/);
     assert.match(checkEvent({ ...e, source: 'jira' }).join('\n'), /source: is not one of/);
-    const schema = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'schemas', 'event.v0.4.0.schema.json'), 'utf8'));
-    assert.match(schema.title, /kontrakt 0\.4\.0/, 'the pinned copy of the contract\'s event schema');
+    const schema = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'schemas', 'event.v0.14.0.schema.json'), 'utf8'));
+    assert.match(schema.title, /kontrakt 0\.14\.0/, 'the pinned copy of the contract\'s event schema');
 });
 
 if (!process.env.TEST_DATABASE_URL) {

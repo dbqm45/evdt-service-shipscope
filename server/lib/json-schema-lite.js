@@ -1,11 +1,12 @@
-// A JSON Schema check for the pinned copies of the pdi contract's schemas (schemas/release-plan.v0.4.0.schema.json, and
-// the envelope and payload definitions of schemas/event.v0.4.0.schema.json, lib/release-events-model.js checkEvent()),
+// A JSON Schema check for the pinned copies of the pdi contract's schemas (schemas/release-plan.v0.14.0.schema.json, and
+// the envelope and payload definitions of schemas/event.v0.14.0.schema.json, lib/release-events-model.js checkEvent()),
 // without a new dependency: exactly the keywords those copies use, enforced. KNOWN_KEYWORDS is the list;
 // test/release-plans.test.js walks the pinned schema and fails on any keyword not in it, so a newer schema copied in
 // with a keyword this does not enforce stops the tests instead of letting a bad file through.
 
-// Annotations ($schema, $id, title, description, format: the date fields also carry a pattern) are not checks.
-const KNOWN_KEYWORDS = ['$schema', '$id', 'title', 'description', 'format', 'type', 'required', 'properties', 'additionalProperties', 'items', 'minItems', 'minLength', 'minimum', 'maximum', 'pattern', 'enum'];
+// Annotations ($schema, $id, title, description, default, format: the date fields also carry a pattern) are not checks.
+// $defs holds definitions; $ref points at one of them (`#/$defs/<name>`, the only form the contract uses).
+const KNOWN_KEYWORDS = ['$schema', '$id', 'title', 'description', 'default', 'format', '$defs', '$ref', 'type', 'required', 'properties', 'additionalProperties', 'items', 'minItems', 'minLength', 'minimum', 'maximum', 'pattern', 'enum'];
 
 const typeOf = (v) => (Array.isArray(v) ? 'array' : v === null ? 'null' : Number.isInteger(v) ? 'integer' : typeof v);
 const TYPE_WORDS = { object: 'an object', array: 'a list', string: 'text', integer: 'a whole number', number: 'a number', boolean: 'true or false' };
@@ -20,8 +21,17 @@ const TYPE_WORDS = { object: 'an object', array: 'a list', string: 'text', integ
  */
 function validate(schema, value) {
     const errors = [];
+    const defs = schema.$defs || {};
     const check = (s, v, at) => {
         const where = at || '(root)';
+        if (s.$ref !== undefined) {
+            const name = /^#\/\$defs\/([^/]+)$/.exec(s.$ref);
+            const target = name && Object.prototype.hasOwnProperty.call(defs, name[1]) ? defs[name[1]] : null;
+            // A reference this cannot follow fails closed: nothing behind it would be checked otherwise.
+            if (!target) errors.push(`${where}: the schema refers to ${s.$ref}, which is not defined`);
+            else check(target, v, at);
+            return;
+        }
         if (s.type) {
             const actual = typeOf(v);
             const ok = s.type === actual || (s.type === 'number' && actual === 'integer');

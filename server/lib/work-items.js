@@ -9,7 +9,7 @@ const { roleOf, TenantNotFoundError } = require('./tenants');
 const { githubGet, GitHubApiError, GitHubRateLimitError } = require('./github-app');
 const { CHANGES_DIR, CHANGES_KEY, MAX_CHANGES, WorkItemFileError, buildWorkItems, workItemIssues, checkReleasePlan } = require('./work-items-model');
 const { parseDocumentFile, FlagFileError } = require('./flag-file-parser');
-const RELEASE_PLAN_SCHEMA = require('../schemas/release-plan.v0.4.0.schema.json');
+const RELEASE_PLAN_SCHEMA = require('../schemas/release-plan.v0.14.0.schema.json');
 
 const MAX_FILE_BYTES = 256 * 1024;
 const ARTIFACT = new RegExp(`^${CHANGES_DIR}/([^/]+)/(intent\\.md|plan\\.md|release\\.yaml)$`);
