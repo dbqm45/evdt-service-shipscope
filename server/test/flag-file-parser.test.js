@@ -1,6 +1,7 @@
 // The safe reader for customers' flags files (lib/flag-file-parser.js, ADR-003 point 5): the adapter's parsers in an
 // isolated thread, with limits, and errors that never carry a value from the file.
 const { test } = require('node:test');
+const { Worker } = require('worker_threads');
 const assert = require('node:assert');
 const { parseFlagFile, formatFromName, FlagFileError, LIMITS } = require('../lib/flag-file-parser');
 
@@ -40,7 +41,7 @@ test('no error message carries a value from the file', async () => {
     for (const message of messages) assert.ok(!/hunter2|SECRET_|postgres:/.test(message), message);
 });
 
-test('limits: size, nesting, an alias bomb, the number of flags, time and memory each stop the read', async () => {
+test('limits: size, nesting, an alias bomb, the number of flags and time each stop the read', async () => {
     await refused({ text: `{"a":"${'x'.repeat(LIMITS.maxBytes)}"}`, fileName: 'flags.json' }, /larger than 256 KB/);
     await refused({ text: `${'['.repeat(40)}${']'.repeat(40)}`, fileName: 'flags.json' }, /too large or too deeply nested/);
     let bomb = 'a: &a [x, x, x, x, x, x, x, x, x, x]\n';
@@ -52,6 +53,24 @@ test('limits: size, nesting, an alias bomb, the number of flags, time and memory
     await refused({ text: bomb, fileName: 'flags.yaml' }, /too large or too deeply nested/);
     await refused({ text: JSON.stringify(Object.fromEntries(Array.from({ length: 30 }, (_, i) => [`f${i}`, true]))), fileName: 'f.json', limits: { maxFlags: 20 } }, /more than 20 flags/);
     await refused({ text: JSON.stringify(Object.fromEntries(Array.from({ length: 5000 }, (_, i) => [`f${i}`, true]))), fileName: 'f.json', limits: { timeoutMs: 1 } }, /took too long to read/);
+});
+
+// The heap a worker really gets with resourceLimits of `mb`. V8 flags are process-wide, so `--max-old-space-size` in
+// NODE_OPTIONS (or on the command line) replaces the worker's own limit: the thread then gets the process's heap.
+const workerHeapLimitMb = (mb) => new Promise((resolve, reject) => {
+    const probe = new Worker("require('worker_threads').parentPort.postMessage(require('v8').getHeapStatistics().heap_size_limit)", {
+        eval: true, resourceLimits: { maxOldGenerationSizeMb: mb, maxYoungGenerationSizeMb: 4 },
+    });
+    probe.once('message', (bytes) => { probe.terminate(); resolve(bytes / 1024 / 1024); });
+    probe.once('error', reject);
+});
+
+test('limits: memory stops the read', async (t) => {
+    const limitMb = await workerHeapLimitMb(8);
+    if (limitMb > 64) {
+        t.skip(`the worker heap limit is not in effect here (${Math.round(limitMb)} MB, not ~8): a V8 heap flag such as --max-old-space-size in NODE_OPTIONS overrides it`);
+        return;
+    }
     const big = JSON.stringify(Array.from({ length: 200_000 }, (_, i) => ({ name: `f${i}`, enabled: true, note: 'x'.repeat(40) })));
     await refused({ text: big, fileName: 'f.json', limits: { maxBytes: 50e6, maxNodes: 1e8, maxFlags: 1e6, memoryMb: 8, timeoutMs: 20_000 } }, /too large to read|could not be read/);
 });
