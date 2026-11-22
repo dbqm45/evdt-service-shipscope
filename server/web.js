@@ -20,6 +20,7 @@ const { IngestTokenError, IngestScopeError, IngestBusyError, IngestPayloadError,
 const { getSessionUser } = require('./lib/sessions');
 const { mockDataEnabled, loadMockDashboard } = require('./lib/mock-dashboard');
 const { localModeEnabled, LOCAL_MODE_WARNING } = require('./lib/local-mode');
+const { checkWorkerHeapLimit } = require('./lib/worker-heap-check');
 
 const { registerHealthRoutes } = require('./routes/health');
 const { registerAuthRoutes } = require('./routes/auth');
@@ -284,6 +285,8 @@ if (require.main === module) {
     if (mockDashboard) log.warn('SHIPSCOPE_MOCK_DATA=1: every dashboard shows the built-in sample data');
     const localMode = localModeEnabled(process.env);
     if (localMode) log.warn(LOCAL_MODE_WARNING);
+    // Once: a V8 heap flag in NODE_OPTIONS or argv would lift the flag file parser's memory cap (lib/worker-heap-check.js).
+    checkWorkerHeapLimit(log);
     const syncIntervalMinutes = Number(process.env.SYNC_INTERVAL_MINUTES) || 15;
     const metricsToken = loadMetricsToken(process.env);
     const app = buildApp({ pool, auth, githubApp, atlassian, encryptionKey, sealingKeys, logger: loggerOptions({ level, version: APP_VERSION }), dashboardDir, mockDashboard, syncIntervalMinutes, metricsToken, localMode });

@@ -1,9 +1,9 @@
 // The safe reader for customers' flags files (lib/flag-file-parser.js, ADR-003 point 5): the adapter's parsers in an
 // isolated thread, with limits, and errors that never carry a value from the file.
 const { test } = require('node:test');
-const { Worker } = require('worker_threads');
 const assert = require('node:assert');
-const { parseFlagFile, formatFromName, FlagFileError, LIMITS } = require('../lib/flag-file-parser');
+const { parseFlagFile, formatFromName, FlagFileError, LIMITS, workerResourceLimits } = require('../lib/flag-file-parser');
+const { measureWorkerHeapMb } = require('../lib/worker-heap-check');
 
 const refused = async (input, pattern) => {
     const err = await parseFlagFile(input).then(() => null, (e) => e);
@@ -55,15 +55,9 @@ test('limits: size, nesting, an alias bomb, the number of flags and time each st
     await refused({ text: JSON.stringify(Object.fromEntries(Array.from({ length: 5000 }, (_, i) => [`f${i}`, true]))), fileName: 'f.json', limits: { timeoutMs: 1 } }, /took too long to read/);
 });
 
-// The heap a worker really gets with resourceLimits of `mb`. V8 flags are process-wide, so `--max-old-space-size` in
-// NODE_OPTIONS (or on the command line) replaces the worker's own limit: the thread then gets the process's heap.
-const workerHeapLimitMb = (mb) => new Promise((resolve, reject) => {
-    const probe = new Worker("require('worker_threads').parentPort.postMessage(require('v8').getHeapStatistics().heap_size_limit)", {
-        eval: true, resourceLimits: { maxOldGenerationSizeMb: mb, maxYoungGenerationSizeMb: 4 },
-    });
-    probe.once('message', (bytes) => { probe.terminate(); resolve(bytes / 1024 / 1024); });
-    probe.once('error', reject);
-});
+// The heap a worker really gets with the parser's resourceLimits (lib/worker-heap-check.js): a V8 heap flag such as
+// --max-old-space-size in NODE_OPTIONS replaces the worker's own limit, and the thread gets the process's heap.
+const workerHeapLimitMb = (mb) => measureWorkerHeapMb(workerResourceLimits(mb));
 
 test('limits: memory stops the read', async (t) => {
     const limitMb = await workerHeapLimitMb(8);

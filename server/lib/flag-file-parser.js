@@ -77,13 +77,23 @@ async function parseDocumentFile({ text, fileName, format, limits = {} }) {
     return inThread({ text, fileName, format: fmt, document: true, limits: { maxNodes: lim.maxNodes, maxDepth: lim.maxDepth } }, lim, 'doc');
 }
 
+/**
+ * The resourceLimits of a parser thread with a heap of `memoryMb`; lib/worker-heap-check.js probes with the same.
+ *
+ * @param {number} memoryMb
+ * @returns {{ maxOldGenerationSizeMb: number, maxYoungGenerationSizeMb: number, stackSizeMb: number }}
+ */
+function workerResourceLimits(memoryMb) {
+    return { maxOldGenerationSizeMb: memoryMb, maxYoungGenerationSizeMb: Math.max(4, Math.floor(memoryMb / 4)), stackSizeMb: 4 };
+}
+
 /** Runs flag-file-worker.js on `workerData` with the limits; resolves with the answer's `field`. */
 function inThread(workerData, lim, field) {
     const { fileName } = workerData;
     return new Promise((resolve, reject) => {
         const worker = new Worker(WORKER, {
             workerData,
-            resourceLimits: { maxOldGenerationSizeMb: lim.memoryMb, maxYoungGenerationSizeMb: Math.max(4, Math.floor(lim.memoryMb / 4)), stackSizeMb: 4 },
+            resourceLimits: workerResourceLimits(lim.memoryMb),
             env: {}, // nothing of the service's environment (DATABASE_URL, keys) inside the parser's thread
             stdout: true,
             stderr: true,
@@ -105,4 +115,4 @@ function inThread(workerData, lim, field) {
     });
 }
 
-module.exports = { LIMITS, FlagFileError, formatFromName, parseFlagFile, parseDocumentFile };
+module.exports = { LIMITS, FlagFileError, formatFromName, parseFlagFile, parseDocumentFile, workerResourceLimits };
