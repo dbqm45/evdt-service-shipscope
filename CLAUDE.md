@@ -160,7 +160,10 @@ environments by freshness, refused in the last hour, counts only) (`server/test/
 `GET /status` (HTML, no script) and `GET /status.json` (`lib/status-page.js`): judgeWorker()'s components now and per
 day for 90 days, from `status_samples` (migration `035`, non-RLS, counts per component and day, kept 120 days) that
 the web service fills once a minute (`sampleStatus()`, web.js); a day is an outage above 1% `down`
-(`server/test/status-page.test.js`).
+(`server/test/status-page.test.js`). At start both services check once that the flag file parser's thread memory cap applies
+(`lib/worker-heap-check.js`, `checkWorkerHeapLimit()`: a probe thread with the parser's `resourceLimits`; a V8 heap
+flag in `NODE_OPTIONS` or argv replaces it) and log one warning naming the flag when it does not; never fatal
+(`server/test/worker-heap-check.test.js`).
 
 **Features, by PRD requirement:**
 

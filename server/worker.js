@@ -11,6 +11,7 @@ const { flagSourceHealth } = require('./lib/flags');
 const { detectReleaseEvents, deliverEvents } = require('./lib/outgoing-events');
 const { pingPdiConnections, backfillPdiConnections } = require('./lib/pdi-connection');
 const { localModeEnabled, LOCAL_MODE_WARNING } = require('./lib/local-mode');
+const { checkWorkerHeapLimit } = require('./lib/worker-heap-check');
 const { safeFetch } = require('./lib/safe-fetch');
 const { pendingSyncRequests, finishSyncRequests } = require('./lib/webhooks');
 const { recordRun } = require('./lib/worker-status');
@@ -358,6 +359,8 @@ if (require.main === module) {
     // Local mode (lib/local-mode.js): decided once here; only the connection with pdi uses it.
     const localMode = localModeEnabled(process.env);
     if (localMode) defaultLogger.warn(LOCAL_MODE_WARNING);
+    // Once: a V8 heap flag in NODE_OPTIONS or argv would lift the flag file parser's memory cap (lib/worker-heap-check.js).
+    checkWorkerHeapLimit(defaultLogger);
     const timers = [setInterval(() => heartbeatTick(pool), HEARTBEAT_INTERVAL_MS)];
     heartbeatTick(pool);
 
