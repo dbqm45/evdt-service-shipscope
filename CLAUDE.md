@@ -338,9 +338,9 @@ flag in `NODE_OPTIONS` or argv replaces it) and log one warning naming the flag 
   into the issue's `releaseLine`; the sync keeps `release_lines` (origin `jira`) in step with every issue it read
   (`writeReleaseLines()`) (`server/test/release-lines.test.js`). Repo mode: `<CHG>/release.yaml`, read with the work
   items below, parsed by `parseDocumentFile()` (`lib/flag-file-parser.js`, the flags files' isolated thread and
-  limits), validated by `checkReleasePlan()` against `schemas/release-plan.v0.4.0.schema.json` (a 1:1 copy of the pdi
-  contract's, never edited; `lib/json-schema-lite.js` enforces exactly the keywords it uses, `KNOWN_KEYWORDS`, and the
-  test fails on any other) and `change` = folder, kept in `release_plans` (migration `038`, RLS, cascade from
+  limits), validated by `checkReleasePlan()` against `schemas/release-plan.v0.14.0.schema.json` (a 1:1 copy of the suite
+  contract's, from tag `contract-v0.14.0` of dbqm45/di-contract, never edited; `lib/json-schema-lite.js` enforces exactly
+  the keywords it uses, `KNOWN_KEYWORDS`, follows `$ref` into `$defs`, and the test fails on any other keyword) and `change` = folder, kept in `release_plans` (migration `038`, RLS, cascade from
   `tracked_repos`); a bad file is a `work_items_error`, never an empty plan (`server/test/release-plans.test.js`).
 - **Work items from a repo (F1 of the pdi one-flow plan)** — `lib/work-items.js` `refreshWorkItems()`, run by
   `syncRepo()` after the flags in code: the newest commit touching `docs/project/changes` on the default branch
@@ -373,7 +373,7 @@ flag in `NODE_OPTIONS` or argv replaces it) and log one warning naming the flag 
   (`lib/release-events-model.js`, pure: the first look at a change is its baseline, a planned flag's new stage =
   `release.stage_changed` with the line of its tasks, a line newly `released` = `feature.released` with `release`)
   against `event_state`; each event in the contract's envelope (`eventEnvelope()`) is checked by `checkEvent()`
-  against the pinned `schemas/event.v0.4.0.schema.json` before it is queued in `event_outbox`.
+  against the pinned `schemas/event.v0.14.0.schema.json` before it is queued in `event_outbox`.
   `eventDeliveryTick()` (every minute, `EVENT_DELIVERY_LOCK`) → `deliverEvents()`: a `safeFetch()` POST (its
   `method`/`body` options) with `X-ShipScope-Timestamp`/`-Event`/`-Signature: v1=HMAC-SHA256(workspace signing secret,
   "<timestamp>.<body>")` (`eventSignature()`), retried after 1, 2, 4… minutes up to an hour, given up after 10

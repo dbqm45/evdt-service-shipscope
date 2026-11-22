@@ -1,4 +1,4 @@
-// A JSON Schema check for the pinned copies of the pdi contract's schemas (schemas/release-plan.v0.14.0.schema.json, and
+// A JSON Schema check for the pinned copies of the suite contract's schemas (dbqm45/di-contract, formerly in pdi) (schemas/release-plan.v0.14.0.schema.json, and
 // the envelope and payload definitions of schemas/event.v0.14.0.schema.json, lib/release-events-model.js checkEvent()),
 // without a new dependency: exactly the keywords those copies use, enforced. KNOWN_KEYWORDS is the list;
 // test/release-plans.test.js walks the pinned schema and fails on any keyword not in it, so a newer schema copied in
