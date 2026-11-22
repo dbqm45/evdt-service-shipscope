@@ -1,5 +1,5 @@
 // Outgoing events (G1.5; the first outgoing webhooks of F5): a workspace's admin subscribes an https address to
-// release.stage_changed and/or feature.released (pdi contract 0.4.0). The worker looks at the tenants with a
+// release.stage_changed and/or feature.released (pdi contract 0.14.0). The worker looks at the tenants with a
 // subscription every few minutes (detectReleaseEvents(): the Release plan model, lib/release-status.js, against
 // event_state; plan in lib/release-events-model.js), queues what changed in event_outbox, and delivers it
 // (deliverEvents()): a POST through safeFetch() (lib/safe-fetch.js: https, public address, no redirects, limits),

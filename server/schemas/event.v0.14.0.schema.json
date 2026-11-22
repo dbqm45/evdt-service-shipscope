@@ -1,0 +1,1058 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/dbqm45/pdi/contract/event.schema.json",
+  "title": "Zdarzenie (pdi, kontrakt 0.14.0)",
+  "description": "Koperta zdarzenia wymienianego między pdi, tf, ci_for_sdlc i ShipScope; treść (payload) zależy od typu.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "type",
+    "occurred_at",
+    "source",
+    "contract_version",
+    "payload"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Unikalny identyfikator zdarzenia (np. UUID) — do deduplikacji u odbiorcy."
+    },
+    "type": {
+      "type": "string",
+      "enum": [
+        "problem.accepted",
+        "gate.requested",
+        "gate.decided",
+        "readiness.changed",
+        "feature.released",
+        "metric.breached",
+        "decision.basis_invalidated",
+        "release.stage_changed",
+        "decision.proposed",
+        "decision.auto_applied",
+        "decision.vetoed",
+        "run.progress",
+        "decision.recorded"
+      ]
+    },
+    "occurred_at": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
+    },
+    "source": {
+      "type": "string",
+      "enum": [
+        "pdi",
+        "tf",
+        "ci_for_sdlc",
+        "shipscope"
+      ]
+    },
+    "contract_version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+    },
+    "payload": {
+      "type": "object"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "problem.accepted"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/problem_accepted"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "gate.requested"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/gate_requested"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "gate.decided"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/gate_decided"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "readiness.changed"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/readiness_changed"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "feature.released"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/feature_released"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "metric.breached"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/metric_breached"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "decision.basis_invalidated"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/decision_basis_invalidated"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "release.stage_changed"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/release_stage_changed"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "decision.proposed"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/decision_proposed"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "decision.auto_applied"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/decision_auto_applied"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "decision.vetoed"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/decision_vetoed"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "run.progress"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/run_progress"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "decision.recorded"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/decision_recorded"
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "problem_accepted": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "problem",
+        "change",
+        "decision"
+      ],
+      "properties": {
+        "problem": {
+          "type": "string",
+          "pattern": "^[A-Z][A-Z0-9]+-[0-9]+$",
+          "description": "PRB"
+        },
+        "change": {
+          "type": "string",
+          "pattern": "^[A-Z][A-Z0-9]+-[0-9]+$",
+          "description": "CHG"
+        },
+        "decision": {
+          "type": "string",
+          "pattern": "^[A-Z][A-Z0-9]+-[0-9]+$",
+          "description": "DEC"
+        },
+        "project": {
+          "type": "string"
+        }
+      }
+    },
+    "gate_requested": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "change",
+        "gate",
+        "summary"
+      ],
+      "properties": {
+        "change": {
+          "type": "string",
+          "pattern": "^[A-Z][A-Z0-9]+-[0-9]+$",
+          "description": "CHG"
+        },
+        "gate": {
+          "type": "string",
+          "minLength": 1,
+          "description": "B1–B6 albo nazwa bramki, np. design-review, approve-for-implementation."
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 1
+        },
+        "artifact": {
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        },
+        "questions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "targets": {
+          "type": "object",
+          "description": "Cele zmiany z release.yaml (Z7b-1a, 0.12.0): tf dokleja je do prośby o B3, żeby człowiek widział, co zatwierdza; po `approved` pdi zapisuje ich kopię w stanie zmiany. Opcjonalne — bramki inne niż B3 nie muszą ich podawać. Kształt: `release_plan.schema.json#/$defs/targets` (`coverage`, `mutation`, `performance`, `evaluations`)."
+        },
+        "second_review": {
+          "type": "object",
+          "description": "Streszczenie drugiego przeglądu artefaktu innym modelem (N1, 0.13.0): tf dokleja je do prośby o B2 i B3, żeby człowiek widział, czy przegląd się odbył. Opcjonalne. `status: unavailable` z `reason` oznacza brak przeglądu, nigdy cichą zgodę. Pola nieznane odbiorca pomija.",
+          "required": [
+            "status"
+          ],
+          "properties": {
+            "status": {
+              "type": "string",
+              "description": "`ok` — przegląd się odbył; `unavailable` — nie (powód w `reason`)."
+            },
+            "reason": {
+              "type": "string"
+            },
+            "provider": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "model": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "same_vendor": {
+              "type": "boolean"
+            },
+            "cost_usd": {
+              "type": "number",
+              "minimum": 0
+            },
+            "findings_total": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "blocking": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "contradictions": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        }
+      }
+    },
+    "gate_decided": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "change",
+        "gate",
+        "outcome",
+        "decision"
+      ],
+      "properties": {
+        "change": {
+          "type": "string",
+          "pattern": "^[A-Z][A-Z0-9]+-[0-9]+$",
+          "description": "CHG"
+        },
+        "gate": {
+          "type": "string",
+          "minLength": 1
+        },
+        "outcome": {
+          "type": "string",
+          "enum": [
+            "approved",
+            "changes_requested",
+            "rejected"
+          ]
+        },
+        "decision": {
+          "type": "string",
+          "pattern": "^[A-Z][A-Z0-9]+-[0-9]+$",
+          "description": "DEC"
+        },
+        "note": {
+          "type": "string"
+        }
+      }
+    },
+    "readiness_changed": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "change",
+        "readiness"
+      ],
+      "properties": {
+        "change": {
+          "type": "string",
+          "pattern": "^[A-Z][A-Z0-9]+-[0-9]+$",
+          "description": "CHG"
+        },
+        "readiness": {
+          "type": "string",
+          "enum": [
+            "ready",
+            "not_ready",
+            "drift"
+          ]
+        },
+        "open_questions": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "url": {
+          "type": "string"
+        },
+        "targets_status": {
+          "$ref": "#/$defs/targets_status"
+        }
+      }
+    },
+    "targets_status": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Stan celów zmiany (release_plan.targets) przed B4 (Z7b-1b, kontrakt 0.14.0): wypełnia ci_for_sdlc, czyta pdi. Brak pola = cele nie zostały zbadane. `details` nazywa cele po kolei, żeby człowiek zobaczył, który próg jest niespełniony.",
+      "required": [
+        "overall",
+        "checked_at"
+      ],
+      "properties": {
+        "overall": {
+          "type": "string",
+          "enum": [
+            "met",
+            "not_met",
+            "unknown"
+          ]
+        },
+        "checked_at": {
+          "type": "string",
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 1
+        },
+        "details": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "name",
+              "kind",
+              "status"
+            ],
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "coverage",
+                  "mutation",
+                  "performance",
+                  "evaluation",
+                  "other"
+                ]
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "met",
+                  "not_met",
+                  "unknown"
+                ]
+              },
+              "observed": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Wynik jak tekst (`86.4%`, `412ms`)."
+              },
+              "required": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Próg jak w planie (`>= 90%`, `<= 400ms`)."
+              },
+              "note": {
+                "type": "string",
+                "minLength": 1
+              },
+              "url": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    "feature_released": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "change",
+        "released_at"
+      ],
+      "properties": {
+        "change": {
+          "type": "string",
+          "pattern": "^[A-Z][A-Z0-9]+-[0-9]+$",
+          "description": "CHG"
+        },
+        "tasks": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Z][A-Z0-9]+-[0-9]+$",
+            "description": "TSK"
+          }
+        },
+        "version": {
+          "type": "string"
+        },
+        "released_at": {
+          "type": "string",
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
+        },
+        "environment": {
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        },
+        "release": {
+          "type": "string",
+          "pattern": "^R[0-9]+$",
+          "description": "Wydana linia; R1 wydane = MVP u ludzi."
+        }
+      }
+    },
+    "metric_breached": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "metric",
+        "value",
+        "threshold"
+      ],
+      "properties": {
+        "metric": {
+          "type": "string",
+          "minLength": 1
+        },
+        "value": {
+          "type": "number"
+        },
+        "threshold": {
+          "type": "number"
+        },
+        "window": {
+          "type": "string"
+        },
+        "service": {
+          "type": "string"
+        },
+        "change": {
+          "type": "string",
+          "pattern": "^[A-Z][A-Z0-9]+-[0-9]+$",
+          "description": "CHG"
+        },
+        "diagnosis": {
+          "type": "string"
+        }
+      }
+    },
+    "decision_basis_invalidated": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "decision",
+        "assumption",
+        "signal",
+        "attention_level"
+      ],
+      "properties": {
+        "decision": {
+          "type": "string",
+          "pattern": "^[A-Z][A-Z0-9]+-[0-9]+$",
+          "description": "DEC"
+        },
+        "assumption": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Założenie nośne, którego dotyczy sygnał."
+        },
+        "signal": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Co się stało (zgodne z invalidated_if)."
+        },
+        "signal_source": {
+          "type": "string",
+          "description": "ID zdarzenia, zgłoszenia albo URL źródła."
+        },
+        "attention_level": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 3,
+          "description": "Poziom uwagi 0–3 (dokument 05)."
+        }
+      }
+    },
+    "release_stage_changed": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "change",
+        "flag",
+        "to_stage"
+      ],
+      "properties": {
+        "change": {
+          "type": "string",
+          "pattern": "^[A-Z][A-Z0-9]+-[0-9]+$",
+          "description": "CHG"
+        },
+        "release": {
+          "type": "string",
+          "pattern": "^R[0-9]+$"
+        },
+        "flag": {
+          "type": "string",
+          "minLength": 1
+        },
+        "from_stage": {
+          "type": "string"
+        },
+        "to_stage": {
+          "type": "string",
+          "minLength": 1
+        },
+        "rollout": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100,
+          "description": "Procent udostępnienia po zmianie."
+        }
+      }
+    },
+    "decision_proposed": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "decision_type",
+        "level",
+        "summary"
+      ],
+      "properties": {
+        "item": {
+          "type": "string",
+          "description": "ID pozycji w skrzynce."
+        },
+        "decision_type": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$"
+        },
+        "level": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 3
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 1
+        },
+        "recommendation": {
+          "type": "string"
+        },
+        "veto_until": {
+          "type": "string",
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
+        },
+        "change": {
+          "type": "string",
+          "pattern": "^[A-Z][A-Z0-9]+-[0-9]+$",
+          "description": "CHG"
+        },
+        "problem": {
+          "type": "string",
+          "pattern": "^[A-Z][A-Z0-9]+-[0-9]+$",
+          "description": "PRB"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "level": {
+                "const": 2
+              }
+            },
+            "required": [
+              "level"
+            ]
+          },
+          "then": {
+            "required": [
+              "veto_until"
+            ]
+          }
+        }
+      ]
+    },
+    "decision_auto_applied": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "decision",
+        "decision_type",
+        "level"
+      ],
+      "properties": {
+        "decision": {
+          "type": "string",
+          "pattern": "^[A-Z][A-Z0-9]+-[0-9]+$",
+          "description": "DEC zapisana przez automat"
+        },
+        "decision_type": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$"
+        },
+        "level": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2
+        },
+        "rule": {
+          "type": "string"
+        },
+        "change": {
+          "type": "string",
+          "pattern": "^[A-Z][A-Z0-9]+-[0-9]+$",
+          "description": "CHG"
+        }
+      }
+    },
+    "decision_vetoed": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "decision_type",
+        "vetoed_by"
+      ],
+      "properties": {
+        "item": {
+          "type": "string"
+        },
+        "decision": {
+          "type": "string",
+          "pattern": "^[A-Z][A-Z0-9]+-[0-9]+$",
+          "description": "DEC, jeśli weto zapisano jako decyzję"
+        },
+        "decision_type": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$"
+        },
+        "vetoed_by": {
+          "type": "string",
+          "minLength": 1
+        },
+        "reason": {
+          "type": "string"
+        },
+        "change": {
+          "type": "string",
+          "pattern": "^[A-Z][A-Z0-9]+-[0-9]+$",
+          "description": "CHG"
+        }
+      }
+    },
+    "run_progress": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "phase",
+        "status"
+      ],
+      "properties": {
+        "change": {
+          "type": "string",
+          "pattern": "^[A-Z][A-Z0-9]+-[0-9]+$",
+          "description": "CHG"
+        },
+        "task": {
+          "type": "string",
+          "pattern": "^[A-Z][A-Z0-9]+-[0-9]+$",
+          "description": "TSK"
+        },
+        "phase": {
+          "type": "string",
+          "minLength": 1
+        },
+        "slice": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "started",
+            "in_progress",
+            "waiting_gate",
+            "done",
+            "failed"
+          ]
+        },
+        "cost_usd": {
+          "type": "number",
+          "minimum": 0
+        },
+        "budget_usd": {
+          "type": "number",
+          "minimum": 0
+        },
+        "message": {
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        }
+      }
+    },
+    "decision_recorded": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Decyzja podjęta w aplikacji nadawcy (np. zamknięcie pytania w ci_for_sdlc, decyzja D-A2) do zapisu w rejestrze pdi. Decyzja człowieka ma drafted_by i przy szkicu AI draft_edited; decyzja automatu ma automation i nie ma draft_edited.",
+      "required": [
+        "decision_type",
+        "ref",
+        "statement",
+        "decided_by",
+        "drafted_by"
+      ],
+      "properties": {
+        "decision_type": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$"
+        },
+        "ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "description": "Czego dotyczy decyzja w aplikacji nadawcy, np. PAY-12/COV-001."
+        },
+        "url": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Strona pozycji w aplikacji nadawcy."
+        },
+        "statement": {
+          "type": "string",
+          "minLength": 1
+        },
+        "why": {
+          "type": "string",
+          "minLength": 1
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "product",
+            "technical",
+            "process",
+            "triage",
+            "intent",
+            "gate",
+            "other"
+          ]
+        },
+        "decided_by": {
+          "type": "string",
+          "minLength": 1
+        },
+        "drafted_by": {
+          "type": "string",
+          "enum": [
+            "ai",
+            "human"
+          ]
+        },
+        "draft_edited": {
+          "type": "boolean",
+          "description": "Czy człowiek zmienił szkic AI (odrzucenie albo ponowne otwarcie to też zmiana)."
+        },
+        "evidence": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "text"
+            ],
+            "properties": {
+              "text": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Dosłowny cytat ze źródła."
+              },
+              "source_url": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        },
+        "automation": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "level"
+          ],
+          "properties": {
+            "level": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 2
+            },
+            "rule": {
+              "type": "string",
+              "minLength": 1
+            },
+            "veto_until": {
+              "type": "string",
+              "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
+            }
+          },
+          "allOf": [
+            {
+              "if": {
+                "properties": {
+                  "level": {
+                    "const": 2
+                  }
+                },
+                "required": [
+                  "level"
+                ]
+              },
+              "then": {
+                "required": [
+                  "veto_until"
+                ]
+              }
+            }
+          ]
+        },
+        "supersedes": {
+          "type": "string",
+          "pattern": "^[A-Z][A-Z0-9]+-[0-9]+$",
+          "description": "DEC zastępowanej decyzji tego samego nadawcy i tego samego ref."
+        },
+        "change": {
+          "type": "string",
+          "pattern": "^[A-Z][A-Z0-9]+-[0-9]+$",
+          "description": "CHG"
+        },
+        "problem": {
+          "type": "string",
+          "pattern": "^[A-Z][A-Z0-9]+-[0-9]+$",
+          "description": "PRB"
+        }
+      },
+      "not": {
+        "required": [
+          "automation",
+          "draft_edited"
+        ]
+      }
+    }
+  }
+}

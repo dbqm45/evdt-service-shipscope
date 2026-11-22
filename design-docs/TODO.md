@@ -17,6 +17,7 @@ Brakuje:
 ## Limit pamięci parsera plików flag znika przy fladze sterty w `NODE_OPTIONS`
 
 Sprawdzone 2026-11-22. `lib/flag-file-parser.js` czyta pliki flag klientów w osobnym wątku z
+<<<<<<< HEAD
 `resourceLimits` (domyślnie 64 MB). Flagi V8 obowiązują cały proces, więc `--max-old-space-size` (albo inna flaga
 sterty) w `NODE_OPTIONS` lub w linii poleceń zastępuje limit wątku: wątek dostaje stertę procesu (przy 64 MB
 `heap_size_limit` wątku to 88 MB, z `--max-old-space-size=8192` – 8216 MB). Dziś `render.yaml` nie ustawia
@@ -32,6 +33,16 @@ ostrzeżenie z nazwą flagi i skutkiem. Nie odmawiają startu i nie zmieniają p
 Zostaje: ostrzeżenie nie przywraca limitu. Nie ustawiać flagi sterty w `NODE_OPTIONS` na Renderze; gdyby była
 potrzebna, parser musiałby czytać pliki w osobnym procesie (`child_process` z własnym `--max-old-space-size`), nie w
 wątku.
+=======
+`resourceLimits` (domyślnie 64 MB). Flagi V8 obowiązują cały proces, więc `--max-old-space-size` w `NODE_OPTIONS`
+albo w linii poleceń zastępuje limit wątku: wątek dostaje stertę procesu (w kontenerze z
+`--max-old-space-size=8192` parsowanie zużyło 446 MB przy limicie 8 MB). Dziś `render.yaml` nie ustawia
+`NODE_OPTIONS`, a pozostałe limity (256 KB na plik, liczba węzłów, głębokość, czas) i tak ograniczają pamięć, więc
+to obrona w głąb, nie dziura. Do zrobienia: przy starcie `web.js` i `worker.js` zmierzyć raz w próbnym wątku
+`v8.getHeapStatistics().heap_size_limit` i zalogować ostrzeżenie, gdy limit nie działa; nie ustawiać flagi sterty
+w `NODE_OPTIONS` na Renderze bez tej kontroli. Test pamięci w `server/test/flag-file-parser.test.js` w takim
+środowisku jest pomijany z powodem.
+>>>>>>> origin/main
 
 ## Tryb jasny nie pokrywa wszystkich kolorów
 

@@ -1,6 +1,6 @@
-// Release plans from a repo (G1.3 repo mode, pdi contract 0.4.0): docs/project/changes/<CHG>/release.yaml, read with
+// Release plans from a repo (G1.3 repo mode; pinned pdi contract 0.14.0): docs/project/changes/<CHG>/release.yaml, read with
 // the work items (lib/work-items.js), validated by a pinned copy of the contract's schema
-// (schemas/release-plan.v0.4.0.schema.json, lib/json-schema-lite.js), kept in release_plans (migration 038, RLS).
+// (schemas/release-plan.v0.14.0.schema.json, lib/json-schema-lite.js), kept in release_plans (migration 038, RLS).
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
@@ -9,8 +9,10 @@ const { validate, KNOWN_KEYWORDS } = require('../lib/json-schema-lite');
 const { parseDocumentFile, FlagFileError } = require('../lib/flag-file-parser');
 const { checkReleasePlan } = require('../lib/work-items-model');
 
-const SCHEMA = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'schemas', 'release-plan.v0.4.0.schema.json'), 'utf8'));
+const SCHEMA = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'schemas', 'release-plan.v0.14.0.schema.json'), 'utf8'));
 const EXAMPLE = JSON.parse(fs.readFileSync(path.join(__dirname, 'fixtures', 'release-plan.example.json'), 'utf8'));
+// The contract's example of a plan for an AI product: `targets` with evaluation thresholds (contract 0.11.0 and later).
+const AI_EXAMPLE = JSON.parse(fs.readFileSync(path.join(__dirname, 'fixtures', 'release-plan-ai.example.json'), 'utf8'));
 
 const YAML = `change: CHG-12
 mvp:
@@ -32,13 +34,13 @@ flags:
       - { stage: "100%" }
 `;
 
-test('the pinned schema is the contract\'s 0.4.0 copy and the validator knows every keyword it uses', () => {
-    assert.match(SCHEMA.title, /kontrakt 0\.4\.0/);
+test('the pinned schema is the contract\'s 0.14.0 copy and the validator knows every keyword it uses', () => {
+    assert.match(SCHEMA.title, /kontrakt 0\.14\.0/);
     const unknown = new Set();
     const walk = (schema) => {
         for (const [k, v] of Object.entries(schema)) {
             if (!KNOWN_KEYWORDS.includes(k)) unknown.add(k);
-            if (k === 'properties') Object.values(v).forEach(walk);
+            if (k === 'properties' || k === '$defs') Object.values(v).forEach(walk);
             if (k === 'items' && typeof v === 'object') walk(v);
         }
     };
@@ -58,6 +60,23 @@ test('validate: the contract\'s example passes; a broken plan fails with where a
     assert.match(errors({ ...EXAMPLE, flags: [{ key: 'x', remove_by: 'end of year' }] }).join('\n'), /flags\[0\]\.remove_by: does not match/);
     assert.match(errors({ ...EXAMPLE, mvp: { release: 'R1', metric: { name: 'x' } } }).join('\n'), /mvp\.metric\.target: is required/);
     assert.match(errors([]).join('\n'), /^\(root\): is not an object/);
+});
+
+test('validate: a plan with targets passes (it was refused as "targets: is not allowed" under the 0.4.0 copy); broken targets fail by path', () => {
+    assert.deepStrictEqual(validate(SCHEMA, AI_EXAMPLE), []);
+    const withTargets = (targets) => validate(SCHEMA, { ...EXAMPLE, targets }).join('\n');
+    assert.strictEqual(withTargets({ coverage: { min_percent: 90 }, mutation: { min_score: 70 } }), '');
+    assert.match(withTargets({ coverage: {} }), /targets\.coverage\.min_percent: is required/);
+    assert.match(withTargets({ coverage: { min_percent: 101 } }), /targets\.coverage\.min_percent: above 100/);
+    assert.match(withTargets({ coverage: { min_percent: 90, kind: 'some_lines' } }), /targets\.coverage\.kind: is not one of/);
+    assert.match(withTargets({ evaluations: [{ name: 'triage', dataset: 'evals/triage.jsonl', metric: 'accuracy' }] }), /targets\.evaluations\[0\]\.min: is required/);
+    assert.match(withTargets({ latency: 1 }), /targets\.latency: is not allowed/);
+});
+
+test('validate: a $ref to a definition that is not there fails closed', () => {
+    const schema = { type: 'object', properties: { a: { $ref: '#/$defs/missing' }, b: { $ref: 'https://example.com/other.json' } }, $defs: { present: { type: 'string' } } };
+    assert.deepStrictEqual(validate(schema, { a: 1, b: 2 }), ['a: the schema refers to #/$defs/missing, which is not defined', 'b: the schema refers to https://example.com/other.json, which is not defined']);
+    assert.deepStrictEqual(validate({ type: 'object', properties: { a: { $ref: '#/$defs/present' } }, $defs: { present: { type: 'string' } } }, { a: 1 }), ['a: is not text']);
 });
 
 test('parseDocumentFile: YAML in the isolated thread; a broken file is an error with no value in it', async () => {

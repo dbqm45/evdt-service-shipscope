@@ -7,6 +7,12 @@ dashboard, not a published package), so entries are grouped by date instead. See
 ShipScope is, `CLAUDE.md` for the technical reference, and `FAQ.md` for how specific numbers/badges are
 calculated.
 
+## [0.2.68] - 2026-11-22
+
+### Fixed
+
+- **server:** accept release plans with targets (pdi contract 0.14.0) (#134)
+
 ## [0.2.67] - 2026-11-01
 
 ### Fixed
