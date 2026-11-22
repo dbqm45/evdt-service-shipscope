@@ -7,6 +7,12 @@ dashboard, nie publikowany pakiet), dlatego wpisy są pogrupowane według dat. I
 ShipScope, znajdują się w `README.pl.md`, pełne techniczne odniesienie w `CLAUDE.md` (po angielsku), a
 wyjaśnienie sposobu liczenia poszczególnych wartości/badge'y w `FAQ.pl.md`.
 
+## [0.2.69] - 2026-11-22
+
+### Nowe
+
+- **SHP:** warn at start when a heap flag lifts the parser memory cap (#136)
+
 ## [0.2.68] - 2026-11-22
 
 ### Poprawione
