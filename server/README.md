@@ -324,8 +324,9 @@ not stripped or coerced).
 ## Outgoing events
 
 A workspace's admin subscribes https addresses (Settings → General, "Outgoing events") to two events of the pdi
-contract 0.14.0 (`server/schemas/event.v0.14.0.schema.json`, a pinned copy; each event is checked against it before it
-is queued):
+contract 0.14.0 (`server/schemas/event.v0.14.0.schema.json`, a pinned copy of `contract/event.schema.json` from tag
+`contract-v0.14.0` of dbqm45/di-contract, where the suite contract lives since 2026-11-22; each event is checked against it
+before it is queued):
 
 - `release.stage_changed` `{ change, release, flag, from_stage?, to_stage, rollout }`: a flag of a repo plan
   (`release.yaml`) moved to another rollout stage on PROD;
