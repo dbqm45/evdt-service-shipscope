@@ -99,7 +99,8 @@ Testy (`server/test/suite-only.test.js`): test przechodzi po tablicy tras (`web-
 osobie GitHub w najemcy `suite_only`; włączenie przez admina GitHub, bez organizacji albo odpięcie organizacji → `409`;
 osoba suity działa bez zmian; po wyłączeniu osoba GitHub wraca z tą samą rolą; zaproszenie nie wpuszcza osoby GitHub;
 admin GitHub nie połączy instalacji, gdy przełącznik włączono w trakcie (najemca tylko w ciasteczku `/github/setup`).
-Lista członków nie dostała oznaczenia „no access while suite-only” — to zostaje na później.
+Lista członków oznacza konta GitHub „GitHub — no access while suite-only”, gdy przełącznik jest włączony (`viaSuite` w
+`GET …/members`, dopisane po kroku 3).
 
 ## Ryzyka
 

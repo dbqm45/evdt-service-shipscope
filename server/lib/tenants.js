@@ -121,19 +121,20 @@ async function listTenantsForUser(pool, userId) {
  *
  * @param {import('pg').Pool} pool
  * @param {{ tenantId: string, userId: string }} input
- * @returns {Promise<Array<{ userId: string, githubLogin: string, role: 'admin'|'member' }>|null>}
+ * @returns {Promise<Array<{ userId: string, githubLogin: string, role: 'admin'|'member', viaSuite: boolean }>|null>}
  */
 async function listMembersIfMember(pool, { tenantId, userId }) {
     return withScope(pool, { tenantId }, async (client) => {
         const { rows } = await client.query(
-            `SELECT u.id AS user_id, COALESCE(u.github_login, u.display_name) AS github_login, m.role
+            `SELECT u.id AS user_id, COALESCE(u.github_login, u.display_name) AS github_login, m.role, u.suite_sub IS NOT NULL AS via_suite
              FROM memberships m JOIN users u ON u.id = m.user_id
              WHERE m.tenant_id = $1
              ORDER BY m.created_at`,
             [tenantId]
         );
         if (!rows.some((row) => row.user_id === userId)) return null;
-        return rows.map((row) => ({ userId: row.user_id, githubLogin: row.github_login, role: row.role }));
+        // viaSuite: signed in through the suite; a GitHub account has no access while the workspace is suite-only.
+        return rows.map((row) => ({ userId: row.user_id, githubLogin: row.github_login, role: row.role, viaSuite: row.via_suite }));
     });
 }
 

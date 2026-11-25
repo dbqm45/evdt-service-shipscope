@@ -855,6 +855,14 @@ test('suite-only sign-in (design-docs/SUITE-LOGIN-PLAN.pl.md, step 3): a switch 
     assert.doesNotMatch(str(ui.renderGeneral({ workspace: workspace('acme', false), admin: false })), /Only the suite's sign-in/);
 });
 
+test('members: while suite-only is on, GitHub accounts are marked as having no access', () => {
+    const workspace = (suiteOnly) => ({ settings: { suiteOnly }, members: [{ userId: 'u1', githubLogin: 'gina', role: 'admin', viaSuite: false }, { userId: 'u2', githubLogin: 'Sam', role: 'admin', viaSuite: true }], invitations: [] });
+    const on = str(ui.renderMembers({ workspace: workspace(true), admin: true, meId: 'u2', once: {} }));
+    assert.match(on, /gina[\s\S]*GitHub — no access while suite-only/);
+    assert.strictEqual((on.match(/no access while suite-only/g) || []).length, 1, 'only the GitHub account');
+    assert.doesNotMatch(str(ui.renderMembers({ workspace: workspace(false), admin: true, meId: 'u2', once: {} })), /no access while suite-only/);
+});
+
 test('pdi: after a disconnect the card says until when the pdi layer\'s data stays, or when it was removed (D5)', () => {
     const gone = { state: 'disconnected', receiverUrl: 'https://pdi.example.com', disconnectedAt: '2026-10-01T10:00:00Z', checks: [] };
     const kept = str(ui.renderPdi({ connection: { ...gone, dataKeptUntil: '2026-10-31T10:00:00Z', dataRemovedAt: null }, admin: true }));

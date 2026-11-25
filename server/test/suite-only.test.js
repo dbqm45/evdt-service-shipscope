@@ -135,3 +135,9 @@ test('a GitHub admin of a suite-only workspace cannot link a GitHub installation
     assert.strictEqual(setupRes.statusCode, 403, setupRes.body);
     assert.match(setupRes.body, new RegExp(REFUSAL));
 });
+
+test('the members list says who signed in through the suite, so Settings can mark GitHub accounts while suite-only is on', async (t) => {
+    const { app, sam, tenantId } = await setUp(t);
+    const members = (await app.inject({ method: 'GET', url: `/tenants/${tenantId}/members`, cookies: { sid: sam } })).json().members;
+    assert.deepStrictEqual(members.map((m) => [m.githubLogin, m.viaSuite]).sort(), [['Person b1', true], ['gina', false]]);
+});
