@@ -173,9 +173,16 @@ function registerAuthRoutes(app, ctx) {
             return reply.code(502).send({ error: 'GitHub sign-in failed; please try again' });
         }
 
-        const user = await upsertUser(pool, identity);
-        const session = await createSession(pool, user.id);
-        reply.setCookie(SESSION_COOKIE, session.token, { ...baseCookie, path: '/', expires: session.expiresAt });
+        // Linking an installation for someone already signed in (a suite person, design-docs/SUITE-LOGIN-PLAN.pl.md
+        // step 2, or a GitHub user): GitHub's token only proves this browser reaches the installation. The session stays
+        // theirs, they are the one who links it, and no GitHub user is created or stored.
+        const current = link ? await getSessionUser(pool, request.cookies[SESSION_COOKIE]) : null;
+        let user = current;
+        if (!user) {
+            user = await upsertUser(pool, identity);
+            const session = await createSession(pool, user.id);
+            reply.setCookie(SESSION_COOKIE, session.token, { ...baseCookie, path: '/', expires: session.expiresAt });
+        }
 
         if (link) {
             const [installationIdText, tenantId] = link;

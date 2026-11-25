@@ -187,7 +187,9 @@ flag in `NODE_OPTIONS` or argv replaces it) and log one warning naming the flag 
   5xx or a network error, not a timeout, is retried after 2/4/8 s, `RETRY`; writes and rate limits never are),
   `lib/github-connections.js`.
   An installation is linked only after the user's own token shows they can access it (`GET /user/installations` in
-  the sign-in callback), never on the `installation_id` of GitHub's setup redirect alone.
+  the sign-in callback), never on the `installation_id` of GitHub's setup redirect alone. With a session at that
+  callback (a suite person, step 2 of design-docs/SUITE-LOGIN-PLAN.pl.md) the token only proves access: the session
+  stays, its user links the installation, and no GitHub user is created (`server/test/suite-github-link.test.js`).
 - **Deployment ingestion (FR-005)** — the worker (`worker.js`) runs `lib/deployment-sync.js` and the Jira sync
   every `SYNC_INTERVAL_MINUTES` (default 15) and `lib/retention.js` daily (behind a Postgres advisory lock). The deployment,
   Jira and endpoint-flag passes take no global lock: each tenant is claimed per job (`withTenantClaim()`,
