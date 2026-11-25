@@ -7,6 +7,12 @@ dashboard, not a published package), so entries are grouped by date instead. See
 ShipScope is, `CLAUDE.md` for the technical reference, and `FAQ.md` for how specific numbers/badges are
 calculated.
 
+## [0.2.70] - 2026-11-25
+
+### Added
+
+- **SHP:** sign in through the suite identity service beside GitHub (#138)
+
 ## [0.2.69] - 2026-11-22
 
 ### Added
