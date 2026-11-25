@@ -109,13 +109,15 @@ function registerTenantRoutes(app, ctx) {
                     insightsEnabled: { type: 'boolean' },
                     // The alias of a suite organization (design-docs/SUITE-LOGIN-PLAN.pl.md); null unlinks.
                     suiteOrganization: { anyOf: [{ type: 'string', pattern: '^[a-z0-9][a-z0-9._-]{0,62}$' }, { type: 'null' }] },
+                    // Step 3 of the suite sign-in: GitHub accounts are refused in this workspace while it is on.
+                    suiteOnly: { type: 'boolean' },
                 },
             },
         },
     }, async (request) => updateSettings(pool, {
-        tenantId: request.params.tenantId, actorUserId: request.user.id,
+        tenantId: request.params.tenantId, actorUserId: request.user.id, actorFromSuite: request.user.fromSuite,
         deploymentRetentionDays: request.body.deploymentRetentionDays, insightsEnabled: request.body.insightsEnabled,
-        suiteOrganization: request.body.suiteOrganization,
+        suiteOrganization: request.body.suiteOrganization, suiteOnly: request.body.suiteOnly,
     }));
 
     // Who changed which setting, and when (lib/audit-log.js): the latest events, newest first. Admins only.

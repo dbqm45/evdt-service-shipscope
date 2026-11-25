@@ -1,6 +1,6 @@
 # Logowanie przez tożsamość suity (DI Identity) — plan
 
-Stan: 2026-11-25, decyzje 1–5 przyjęte przez właściciela; krok 1 zrobiony (#138), krok 2 zrobiony (#139), krok 3 rozpisany niżej (do zatwierdzenia). Krok 3 przejścia aplikacji w ADR 17 §3
+Stan: 2026-11-25, decyzje 1–5 przyjęte przez właściciela; krok 1 zrobiony (#138), krok 2 zrobiony (#139), krok 3 zrobiony (decyzje przyjęte 2026-11-25, opis niżej). Krok 3 przejścia aplikacji w ADR 17 §3
 (`dbqm45/pdi` `docs/17-tozsamosc-suity.md`): „logowanie OIDC zamiast OAuth GitHub; najemca z organizacji; aplikacja
 GitHub zostaje do czytania repozytoriów i wdrożeń”. Wcześniej przeszły DI Release Control (`evdt-shipscope-flags`
 0.7.6) i DI Definition (`ci_for_sdlc` 0.1.72, `docs/SUITE-LOGIN-PLAN.md` — ten sam wzór).
@@ -75,7 +75,7 @@ Testy (`server/test/suite-github-link.test.js`): osoba suity (admin najemcy) ins
 sesją. Do tego: token GitHub bez dostępu do instalacji daje `403` i sesja zostaje; bez sesji jest dzisiejsze
 zachowanie; osoba suity, która nie jest adminem, nie dochodzi do `/auth/github/login`.
 
-## Krok 3 — szczegóły (2026-11-25, do zatwierdzenia)
+## Krok 3 — szczegóły (2026-11-25, przyjęte i zrobione)
 
 Kierunek przyjęty przez właściciela 2026-11-25: przełącznik admina w Ustawieniach → General; osoby z członkostwem przez
 GitHub nie są scalane z kontem suity, wchodzą przez suitę, a ich konto GitHub traci dostęp do tego najemcy.
@@ -95,9 +95,11 @@ Decyzje (rekomendacja w każdej):
 4. **`GET /tenants` i `/me`** dalej pokazują taki najemcę osobie GitHub, z `suiteOnly: true`, żeby wiedziała, czemu nie
    wchodzi (strona startowa kieruje do logowania przez suitę). Rekomendacja: tak.
 
-Testy: test przechodzi po tablicy tras (`web-routes-characterization`) i sprawdza, że każda trasa z `:tenantId` odmawia
+Testy (`server/test/suite-only.test.js`): test przechodzi po tablicy tras (`web-routes-characterization`) i sprawdza, że każda trasa z `:tenantId` odmawia
 osobie GitHub w najemcy `suite_only`; włączenie przez admina GitHub, bez organizacji albo odpięcie organizacji → `409`;
-osoba suity działa bez zmian; po wyłączeniu osoba GitHub wraca z tą samą rolą; zaproszenie nie wpuszcza osoby GitHub.
+osoba suity działa bez zmian; po wyłączeniu osoba GitHub wraca z tą samą rolą; zaproszenie nie wpuszcza osoby GitHub;
+admin GitHub nie połączy instalacji, gdy przełącznik włączono w trakcie (najemca tylko w ciasteczku `/github/setup`).
+Lista członków nie dostała oznaczenia „no access while suite-only” — to zostaje na później.
 
 ## Ryzyka
 

@@ -71,7 +71,7 @@ function registerInvitationRoutes(app, ctx) {
         preHandler: requireUser,
         schema: { params: { type: 'object', required: ['token'], properties: { token: TOKEN_PARAM_SCHEMA } } },
     }, async (request, reply) => {
-        const result = await acceptInvitation(pool, { token: request.params.token, userId: request.user.id });
+        const result = await acceptInvitation(pool, { token: request.params.token, userId: request.user.id, fromSuite: request.user.fromSuite });
         return reply.code(201).send(result);
     });
 }

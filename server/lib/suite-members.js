@@ -88,4 +88,25 @@ async function syncSuiteMemberships(pool, { userId, displayName, organizations, 
     return changes;
 }
 
-module.exports = { suiteRole, upsertSuiteUser, syncSuiteMemberships };
+/** A GitHub account in a workspace that signs in only through the suite (design-docs/SUITE-LOGIN-PLAN.pl.md, step 3): 403. */
+class SuiteOnlyAccessError extends Error {
+    constructor() {
+        super('This workspace signs in through the suite; sign in with the suite to open it');
+    }
+}
+
+/**
+ * Whether a workspace refuses this user: on in the workspace and the user signed in through GitHub. `tenants` is not
+ * an RLS table, so the flag reads without a scope.
+ *
+ * @param {import('pg').Pool|import('pg').PoolClient} db
+ * @param {{ tenantId: string, user: { fromSuite: boolean } }} input
+ * @returns {Promise<boolean>}
+ */
+async function refusedBySuiteOnly(db, { tenantId, user }) {
+    if (user.fromSuite) return false;
+    const { rows } = await db.query('SELECT suite_only FROM tenants WHERE id = $1', [tenantId]);
+    return Boolean(rows[0] && rows[0].suite_only);
+}
+
+module.exports = { SuiteOnlyAccessError, refusedBySuiteOnly, suiteRole, upsertSuiteUser, syncSuiteMemberships };

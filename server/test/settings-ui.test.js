@@ -846,6 +846,15 @@ test('the suite organization (design-docs/SUITE-LOGIN-PLAN.pl.md): admins link o
     assert.match(str(ui.renderGeneral({ workspace: workspace(null), admin: false })), /Not linked to a suite organization/);
 });
 
+test('suite-only sign-in (design-docs/SUITE-LOGIN-PLAN.pl.md, step 3): a switch for admins once linked, a line for members', () => {
+    const workspace = (suiteOrganization, suiteOnly) => ({ settings: { deploymentRetentionDays: 90, insightsEnabled: false, suiteOrganization, suiteOnly }, members: [], invitations: [] });
+    assert.match(str(ui.renderGeneral({ workspace: workspace('acme', false), admin: true })), /<form class="settings-form" data-action="save-suite-only">[\s\S]*name="suiteOnly" type="checkbox" >/);
+    assert.match(str(ui.renderGeneral({ workspace: workspace('acme', true), admin: true })), /name="suiteOnly" type="checkbox" checked>/);
+    assert.doesNotMatch(str(ui.renderGeneral({ workspace: workspace(null, false), admin: true })), /save-suite-only/, 'only once linked');
+    assert.match(str(ui.renderGeneral({ workspace: workspace('acme', true), admin: false })), /Only the suite's sign-in opens this workspace/);
+    assert.doesNotMatch(str(ui.renderGeneral({ workspace: workspace('acme', false), admin: false })), /Only the suite's sign-in/);
+});
+
 test('pdi: after a disconnect the card says until when the pdi layer\'s data stays, or when it was removed (D5)', () => {
     const gone = { state: 'disconnected', receiverUrl: 'https://pdi.example.com', disconnectedAt: '2026-10-01T10:00:00Z', checks: [] };
     const kept = str(ui.renderPdi({ connection: { ...gone, dataKeptUntil: '2026-10-31T10:00:00Z', dataRemovedAt: null }, admin: true }));

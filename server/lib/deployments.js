@@ -6,6 +6,8 @@ const MAX_LIMIT = 500;
 
 /** Another workspace is already linked to that suite organization (409). */
 class SuiteOrganizationTakenError extends Error {}
+/** suite-only cannot be set as asked (design-docs/SUITE-LOGIN-PLAN.pl.md, step 3): 409 with the reason. */
+class SuiteOnlyError extends Error {}
 
 function toDeployment(row, fullNameByRepo) {
     return {
@@ -62,12 +64,12 @@ async function listDeployments(pool, { tenantId, actorUserId, repoId, environmen
 async function getSettings(pool, { tenantId, actorUserId }) {
     return withScope(pool, { tenantId }, async (client) => {
         if (!(await roleOf(client, { tenantId, userId: actorUserId }))) throw new TenantNotFoundError('Tenant not found');
-        const { rows } = await client.query('SELECT name, deployment_retention_days, insights_enabled, suite_organization FROM tenants WHERE id = $1', [tenantId]);
+        const { rows } = await client.query('SELECT name, deployment_retention_days, insights_enabled, suite_organization, suite_only FROM tenants WHERE id = $1', [tenantId]);
         return settingsOf(rows[0]);
     });
 }
 
-const settingsOf = (row) => ({ name: row.name, deploymentRetentionDays: row.deployment_retention_days, insightsEnabled: row.insights_enabled, suiteOrganization: row.suite_organization });
+const settingsOf = (row) => ({ name: row.name, deploymentRetentionDays: row.deployment_retention_days, insightsEnabled: row.insights_enabled, suiteOrganization: row.suite_organization, suiteOnly: row.suite_only });
 
 /**
  * Changes the settings given, leaving the others: how many days of deployment history the tenant keeps (7-730,
@@ -75,18 +77,24 @@ const settingsOf = (row) => ({ name: row.name, deploymentRetentionDays: row.depl
  * Admins only.
  *
  * @param {import('pg').Pool} pool
- * @param {{ tenantId: string, actorUserId: string, deploymentRetentionDays?: number, insightsEnabled?: boolean, suiteOrganization?: string|null }} input
- * @returns {Promise<{ name: string, deploymentRetentionDays: number, insightsEnabled: boolean, suiteOrganization: string|null }>}
+ * @param {{ tenantId: string, actorUserId: string, actorFromSuite?: boolean, deploymentRetentionDays?: number, insightsEnabled?: boolean, suiteOrganization?: string|null, suiteOnly?: boolean }} input
+ * @returns {Promise<{ name: string, deploymentRetentionDays: number, insightsEnabled: boolean, suiteOrganization: string|null, suiteOnly: boolean }>}
  */
-async function updateSettings(pool, { tenantId, actorUserId, deploymentRetentionDays, insightsEnabled, suiteOrganization }) {
+async function updateSettings(pool, { tenantId, actorUserId, actorFromSuite = false, deploymentRetentionDays, insightsEnabled, suiteOrganization, suiteOnly }) {
     return withScope(pool, { tenantId }, async (client) => {
         await assertAdmin(client, { tenantId, userId: actorUserId });
         const { rows } = await client.query(
             `UPDATE tenants SET deployment_retention_days = COALESCE($2, deployment_retention_days), insights_enabled = COALESCE($3, insights_enabled)
-              WHERE id = $1 RETURNING name, deployment_retention_days, insights_enabled, suite_organization`,
+              WHERE id = $1 RETURNING name, deployment_retention_days, insights_enabled, suite_organization, suite_only`,
             [tenantId, deploymentRetentionDays ?? null, insightsEnabled ?? null]
         );
         // The suite organization whose people join with their token's role (design-docs/SUITE-LOGIN-PLAN.pl.md); null unlinks.
+        const turningOn = suiteOnly === true && !rows[0].suite_only;
+        const stillOn = suiteOnly === undefined ? rows[0].suite_only : suiteOnly;
+        if (suiteOrganization === null && stillOn) throw new SuiteOnlyError('Turn suite-only sign-in off before unlinking the suite organization');
+        if (turningOn && !(suiteOrganization ?? rows[0].suite_organization)) throw new SuiteOnlyError('Link a suite organization before turning on suite-only sign-in');
+        // Only an admin who signed in through the suite can turn it on: someone who can still get in stays an admin.
+        if (turningOn && !actorFromSuite) throw new SuiteOnlyError('Only an admin signed in through the suite can turn on suite-only sign-in');
         if (suiteOrganization !== undefined && suiteOrganization !== rows[0].suite_organization) {
             await client.query('SAVEPOINT suite_organization');
             try {
@@ -99,6 +107,11 @@ async function updateSettings(pool, { tenantId, actorUserId, deploymentRetention
             rows[0].suite_organization = suiteOrganization;
             await recordAuditEvent(client, { tenantId, actorUserId, kind: 'suite_organization_changed', subject: suiteOrganization ?? 'none' });
         }
+        if (suiteOnly !== undefined && suiteOnly !== rows[0].suite_only) {
+            await client.query('UPDATE tenants SET suite_only = $2 WHERE id = $1', [tenantId, suiteOnly]);
+            rows[0].suite_only = suiteOnly;
+            await recordAuditEvent(client, { tenantId, actorUserId, kind: 'suite_only_changed', subject: suiteOnly ? 'on' : 'off' });
+        }
         if (deploymentRetentionDays !== undefined) {
             await recordAuditEvent(client, { tenantId, actorUserId, kind: 'retention_changed', subject: `${rows[0].deployment_retention_days} days` });
         }
@@ -109,4 +122,4 @@ async function updateSettings(pool, { tenantId, actorUserId, deploymentRetention
     });
 }
 
-module.exports = { listDeployments, getSettings, updateSettings, SuiteOrganizationTakenError, MAX_LIMIT };
+module.exports = { listDeployments, getSettings, updateSettings, SuiteOrganizationTakenError, SuiteOnlyError, MAX_LIMIT };

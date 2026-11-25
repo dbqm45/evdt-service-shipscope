@@ -508,7 +508,27 @@ function renderGeneral({ workspace, admin, auditEvents = null, eventSubscription
                 <label>Suite organization (its alias) <input name="suiteOrganization" type="text" maxlength="63" pattern="[a-z0-9][a-z0-9._-]{0,62}" value="${workspace.settings.suiteOrganization || ''}"></label>
                 <button type="submit" class="btn">Save</button></form>`
             : html`<p class="settings-hint">${workspace.settings.suiteOrganization ? `Suite organization: ${workspace.settings.suiteOrganization}.` : 'Not linked to a suite organization.'}</p>`,
-    })}${admin && pdi ? EventSubscriptions(eventSubscriptions) : ''}${admin && pdi ? ServiceTokens(serviceTokens, once) : ''}${admin ? AuditEvents(auditEvents) : ''}`);
+    })}${SuiteOnly(workspace.settings, admin)}${admin && pdi ? EventSubscriptions(eventSubscriptions) : ''}${admin && pdi ? ServiceTokens(serviceTokens, once) : ''}${admin ? AuditEvents(auditEvents) : ''}`);
+}
+
+/**
+ * Suite-only sign-in (design-docs/SUITE-LOGIN-PLAN.pl.md, step 3): once linked to a suite organization, an admin turns off
+ * GitHub sign-in for the workspace; the server allows it only for an admin signed in through the suite.
+ *
+ * @param {{ suiteOrganization?: string|null, suiteOnly?: boolean }} settings
+ * @param {boolean} admin
+ * @returns {string}
+ */
+function SuiteOnly(settings, admin) {
+    if (!settings.suiteOrganization) return '';
+    if (!admin) return settings.suiteOnly ? Card({ title: 'Sign-in', body: html`<p class="settings-hint">Only the suite's sign-in opens this workspace; GitHub accounts are refused.</p>` }) : '';
+    return Card({
+        title: 'Sign-in',
+        body: html`<p class="settings-hint">With this on, only the suite's sign-in opens the workspace. Members who signed in with GitHub keep their role but are refused until it is off again; they sign in with the suite instead. Only an admin signed in with the suite can turn it on.</p>
+            <form class="settings-form" data-action="save-suite-only">
+            <label class="inline"><input name="suiteOnly" type="checkbox" ${settings.suiteOnly ? raw('checked') : ''}> Only the suite's sign-in</label>
+            <button type="submit" class="btn">Save</button></form>`,
+    });
 }
 
 // ---- pdi ---------------------------------------------------------------------------------------------------
@@ -1222,7 +1242,7 @@ const AUDIT_EVENT_LABELS = {
     jira_connected: 'connected Jira', jira_disconnected: 'disconnected Jira',
     workspace_created: 'created the workspace', retention_changed: 'set deployment history to', insights_changed: 'turned Insights',
     invitation_created: 'created an invitation as', invitation_revoked: 'revoked an invitation as',
-    member_joined: 'joined as', member_removed: 'removed the member', member_left: 'left the workspace', member_role_changed: 'changed the role of', suite_organization_changed: 'linked the workspace to the suite organization',
+    member_joined: 'joined as', member_removed: 'removed the member', member_left: 'left the workspace', member_role_changed: 'changed the role of', suite_organization_changed: 'linked the workspace to the suite organization', suite_only_changed: 'set suite-only sign-in',
     github_linked: 'connected the GitHub account', github_unlinked: 'disconnected the GitHub account',
     repo_tracked: 'started tracking', repo_untracked: 'stopped tracking', repo_settings_changed: 'changed version and drift settings of',
     repo_environments_changed: 'changed the environments of', repo_resynced: 'read the deployments again of', repo_flag_stance_changed: 'changed whether flags are used in',
@@ -1589,6 +1609,10 @@ const actions = {
     },
     'save-insights': async (form) => {
         await api('PUT', tenantPath('/settings'), { insightsEnabled: formValues(form).insightsEnabled.length > 0 });
+        return { section: 'workspace', ok: 'Saved.' };
+    },
+    'save-suite-only': async (form) => {
+        await api('PUT', tenantPath('/settings'), { suiteOnly: formValues(form).suiteOnly.length > 0 });
         return { section: 'workspace', ok: 'Saved.' };
     },
     'save-suite-organization': async (form) => {
