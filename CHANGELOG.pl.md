@@ -7,6 +7,12 @@ dashboard, nie publikowany pakiet), dlatego wpisy są pogrupowane według dat. I
 ShipScope, znajdują się w `README.pl.md`, pełne techniczne odniesienie w `CLAUDE.md` (po angielsku), a
 wyjaśnienie sposobu liczenia poszczególnych wartości/badge'y w `FAQ.pl.md`.
 
+## [0.2.71] - 2026-11-25
+
+### Poprawione
+
+- **SHP:** let suite people link the GitHub App without a new session (#139)
+
 ## [0.2.70] - 2026-11-25
 
 ### Nowe
