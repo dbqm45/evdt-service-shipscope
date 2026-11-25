@@ -1,3 +1,4 @@
+const { refusedBySuiteOnly, SuiteOnlyAccessError } = require('../lib/suite-members');
 const crypto = require('crypto');
 const { listInstallationRepos, createInstallationToken } = require('../lib/github-app');
 const { discoverFlagFiles, previewCodeSource } = require('../lib/flag-discovery');
@@ -93,6 +94,8 @@ function registerGitHubRoutes(app, ctx) {
         }
         if (!request.query.installation_id) return reply.code(400).send({ error: 'installation_id is missing' });
         await assertAdminOf(tenantId, request.user.id);
+        // The workspace is named only by the cookie here, so the suite-only hook in web.js cannot see it.
+        if (await refusedBySuiteOnly(pool, { tenantId, user: request.user })) throw new SuiteOnlyAccessError();
 
         // Step 3: a fresh sign-in, so the callback holds this user's token and can verify the installation.
         reply.setCookie(LINK_COOKIE, `${request.query.installation_id}.${tenantId}`, { ...baseCookie, path: '/auth/github', maxAge: STATE_TTL_SECONDS });

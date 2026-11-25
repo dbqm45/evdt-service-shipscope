@@ -84,7 +84,8 @@ const GITHUB_ID_PARAM = { type: 'string', pattern: '^[1-9][0-9]{0,14}$' };
 /** Domain errors from lib/ and the HTTP status each one means. */
 const { EventSubscriptionError } = require('./lib/outgoing-events');
 const { PdiConnectionError, PdiConnectionConflictError, NoPdiConnectionError } = require('./lib/pdi-connection');
-const { SuiteOrganizationTakenError } = require('./lib/deployments');
+const { SuiteOrganizationTakenError, SuiteOnlyError } = require('./lib/deployments');
+const { SuiteOnlyAccessError, refusedBySuiteOnly } = require('./lib/suite-members');
 const ERROR_STATUS = [
     [TenantNotFoundError, 404],
     [InvitationNotFoundError, 404],
@@ -115,6 +116,8 @@ const ERROR_STATUS = [
     [PdiConnectionError, 400],
     [PdiConnectionConflictError, 409],
     [SuiteOrganizationTakenError, 409],
+    [SuiteOnlyError, 409],
+    [SuiteOnlyAccessError, 403],
     [NoPdiConnectionError, 404],
     [ServiceAuthError, 401],
     [ServiceRequestError, 400],
@@ -223,6 +226,20 @@ function buildApp({ pool, auth, githubApp = null, atlassian = null, fetch: fetch
     app.register(cookie);
 
     const baseCookie = { httpOnly: true, sameSite: 'lax', secure: auth.secureCookies };
+
+    // Suite-only workspaces (design-docs/SUITE-LOGIN-PLAN.pl.md, step 3): one place for every route with :tenantId, API and
+    // pages alike, before validation, so no route can forget it. Only sessions are checked: service tokens, the ingest
+    // and webhooks are not people.
+    app.addHook('preValidation', async (request, reply) => {
+        const tenantId = request.params && request.params.tenantId;
+        if (typeof tenantId !== 'string' || !UUID_PATTERN.test(tenantId)) return;
+        const user = await getSessionUser(pool, request.cookies[SESSION_COOKIE]);
+        if (user && await refusedBySuiteOnly(pool, { tenantId, user })) {
+            const err = new SuiteOnlyAccessError();
+            request.log.info({ reason: err.message }, 'request refused');
+            return reply.code(403).send({ error: err.message });
+        }
+    });
 
     async function requireUser(request, reply) {
         request.user = await getSessionUser(pool, request.cookies[SESSION_COOKIE]);

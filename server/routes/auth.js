@@ -5,7 +5,7 @@ const { upsertUser, listTenantsForUser } = require('../lib/tenants');
 const { getInstallation, userCanAccessInstallation } = require('../lib/github-app');
 const { linkInstallation } = require('../lib/github-connections');
 const { createSuiteClient, SuiteSignInError } = require('../lib/suite-oidc');
-const { suiteRole, upsertSuiteUser, syncSuiteMemberships } = require('../lib/suite-members');
+const { suiteRole, upsertSuiteUser, syncSuiteMemberships, refusedBySuiteOnly, SuiteOnlyAccessError } = require('../lib/suite-members');
 
 const STATE_COOKIE = 'oauth_state';
 const RETURN_TO_COOKIE = 'oauth_return_to';
@@ -192,6 +192,7 @@ function registerAuthRoutes(app, ctx) {
             if (!(await userCanAccessInstallation({ accessToken, installationId, fetch: fetchFn }))) {
                 return reply.code(403).send({ error: 'You do not have access to that GitHub installation' });
             }
+            if (await refusedBySuiteOnly(pool, { tenantId, user })) throw new SuiteOnlyAccessError();
             const installation = await getInstallation({ app: githubApp, installationId, fetch: fetchFn });
             await linkInstallation(pool, { tenantId, actorUserId: user.id, installation });
             return reply.redirect(`/t/${tenantId}/settings#github`);

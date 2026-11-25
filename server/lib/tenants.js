@@ -101,13 +101,15 @@ async function createTenantWithOwner(pool, { name, githubUserId, githubLogin, us
 async function listTenantsForUser(pool, userId) {
     return withScope(pool, { userId }, async (client) => {
         const { rows } = await client.query(
-            `SELECT t.id, t.name, m.role
+            `SELECT t.id, t.name, m.role, t.suite_only
              FROM memberships m JOIN tenants t ON t.id = m.tenant_id
              WHERE m.user_id = $1
              ORDER BY t.created_at`,
             [userId]
         );
-        return rows.map((row) => ({ id: row.id, name: row.name, role: row.role }));
+        // suiteOnly: a GitHub account is refused there (design-docs/SUITE-LOGIN-PLAN.pl.md, step 3) and should sign in
+        // through the suite.
+        return rows.map((row) => ({ id: row.id, name: row.name, role: row.role, ...(row.suite_only ? { suiteOnly: true } : {}) }));
     });
 }
 

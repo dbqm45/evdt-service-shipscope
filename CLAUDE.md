@@ -119,7 +119,7 @@ changelog entry by hand outside a `chore(release)` PR.
 
 Deployed to Render per `context/foundation/infrastructure.md`: `render.yaml` builds both the Web Service and the
 Background Worker from the repo root (`npm ci --prefix server`, `node server/web.js`), not `rootDir: server`, which
-would hide `docs/` from the Web Service. Migrations (`server/migrations/001`–`051`, applied by the hand-rolled
+would hide `docs/` from the Web Service. Migrations (`server/migrations/001`–`052`, applied by the hand-rolled
 `lib/migrate.js`) run as each service's `preDeployCommand` under an advisory lock (`test/render-blueprint.test.js`).
 Dependencies, all in `server/package.json`: `pg`, `fastify`, `@fastify/cookie`. Fastify runs with
 `removeAdditional: false, coerceTypes: false`: unknown fields and wrong types are a 400, never silently fixed.
@@ -177,7 +177,11 @@ flag in `NODE_OPTIONS` or argv replaces it) and log one warning naming the flag 
   `syncSuiteMemberships()` sets their memberships at each sign-in in the workspaces an admin linked
   (`tenants.suite_organization`, unique, `PUT …/settings { suiteOrganization }`, audited `suite_organization_changed`):
   `suiteRole()` `admin` → admin, `editor`/`viewer` → member, none or another organization → removed (memberships in
-  unlinked workspaces stay), never lowering or removing the last admin. Browsers without a session go to `signInUrl()`
+  unlinked workspaces stay), never lowering or removing the last admin. An admin signed in through the suite may turn on `suiteOnly` (step 3,
+  migration `052`, `tenants.suite_only`, only with a linked organization, audited `suite_only_changed`; unlinking while on
+  is a 409): a `preValidation` hook in `web.js` then refuses a GitHub session (`403`, `refusedBySuiteOnly()` in
+  `lib/suite-members.js`) on every route with `:tenantId`, as do `/github/setup` and accepting an invitation; their
+  memberships stay, and `/me` lists the workspace with `suiteOnly: true` (`server/test/suite-only.test.js`). Browsers without a session go to `signInUrl()`
   (`/auth/github/login`, or `/auth/login`, a page offering both, when the suite is set up); the dashboard and settings
   send them to `/auth/login` (`server/test/suite-login.test.js`).
 - **Tenants and members (FR-002/003)** — `lib/tenants.js`; invitation links (`lib/invitations.js`: one-time hashed

@@ -213,7 +213,9 @@ test('local mode: the ping and an event reach a receiver on 127.0.0.1 over http;
     const event = { id: 'shipscope-1', type: 'feature.released', source: 'shipscope', occurred_at: '2026-10-30T12:00:00Z', contract_version: '0.4.0', payload: {} };
     await rows('INSERT INTO event_outbox (tenant_id, subscription_id, event) VALUES ($1, $2, $3)', [tenantId, sub.id, JSON.stringify(event)]);
     assert.deepStrictEqual(await deliverEvents(pool, { encryptionKey: KEY, fetchImpl: safeFetch }), { delivered: 0, failed: 0, retried: 1 }, 'not without local mode');
-    await rows('UPDATE event_outbox SET next_attempt_at = now()');
+    // A second back: deliverEvents compares with JavaScript's clock (milliseconds), so Postgres's now() (microseconds) in
+    // the same millisecond would still be in the future.
+    await rows("UPDATE event_outbox SET next_attempt_at = now() - interval '1 second'");
     assert.deepStrictEqual(await deliverEvents(pool, { encryptionKey: KEY, fetchImpl: safeFetch, localMode: true }), { delivered: 1, failed: 0, retried: 0 });
     const sent = got.at(-1);
     assert.deepStrictEqual([sent.method, sent.url, JSON.parse(sent.body).id], ['POST', '/events/shipscope', 'shipscope-1']);

@@ -1,6 +1,6 @@
 # Logowanie przez tożsamość suity (DI Identity) — plan
 
-Stan: 2026-11-25, decyzje 1–5 przyjęte przez właściciela; krok 1 zrobiony (#138), krok 2 zrobiony (decyzje przyjęte 2026-11-25, opis niżej), krok 3 czeka. Krok 3 przejścia aplikacji w ADR 17 §3
+Stan: 2026-11-25, decyzje 1–5 przyjęte przez właściciela; krok 1 zrobiony (#138), krok 2 zrobiony (#139), krok 3 zrobiony (decyzje przyjęte 2026-11-25, opis niżej). Krok 3 przejścia aplikacji w ADR 17 §3
 (`dbqm45/pdi` `docs/17-tozsamosc-suity.md`): „logowanie OIDC zamiast OAuth GitHub; najemca z organizacji; aplikacja
 GitHub zostaje do czytania repozytoriów i wdrożeń”. Wcześniej przeszły DI Release Control (`evdt-shipscope-flags`
 0.7.6) i DI Definition (`ci_for_sdlc` 0.1.72, `docs/SUITE-LOGIN-PLAN.md` — ten sam wzór).
@@ -74,6 +74,32 @@ Decyzje (rekomendacja w każdej):
 Testy (`server/test/suite-github-link.test.js`): osoba suity (admin najemcy) instaluje App, a instalacja zostaje połączona z nią jako autorem, z tą samą
 sesją. Do tego: token GitHub bez dostępu do instalacji daje `403` i sesja zostaje; bez sesji jest dzisiejsze
 zachowanie; osoba suity, która nie jest adminem, nie dochodzi do `/auth/github/login`.
+
+## Krok 3 — szczegóły (2026-11-25, przyjęte i zrobione)
+
+Kierunek przyjęty przez właściciela 2026-11-25: przełącznik admina w Ustawieniach → General; osoby z członkostwem przez
+GitHub nie są scalane z kontem suity, wchodzą przez suitę, a ich konto GitHub traci dostęp do tego najemcy.
+
+Decyzje (rekomendacja w każdej):
+
+1. **`tenants.suite_only`** (migracja `052`, domyślnie `false`): `PUT …/settings { suiteOnly }`, audyt
+   `suite_only_changed`. Włączyć można tylko w najemcy powiązanym z organizacją (`suite_organization`); odpięcie
+   organizacji przy włączonym `suite_only` → `409` (najpierw wyłączyć). Rekomendacja: tak.
+2. **Bez zamknięcia się na zewnątrz:** włączyć może tylko admin zalogowany przez suitę (osoba z `suite_sub`), więc
+   w najemcy zostaje co najmniej jeden admin, który się dostanie; inaczej `409` z powodem. Rekomendacja: tak.
+3. **Gdzie odmowa:** konto bez `suite_sub` (logowanie GitHub) dostaje `403` „This workspace signs in through the suite”
+   na każdej trasie z `:tenantId` (API i strony `/t/:tenantId/…`) — jedno miejsce w `requireUser`/`requireUserOrSignIn` —
+   oraz w `/github/setup` i przy przyjęciu zaproszenia. Członkostwa zostają w bazie (wyłączenie przełącznika przywraca
+   dostęp), lista członków oznacza je „GitHub — no access while suite-only”. Tokeny usług, ingest i webhooki bez zmian
+   (to nie osoby). Rekomendacja: tak.
+4. **`GET /tenants` i `/me`** dalej pokazują taki najemcę osobie GitHub, z `suiteOnly: true`, żeby wiedziała, czemu nie
+   wchodzi (strona startowa kieruje do logowania przez suitę). Rekomendacja: tak.
+
+Testy (`server/test/suite-only.test.js`): test przechodzi po tablicy tras (`web-routes-characterization`) i sprawdza, że każda trasa z `:tenantId` odmawia
+osobie GitHub w najemcy `suite_only`; włączenie przez admina GitHub, bez organizacji albo odpięcie organizacji → `409`;
+osoba suity działa bez zmian; po wyłączeniu osoba GitHub wraca z tą samą rolą; zaproszenie nie wpuszcza osoby GitHub;
+admin GitHub nie połączy instalacji, gdy przełącznik włączono w trakcie (najemca tylko w ciasteczku `/github/setup`).
+Lista członków nie dostała oznaczenia „no access while suite-only” — to zostaje na później.
 
 ## Ryzyka
 

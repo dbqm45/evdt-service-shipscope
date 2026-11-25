@@ -11,7 +11,7 @@ const SECRET_EVENT_KINDS = [
 const AUDIT_EVENT_KINDS = [
     ...SECRET_EVENT_KINDS,
     'workspace_created', 'retention_changed', 'insights_changed',
-    'invitation_created', 'invitation_revoked', 'member_joined', 'member_removed', 'member_left', 'member_role_changed', 'suite_organization_changed',
+    'invitation_created', 'invitation_revoked', 'member_joined', 'member_removed', 'member_left', 'member_role_changed', 'suite_organization_changed', 'suite_only_changed',
     'github_linked', 'github_unlinked', 'repo_tracked', 'repo_untracked', 'repo_settings_changed', 'repo_environments_changed', 'repo_resynced',
     'repo_flag_stance_changed', 'repo_role_changed',
     'flag_source_created', 'flag_source_updated', 'flag_source_deleted', 'ingest_token_created', 'ingest_token_revoked', 'service_token_created', 'service_token_revoked',

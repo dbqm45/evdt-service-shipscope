@@ -1,3 +1,4 @@
+const { refusedBySuiteOnly, SuiteOnlyAccessError } = require('./suite-members');
 const crypto = require('crypto');
 const { setScope, withScope } = require('./scope');
 const { assertAdmin, roleOf, AlreadyMemberError } = require('./tenants');
@@ -140,7 +141,7 @@ async function previewInvitation(pool, { token, userId }) {
  * @throws {InvitationUnusableError} already accepted, revoked or expired
  * @throws {import('./tenants').AlreadyMemberError} the user is already a member (the invitation stays unused)
  */
-async function acceptInvitation(pool, { token, userId }) {
+async function acceptInvitation(pool, { token, userId, fromSuite = false }) {
     if (!TOKEN_PATTERN.test(token)) throw new InvitationNotFoundError('Invitation not found');
     return withScope(pool, {}, async (client) => {
         const row = await findByToken(client, token);
@@ -149,6 +150,7 @@ async function acceptInvitation(pool, { token, userId }) {
         if (status !== 'pending') throw new InvitationUnusableError(status);
 
         await setScope(client, { tenantId: row.tenant_id });
+        if (await refusedBySuiteOnly(client, { tenantId: row.tenant_id, user: { fromSuite } })) throw new SuiteOnlyAccessError();
         if (await roleOf(client, { tenantId: row.tenant_id, userId })) {
             throw new AlreadyMemberError('You are already a member of this tenant');
         }
