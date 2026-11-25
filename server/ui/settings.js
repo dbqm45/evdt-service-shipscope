@@ -602,12 +602,14 @@ function renderMembers({ workspace, admin, meId, once }){
         return page(html`<p class="settings-loading">Loading…</p>`);
     }
     const { members, invitations } = workspace;
+    // A GitHub account keeps its role but is refused while the workspace is suite-only (design-docs/SUITE-LOGIN-PLAN.pl.md, step 3).
+    const suiteOnly = Boolean(workspace.settings && workspace.settings.suiteOnly);
     const memberRows = members.map((m) => {
         const self = m.userId === meId;
         const action = self
             ? html`<button type="button" class="btn btn-danger" data-action="remove-member" data-user-id="${m.userId}" data-self="1">Leave</button>`
             : admin ? html`<button type="button" class="btn btn-danger" data-action="remove-member" data-user-id="${m.userId}">Remove</button>` : '';
-        return html`<tr><td><span class="settings-repo"><span class="settings-badge">${initials(m.githubLogin)}</span><span>${m.githubLogin}${self ? html` <span class="state-tag">you</span>` : ''}</span></span></td>
+        return html`<tr><td><span class="settings-repo"><span class="settings-badge">${initials(m.githubLogin)}</span><span>${m.githubLogin}${self ? html` <span class="state-tag">you</span>` : ''}${suiteOnly && m.viaSuite === false ? html` <span class="state-tag">GitHub — no access while suite-only</span>` : ''}</span></span></td>
             <td>${m.role}</td><td class="actions">${action}</td></tr>`;
     });
     const inviteBlock = admin ? Card({
