@@ -198,4 +198,31 @@ function loadMetricsToken(env) {
     return token;
 }
 
-module.exports = { loadAuthConfig, loadGitHubAppConfig, loadAtlassianConfig, loadEncryptionKey, loadSealingKeys, loadMetricsToken };
+/**
+ * Reads the sign-in through the suite's identity service (design-docs/SUITE-LOGIN-PLAN.pl.md), offered beside GitHub's.
+ * Optional: none of SUITE_ISSUER / SUITE_CLIENT_SECRET set turns it off; one without the other stops the start.
+ *
+ * @param {NodeJS.ProcessEnv} env
+ * @returns {{ issuer: string, clientId: string, clientSecret: string }|null}
+ * @throws {Error} for a half-set or unsafe configuration
+ */
+function loadSuiteConfig(env) {
+    const issuer = (env.SUITE_ISSUER || '').trim();
+    const clientSecret = (env.SUITE_CLIENT_SECRET || '').trim();
+    if (!issuer && !clientSecret) return null;
+    const missing = [['SUITE_ISSUER', issuer], ['SUITE_CLIENT_SECRET', clientSecret]].filter(([, v]) => !v).map(([k]) => k);
+    if (missing.length) throw new Error(`Invalid configuration: the suite sign-in needs ${missing.join(' and ')} too`);
+    let url;
+    try {
+        url = new URL(issuer);
+    } catch {
+        throw new Error('Invalid configuration: SUITE_ISSUER must be an absolute https URL');
+    }
+    const local = url.hostname === 'localhost' || url.hostname === '127.0.0.1';
+    if (url.protocol !== 'https:' && !(url.protocol === 'http:' && local)) {
+        throw new Error('Invalid configuration: SUITE_ISSUER must be https (http only on localhost)');
+    }
+    return { issuer, clientId: (env.SUITE_CLIENT_ID || '').trim() || 'di-release', clientSecret };
+}
+
+module.exports = { loadAuthConfig, loadSuiteConfig, loadGitHubAppConfig, loadAtlassianConfig, loadEncryptionKey, loadSealingKeys, loadMetricsToken };

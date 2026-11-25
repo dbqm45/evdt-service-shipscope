@@ -3,7 +3,7 @@ const path = require('path');
 const Fastify = require('fastify');
 const cookie = require('@fastify/cookie');
 const { createPool } = require('./lib/db');
-const { loadAuthConfig, loadGitHubAppConfig, loadAtlassianConfig, loadEncryptionKey, loadSealingKeys, loadMetricsToken } = require('./lib/config');
+const { loadAuthConfig, loadSuiteConfig, loadGitHubAppConfig, loadAtlassianConfig, loadEncryptionKey, loadSealingKeys, loadMetricsToken } = require('./lib/config');
 const { AtlassianError } = require('./lib/atlassian');
 const { JiraNotConnectedError, JiraSiteError, WorkerUnavailableError } = require('./lib/jira-connections');
 const { JiraBoardError } = require('./lib/jira-sync');
@@ -84,6 +84,7 @@ const GITHUB_ID_PARAM = { type: 'string', pattern: '^[1-9][0-9]{0,14}$' };
 /** Domain errors from lib/ and the HTTP status each one means. */
 const { EventSubscriptionError } = require('./lib/outgoing-events');
 const { PdiConnectionError, PdiConnectionConflictError, NoPdiConnectionError } = require('./lib/pdi-connection');
+const { SuiteOrganizationTakenError } = require('./lib/deployments');
 const ERROR_STATUS = [
     [TenantNotFoundError, 404],
     [InvitationNotFoundError, 404],
@@ -113,6 +114,7 @@ const ERROR_STATUS = [
     [ServiceTokenError, 400],
     [PdiConnectionError, 400],
     [PdiConnectionConflictError, 409],
+    [SuiteOrganizationTakenError, 409],
     [NoPdiConnectionError, 404],
     [ServiceAuthError, 401],
     [ServiceRequestError, 400],
@@ -151,14 +153,15 @@ function splitCookie(value, first, second) {
  * the small set of cross-domain helpers (requireUser, assertAdminOf, ...) every route file receives through
  * `ctx` instead of its own copy.
  *
- * @param {{ pool: import('pg').Pool, auth?: ReturnType<typeof loadAuthConfig>, githubApp?: ReturnType<typeof loadGitHubAppConfig>, atlassian?: ReturnType<typeof loadAtlassianConfig>, fetch?: typeof fetch, logger?: boolean|object, dashboardDir?: string, mockDashboard?: { data: object, issuesByPi: Record<string, object[]> }|null, ingestRateLimit?: { capacity: number, refillPerSecond: number }, syncIntervalMinutes?: number, encryptionKey?: Buffer|null, sealingKeys?: { publicKey: object, privateKeys: object[] }|null, safeFetch?: Function, oidcVerifier?: { verify: Function }|null, metricsToken?: string|null, localMode?: boolean }} options
+ * @param {{ pool: import('pg').Pool, auth?: ReturnType<typeof loadAuthConfig>, githubApp?: ReturnType<typeof loadGitHubAppConfig>, atlassian?: ReturnType<typeof loadAtlassianConfig>, fetch?: typeof fetch, logger?: boolean|object, dashboardDir?: string, mockDashboard?: { data: object, issuesByPi: Record<string, object[]> }|null, ingestRateLimit?: { capacity: number, refillPerSecond: number }, syncIntervalMinutes?: number, encryptionKey?: Buffer|null, sealingKeys?: { publicKey: object, privateKeys: object[] }|null, safeFetch?: Function, oidcVerifier?: { verify: Function }|null, metricsToken?: string|null, localMode?: boolean, suite?: ReturnType<typeof loadSuiteConfig> }} options
  *   `encryptionKey` (TOKEN_ENCRYPTION_KEY, default the Atlassian config's) seals endpoint tokens and signs endpoint
  *   requests; `sealingKeys` (the public key only) seals endpoint tokens for the worker; `safeFetch` replaces
  *   lib/safe-fetch.js's in tests; `localMode` (lib/local-mode.js, decided once at start) lets the connection with pdi
- *   reach a receiver on loopback
+ *   reach a receiver on loopback; `suite` (lib/config.js loadSuiteConfig) offers the sign-in through the suite's identity
+ *   service beside GitHub's (design-docs/SUITE-LOGIN-PLAN.pl.md)
  * @returns {import('fastify').FastifyInstance}
  */
-function buildApp({ pool, auth, githubApp = null, atlassian = null, fetch: fetchFn = fetch, logger = false, dashboardDir = DEFAULT_DASHBOARD_DIR, mockDashboard = null, ingestRateLimit = null, syncIntervalMinutes = 15, encryptionKey = atlassian ? atlassian.encryptionKey : null, sealingKeys = null, safeFetch = null, oidcVerifier = undefined, metricsToken = null, localMode = false }) {
+function buildApp({ pool, auth, githubApp = null, atlassian = null, fetch: fetchFn = fetch, logger = false, dashboardDir = DEFAULT_DASHBOARD_DIR, mockDashboard = null, ingestRateLimit = null, syncIntervalMinutes = 15, encryptionKey = atlassian ? atlassian.encryptionKey : null, sealingKeys = null, safeFetch = null, oidcVerifier = undefined, metricsToken = null, localMode = false, suite = null }) {
     const app = Fastify({
         // A request id on every log line of a request and in the response (X-Request-Id), so a user's report can be
         // matched to the logs; one sent by the caller (Render's proxy, a load balancer) is kept.
@@ -230,7 +233,13 @@ function buildApp({ pool, auth, githubApp = null, atlassian = null, fetch: fetch
     // For links people open in a browser (invitations): send them through sign-in and back, instead of a 401.
     async function requireUserOrSignIn(request, reply) {
         request.user = await getSessionUser(pool, request.cookies[SESSION_COOKIE]);
-        if (!request.user) return reply.redirect(`/auth/github/login?returnTo=${encodeURIComponent(request.url.split('?')[0])}`);
+        if (!request.user) return reply.redirect(signInUrl(request.url.split('?')[0]));
+    }
+
+    // Where a browser without a session signs in: GitHub, or the page offering GitHub and the suite when it is set up.
+    function signInUrl(returnTo) {
+        const query = returnTo ? `?returnTo=${encodeURIComponent(returnTo)}` : '';
+        return `${suite ? '/auth/login' : '/auth/github/login'}${query}`;
     }
 
     async function assertAdminOf(tenantId, userId) {
@@ -241,7 +250,7 @@ function buildApp({ pool, auth, githubApp = null, atlassian = null, fetch: fetch
         pool, auth, githubApp, atlassian, fetchFn, baseCookie, encryptionKey, sealingKeys, safeFetch, localMode,
         // GitHub Actions OIDC tokens on the flags ingest are addressed to this server's public origin (lib/github-oidc.js).
         oidcVerifier: oidcVerifier !== undefined ? oidcVerifier : auth && auth.publicBaseUrl ? createOidcVerifier({ audience: auth.publicBaseUrl }) : null,
-        requireUser, requireUserOrSignIn, assertAdminOf,
+        requireUser, requireUserOrSignIn, assertAdminOf, signInUrl, suite,
         safeEqual, splitCookie,
         cookies: { SESSION_COOKIE, LINK_COOKIE },
         UUID_PATTERN, UUID_PARAM, TOKEN_PARAM, GITHUB_ID_PARAM,
@@ -268,6 +277,7 @@ function buildApp({ pool, auth, githubApp = null, atlassian = null, fetch: fetch
 
 if (require.main === module) {
     const auth = loadAuthConfig(process.env);
+    const suite = loadSuiteConfig(process.env);
     const githubApp = loadGitHubAppConfig(process.env);
     const atlassian = loadAtlassianConfig(process.env);
     const encryptionKey = loadEncryptionKey(process.env);
@@ -289,7 +299,7 @@ if (require.main === module) {
     checkWorkerHeapLimit(log);
     const syncIntervalMinutes = Number(process.env.SYNC_INTERVAL_MINUTES) || 15;
     const metricsToken = loadMetricsToken(process.env);
-    const app = buildApp({ pool, auth, githubApp, atlassian, encryptionKey, sealingKeys, logger: loggerOptions({ level, version: APP_VERSION }), dashboardDir, mockDashboard, syncIntervalMinutes, metricsToken, localMode });
+    const app = buildApp({ pool, auth, githubApp, atlassian, encryptionKey, sealingKeys, logger: loggerOptions({ level, version: APP_VERSION }), dashboardDir, mockDashboard, syncIntervalMinutes, metricsToken, localMode, suite });
     // Once a minute, today's sample for the status page (lib/status-page.js); a failure is logged, never fatal.
     const expectWorker = { deployments: !!githubApp, jira: !!atlassian, flags: !!encryptionKey };
     setInterval(() => {

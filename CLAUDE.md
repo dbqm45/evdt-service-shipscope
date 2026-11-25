@@ -119,7 +119,7 @@ changelog entry by hand outside a `chore(release)` PR.
 
 Deployed to Render per `context/foundation/infrastructure.md`: `render.yaml` builds both the Web Service and the
 Background Worker from the repo root (`npm ci --prefix server`, `node server/web.js`), not `rootDir: server`, which
-would hide `docs/` from the Web Service. Migrations (`server/migrations/001`–`050`, applied by the hand-rolled
+would hide `docs/` from the Web Service. Migrations (`server/migrations/001`–`051`, applied by the hand-rolled
 `lib/migrate.js`) run as each service's `preDeployCommand` under an advisory lock (`test/render-blueprint.test.js`).
 Dependencies, all in `server/package.json`: `pg`, `fastify`, `@fastify/cookie`. Fastify runs with
 `removeAdditional: false, coerceTypes: false`: unknown fields and wrong types are a 400, never silently fixed.
@@ -168,7 +168,18 @@ flag in `NODE_OPTIONS` or argv replaces it) and log one warning naming the flag 
 **Features, by PRD requirement:**
 
 - **Sign-in (FR-001)** — the GitHub App's user-authorization flow (`lib/github-oauth.js`), server-side sessions
-  (`lib/sessions.js`, only a SHA-256 of the cookie token stored; the GitHub user token is never stored).
+  (`lib/sessions.js`, only a SHA-256 of the cookie token stored; the GitHub user token is never stored). Beside it,
+  with `SUITE_ISSUER`/`SUITE_CLIENT_SECRET` (`loadSuiteConfig()`), the suite's identity service (design-docs/SUITE-LOGIN-PLAN.pl.md,
+  ADR 17 in dbqm45/pdi): `lib/suite-oidc.js` (code flow with PKCE, state/nonce/verifier in the `suite_state` cookie, ID
+  token RS256 with the issuer's JWKS, `iss`/`aud`/`azp`/`exp`/`nonce`), a person is a user of their own (migration
+  `051`: `users.suite_sub`/`display_name`, GitHub fields null, no e-mail; shown names are
+  `COALESCE(github_login, display_name)`, still called `githubLogin`), and `lib/suite-members.js`
+  `syncSuiteMemberships()` sets their memberships at each sign-in in the workspaces an admin linked
+  (`tenants.suite_organization`, unique, `PUT …/settings { suiteOrganization }`, audited `suite_organization_changed`):
+  `suiteRole()` `admin` → admin, `editor`/`viewer` → member, none or another organization → removed (memberships in
+  unlinked workspaces stay), never lowering or removing the last admin. Browsers without a session go to `signInUrl()`
+  (`/auth/github/login`, or `/auth/login`, a page offering both, when the suite is set up); the dashboard and settings
+  send them to `/auth/login` (`server/test/suite-login.test.js`).
 - **Tenants and members (FR-002/003)** — `lib/tenants.js`; invitation links (`lib/invitations.js`: one-time hashed
   tokens, single-use claim by conditional `UPDATE`, last-admin guard). `GET /invitations/:token` answers HTML (a
   page with a Join button, `ui/invite.html`) to browsers and JSON to other clients.

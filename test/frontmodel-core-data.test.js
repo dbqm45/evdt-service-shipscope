@@ -312,7 +312,7 @@ test('API mode: signed out (401) goes through sign-in and back to this dashboard
     const { run } = loadApp({ fetchImpl: () => jsonResponse({ error: 'Not signed in' }, 401), loc });
     const pending = run('loadData()');
     await new Promise((resolve) => setTimeout(resolve, 10));
-    assert.deepEqual(loc.assigned, [`/auth/github/login?returnTo=${encodeURIComponent(`/t/${TENANT}/`)}`]);
+    assert.deepEqual(loc.assigned, [`/auth/login?returnTo=${encodeURIComponent(`/t/${TENANT}/`)}`]);
     let settled = false;
     pending.then(() => { settled = true; });
     await new Promise((resolve) => setTimeout(resolve, 10));

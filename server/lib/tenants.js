@@ -44,14 +44,19 @@ async function upsertUser(client, { githubUserId, githubLogin }) {
  * become admin of the new tenant too.
  *
  * @param {import('pg').Pool} pool
- * @param {{ name: string, githubUserId: number, githubLogin: string }} input
+ * @param {{ name: string, githubUserId?: number, githubLogin?: string, userId?: string }} input `userId` instead of the GitHub identity for a person from the suite
  * @returns {Promise<{ tenant: {id: string, name: string, createdAt: Date}, user: {id: string, githubUserId: number, githubLogin: string}, membership: {tenantId: string, userId: string, role: 'admin'} }>}
  * @throws {Error} if name/githubUserId/githubLogin are missing or wrong-typed (validated before any query)
  */
-async function createTenantWithOwner(pool, { name, githubUserId, githubLogin }) {
+async function createTenantWithOwner(pool, { name, githubUserId, githubLogin, userId }) {
     if (typeof name !== 'string' || !name.trim()) throw new Error('name is required');
-    if (typeof githubUserId !== 'number' || !Number.isInteger(githubUserId)) throw new Error('githubUserId must be an integer');
-    if (typeof githubLogin !== 'string' || !githubLogin.trim()) throw new Error('githubLogin is required');
+    // A person from the suite (design-docs/SUITE-LOGIN-PLAN.pl.md) has a user row already and no GitHub identity.
+    if (userId === undefined) {
+        if (typeof githubUserId !== 'number' || !Number.isInteger(githubUserId)) throw new Error('githubUserId must be an integer');
+        if (typeof githubLogin !== 'string' || !githubLogin.trim()) throw new Error('githubLogin is required');
+    } else if (typeof userId !== 'string' || !userId) {
+        throw new Error('userId must be a user id');
+    }
 
     const client = await pool.connect();
     try {
@@ -65,7 +70,9 @@ async function createTenantWithOwner(pool, { name, githubUserId, githubLogin }) 
         // The memberships write policy only accepts rows for the tenant this transaction is scoped to.
         await setScope(client, { tenantId: tenant.id });
 
-        const user = await upsertUser(client, { githubUserId, githubLogin });
+        const user = userId === undefined
+            ? await upsertUser(client, { githubUserId, githubLogin })
+            : { id: userId, githubUserId: null, githubLogin: null };
 
         await client.query(
             'INSERT INTO memberships (tenant_id, user_id, role) VALUES ($1, $2, $3)',
@@ -117,7 +124,7 @@ async function listTenantsForUser(pool, userId) {
 async function listMembersIfMember(pool, { tenantId, userId }) {
     return withScope(pool, { tenantId }, async (client) => {
         const { rows } = await client.query(
-            `SELECT u.id AS user_id, u.github_login, m.role
+            `SELECT u.id AS user_id, COALESCE(u.github_login, u.display_name) AS github_login, m.role
              FROM memberships m JOIN users u ON u.id = m.user_id
              WHERE m.tenant_id = $1
              ORDER BY m.created_at`,
@@ -188,7 +195,7 @@ async function removeMember(pool, { tenantId, actorUserId, targetUserId }) {
         if (actorUserId === targetUserId) {
             await recordAuditEvent(client, { tenantId, actorUserId, kind: 'member_left' });
         } else {
-            const { rows: [target] } = await client.query('SELECT github_login FROM users WHERE id = $1', [targetUserId]);
+            const { rows: [target] } = await client.query('SELECT COALESCE(github_login, display_name) AS github_login FROM users WHERE id = $1', [targetUserId]);
             await recordAuditEvent(client, { tenantId, actorUserId, kind: 'member_removed', subject: target ? target.github_login : null });
         }
     });

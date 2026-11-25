@@ -459,7 +459,7 @@ async function loadApiData(tenantId){
     }
 
     if (res && res.status === 401) {
-        location.assign(`/auth/github/login?returnTo=${encodeURIComponent(location.pathname)}`);
+        location.assign(`/auth/login?returnTo=${encodeURIComponent(location.pathname)}`);
         return new Promise(() => {}); // the page is navigating away; render nothing in the meantime
     }
 

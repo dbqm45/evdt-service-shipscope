@@ -29,18 +29,20 @@ async function createSession(pool, userId) {
  *
  * @param {import('pg').Pool} pool
  * @param {string|undefined} token
- * @returns {Promise<{ id: string, githubUserId: number, githubLogin: string }|null>}
+ * @returns {Promise<{ id: string, githubUserId: number|null, githubLogin: string, fromSuite: boolean }|null>}
  */
 async function getSessionUser(pool, token) {
     if (typeof token !== 'string' || !token) return null;
     const { rows } = await pool.query(
-        `SELECT u.id, u.github_user_id, u.github_login
+        `SELECT u.id, u.github_user_id, COALESCE(u.github_login, u.display_name) AS github_login, u.suite_sub
          FROM sessions s JOIN users u ON u.id = s.user_id
          WHERE s.token_hash = $1 AND s.expires_at > now()`,
         [hashToken(token)]
     );
     if (rows.length === 0) return null;
-    return { id: rows[0].id, githubUserId: Number(rows[0].github_user_id), githubLogin: rows[0].github_login };
+    const row = rows[0];
+    // `githubLogin` is the name shown for the user: the GitHub login, or the suite's name for a person from the suite.
+    return { id: row.id, githubUserId: row.github_user_id === null ? null : Number(row.github_user_id), githubLogin: row.github_login, fromSuite: row.suite_sub !== null };
 }
 
 /**

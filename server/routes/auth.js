@@ -4,9 +4,12 @@ const { createSession, getSessionUser, deleteSession } = require('../lib/session
 const { upsertUser, listTenantsForUser } = require('../lib/tenants');
 const { getInstallation, userCanAccessInstallation } = require('../lib/github-app');
 const { linkInstallation } = require('../lib/github-connections');
+const { createSuiteClient, SuiteSignInError } = require('../lib/suite-oidc');
+const { suiteRole, upsertSuiteUser, syncSuiteMemberships } = require('../lib/suite-members');
 
 const STATE_COOKIE = 'oauth_state';
 const RETURN_TO_COOKIE = 'oauth_return_to';
+const SUITE_STATE_COOKIE = 'suite_state';
 
 /**
  * Sign-in with GitHub (not the GitHub App): `/auth/github/login`, `/auth/github/callback`,
@@ -17,9 +20,103 @@ const RETURN_TO_COOKIE = 'oauth_return_to';
  * @param {object} ctx see web.js's buildApp() for the full shape
  */
 function registerAuthRoutes(app, ctx) {
-    const { pool, auth, githubApp, fetchFn, baseCookie, requireUser, safeEqual, splitCookie,
+    const { pool, auth, githubApp, fetchFn, baseCookie, requireUser, safeEqual, splitCookie, suite, DASHBOARD_HEADERS,
         cookies: { SESSION_COOKIE, LINK_COOKIE }, UUID_PATTERN, STATE_TTL_SECONDS, RETURN_TO_PATTERN, POST_LOGIN_REDIRECT } = ctx;
     const redirectUri = `${auth.publicBaseUrl}/auth/github/callback`;
+    const returnToQuery = {
+        type: 'object',
+        additionalProperties: false,
+        properties: { returnTo: { type: 'string', pattern: RETURN_TO_PATTERN.source } },
+    };
+    const withReturnTo = (path, returnTo) => (returnTo ? `${path}?returnTo=${encodeURIComponent(returnTo)}` : path);
+
+    // Where a browser without a session signs in (design-docs/SUITE-LOGIN-PLAN.pl.md): straight to GitHub, or, with the
+    // suite's identity service set up, a page offering both. No script, so the pages' Content-Security-Policy holds.
+    app.get('/auth/login', { schema: { querystring: returnToQuery } }, async (request, reply) => {
+        const { returnTo } = request.query;
+        if (!suite) return reply.redirect(withReturnTo('/auth/github/login', returnTo));
+        const github = withReturnTo('/auth/github/login', returnTo);
+        const suiteUrl = withReturnTo('/auth/suite/login', returnTo);
+        return reply.headers(DASHBOARD_HEADERS).type('text/html; charset=utf-8').send(`<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sign in · ShipScope</title><link rel="stylesheet" href="/ui/style.css"></head>
+<body class="sign-in"><main class="sign-in-card"><h1>Sign in to ShipScope</h1>
+<p><a class="btn btn-primary" href="${github}">Sign in with GitHub</a></p>
+<p><a class="btn" href="${suiteUrl}">Sign in with the suite</a></p>
+</main></body></html>`);
+    });
+
+    if (suite) {
+        const client = createSuiteClient({ ...suite, redirectUri: `${auth.publicBaseUrl}/auth/suite/callback`, fetch: fetchFn });
+        const suiteCookie = { ...baseCookie, path: '/auth/suite', maxAge: STATE_TTL_SECONDS };
+        const readChecks = (value) => {
+            try {
+                const c = JSON.parse(Buffer.from(value || '', 'base64url').toString('utf8'));
+                const ok = c && ['state', 'nonce', 'verifier'].every((k) => typeof c[k] === 'string' && /^[\w-]{20,100}$/.test(c[k]))
+                    && (c.returnTo === undefined || (typeof c.returnTo === 'string' && RETURN_TO_PATTERN.test(c.returnTo)));
+                return ok ? c : null;
+            } catch {
+                return null;
+            }
+        };
+
+        app.get('/auth/suite/login', { schema: { querystring: returnToQuery } }, async (request, reply) => {
+            let started;
+            try {
+                started = await client.start();
+            } catch (err) {
+                request.log.warn({ err: err.message }, 'the suite identity service is not reachable');
+                return reply.code(502).send({ error: 'The suite identity service is not reachable; please try again' });
+            }
+            const checks = { ...started.checks, ...(request.query.returnTo ? { returnTo: request.query.returnTo } : {}) };
+            reply.setCookie(SUITE_STATE_COOKIE, Buffer.from(JSON.stringify(checks)).toString('base64url'), suiteCookie);
+            return reply.redirect(started.url);
+        });
+
+        app.get('/auth/suite/callback', {
+            schema: {
+                querystring: {
+                    type: 'object',
+                    properties: {
+                        code: { type: 'string', minLength: 1, maxLength: 2000 },
+                        state: { type: 'string', minLength: 1, maxLength: 200 },
+                        error: { type: 'string', maxLength: 200 },
+                        error_description: { type: 'string', maxLength: 1000 },
+                        session_state: { type: 'string', maxLength: 200 },
+                        iss: { type: 'string', maxLength: 500 },
+                    },
+                },
+            },
+        }, async (request, reply) => {
+            const checks = readChecks(request.cookies[SUITE_STATE_COOKIE]);
+            reply.clearCookie(SUITE_STATE_COOKIE, { ...baseCookie, path: '/auth/suite' });
+            // CSRF, as for GitHub: the state must come back through this browser's own cookie.
+            if (!checks || !request.query.state || !safeEqual(checks.state, request.query.state)) {
+                return reply.code(400).send({ error: 'Invalid or expired sign-in attempt; please start again' });
+            }
+            if (request.query.error || !request.query.code) {
+                return reply.code(403).send({ error: 'The sign-in was cancelled or refused at the suite' });
+            }
+            let person;
+            try {
+                person = await client.finish({ code: request.query.code, checks });
+            } catch (err) {
+                if (!(err instanceof SuiteSignInError) && !(err instanceof TypeError) && err.name !== 'TimeoutError') throw err;
+                request.log.warn({ err: err.message }, 'suite sign-in failed');
+                return reply.code(502).send({ error: 'The suite sign-in failed; please try again' });
+            }
+            const user = await upsertSuiteUser(pool, { sub: person.sub, name: person.name });
+            const changes = await syncSuiteMemberships(pool, {
+                userId: user.id, displayName: user.displayName, organizations: person.organizations, role: suiteRole(person.roles),
+            });
+            for (const { tenantId, change } of changes) {
+                if (change === 'kept_last_admin') request.log.warn({ tenantId, userId: user.id }, 'the suite would lower the last admin; kept as admin');
+            }
+            const session = await createSession(pool, user.id);
+            reply.setCookie(SESSION_COOKIE, session.token, { ...baseCookie, path: '/', expires: session.expiresAt });
+            return reply.redirect(checks.returnTo && RETURN_TO_PATTERN.test(checks.returnTo) ? checks.returnTo : POST_LOGIN_REDIRECT);
+        });
+    }
 
     app.get('/auth/github/login', {
         schema: {

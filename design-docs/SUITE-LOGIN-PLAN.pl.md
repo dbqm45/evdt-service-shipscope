@@ -1,6 +1,6 @@
 # Logowanie przez tożsamość suity (DI Identity) — plan
 
-Stan: 2026-11-25, propozycja do decyzji właściciela (bez kodu). Krok 3 przejścia aplikacji w ADR 17 §3
+Stan: 2026-11-25, decyzje 1–5 przyjęte przez właściciela; krok 1 zrobiony (ten PR), kroki 2–3 czekają. Krok 3 przejścia aplikacji w ADR 17 §3
 (`dbqm45/pdi` `docs/17-tozsamosc-suity.md`): „logowanie OIDC zamiast OAuth GitHub; najemca z organizacji; aplikacja
 GitHub zostaje do czytania repozytoriów i wdrożeń”. Wcześniej przeszły DI Release Control (`evdt-shipscope-flags`
 0.7.6) i DI Definition (`ci_for_sdlc` 0.1.72, `docs/SUITE-LOGIN-PLAN.md` — ten sam wzór).

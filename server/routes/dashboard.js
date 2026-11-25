@@ -24,7 +24,7 @@ const { requestSync } = require('../lib/webhooks');
  */
 function registerDashboardRoutes(app, ctx) {
     const {
-        pool, githubApp, atlassian, requireUser, requireUserOrSignIn, dashboardDir, UI_DIR, DASHBOARD_HEADERS,
+        pool, githubApp, atlassian, requireUser, requireUserOrSignIn, signInUrl, dashboardDir, UI_DIR, DASHBOARD_HEADERS,
         UUID_PARAM, ui, cookies: { SESSION_COOKIE }, mockDashboard, encryptionKey,
     } = ctx;
     // `npm run dev:mock` (lib/mock-dashboard.js): members get the sample dataset instead of their tenant's data.
@@ -37,7 +37,7 @@ function registerDashboardRoutes(app, ctx) {
 
     app.get('/', async (request, reply) => {
         const user = await getSessionUser(pool, request.cookies[SESSION_COOKIE]);
-        if (!user) return reply.redirect('/auth/github/login');
+        if (!user) return reply.redirect(signInUrl());
         const tenants = await listTenantsForUser(pool, user.id);
         return reply.redirect(tenants.length ? `/t/${tenants[0].id}/` : '/start');
     });

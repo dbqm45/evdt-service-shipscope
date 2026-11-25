@@ -11,7 +11,7 @@ const SECRET_EVENT_KINDS = [
 const AUDIT_EVENT_KINDS = [
     ...SECRET_EVENT_KINDS,
     'workspace_created', 'retention_changed', 'insights_changed',
-    'invitation_created', 'invitation_revoked', 'member_joined', 'member_removed', 'member_left',
+    'invitation_created', 'invitation_revoked', 'member_joined', 'member_removed', 'member_left', 'member_role_changed', 'suite_organization_changed',
     'github_linked', 'github_unlinked', 'repo_tracked', 'repo_untracked', 'repo_settings_changed', 'repo_environments_changed', 'repo_resynced',
     'repo_flag_stance_changed', 'repo_role_changed',
     'flag_source_created', 'flag_source_updated', 'flag_source_deleted', 'ingest_token_created', 'ingest_token_revoked', 'service_token_created', 'service_token_revoked',
@@ -50,7 +50,7 @@ async function listAuditEvents(pool, { tenantId, actorUserId, kinds = null }) {
     return withScope(pool, { tenantId }, async (client) => {
         await assertAdmin(client, { tenantId, userId: actorUserId });
         const { rows } = await client.query(
-            `SELECT e.at, e.kind, e.subject, u.github_login FROM audit_events e LEFT JOIN users u ON u.id = e.actor_user_id
+            `SELECT e.at, e.kind, e.subject, COALESCE(u.github_login, u.display_name) AS github_login FROM audit_events e LEFT JOIN users u ON u.id = e.actor_user_id
              WHERE e.tenant_id = $1 AND ($2::text[] IS NULL OR e.kind = ANY($2)) ORDER BY e.at DESC, e.id DESC LIMIT $3`,
             [tenantId, kinds, LIST_LIMIT]
         );

@@ -4,6 +4,9 @@ const { assertAdmin, roleOf, TenantNotFoundError } = require('./tenants');
 
 const MAX_LIMIT = 500;
 
+/** Another workspace is already linked to that suite organization (409). */
+class SuiteOrganizationTakenError extends Error {}
+
 function toDeployment(row, fullNameByRepo) {
     return {
         deploymentId: Number(row.deployment_id),
@@ -59,12 +62,12 @@ async function listDeployments(pool, { tenantId, actorUserId, repoId, environmen
 async function getSettings(pool, { tenantId, actorUserId }) {
     return withScope(pool, { tenantId }, async (client) => {
         if (!(await roleOf(client, { tenantId, userId: actorUserId }))) throw new TenantNotFoundError('Tenant not found');
-        const { rows } = await client.query('SELECT name, deployment_retention_days, insights_enabled FROM tenants WHERE id = $1', [tenantId]);
+        const { rows } = await client.query('SELECT name, deployment_retention_days, insights_enabled, suite_organization FROM tenants WHERE id = $1', [tenantId]);
         return settingsOf(rows[0]);
     });
 }
 
-const settingsOf = (row) => ({ name: row.name, deploymentRetentionDays: row.deployment_retention_days, insightsEnabled: row.insights_enabled });
+const settingsOf = (row) => ({ name: row.name, deploymentRetentionDays: row.deployment_retention_days, insightsEnabled: row.insights_enabled, suiteOrganization: row.suite_organization });
 
 /**
  * Changes the settings given, leaving the others: how many days of deployment history the tenant keeps (7-730,
@@ -72,17 +75,30 @@ const settingsOf = (row) => ({ name: row.name, deploymentRetentionDays: row.depl
  * Admins only.
  *
  * @param {import('pg').Pool} pool
- * @param {{ tenantId: string, actorUserId: string, deploymentRetentionDays?: number, insightsEnabled?: boolean }} input
- * @returns {Promise<{ name: string, deploymentRetentionDays: number, insightsEnabled: boolean }>}
+ * @param {{ tenantId: string, actorUserId: string, deploymentRetentionDays?: number, insightsEnabled?: boolean, suiteOrganization?: string|null }} input
+ * @returns {Promise<{ name: string, deploymentRetentionDays: number, insightsEnabled: boolean, suiteOrganization: string|null }>}
  */
-async function updateSettings(pool, { tenantId, actorUserId, deploymentRetentionDays, insightsEnabled }) {
+async function updateSettings(pool, { tenantId, actorUserId, deploymentRetentionDays, insightsEnabled, suiteOrganization }) {
     return withScope(pool, { tenantId }, async (client) => {
         await assertAdmin(client, { tenantId, userId: actorUserId });
         const { rows } = await client.query(
             `UPDATE tenants SET deployment_retention_days = COALESCE($2, deployment_retention_days), insights_enabled = COALESCE($3, insights_enabled)
-              WHERE id = $1 RETURNING name, deployment_retention_days, insights_enabled`,
+              WHERE id = $1 RETURNING name, deployment_retention_days, insights_enabled, suite_organization`,
             [tenantId, deploymentRetentionDays ?? null, insightsEnabled ?? null]
         );
+        // The suite organization whose people join with their token's role (design-docs/SUITE-LOGIN-PLAN.pl.md); null unlinks.
+        if (suiteOrganization !== undefined && suiteOrganization !== rows[0].suite_organization) {
+            await client.query('SAVEPOINT suite_organization');
+            try {
+                await client.query('UPDATE tenants SET suite_organization = $2 WHERE id = $1', [tenantId, suiteOrganization]);
+            } catch (err) {
+                if (err.code !== '23505') throw err;
+                await client.query('ROLLBACK TO SAVEPOINT suite_organization');
+                throw new SuiteOrganizationTakenError('Another workspace is already linked to that suite organization');
+            }
+            rows[0].suite_organization = suiteOrganization;
+            await recordAuditEvent(client, { tenantId, actorUserId, kind: 'suite_organization_changed', subject: suiteOrganization ?? 'none' });
+        }
         if (deploymentRetentionDays !== undefined) {
             await recordAuditEvent(client, { tenantId, actorUserId, kind: 'retention_changed', subject: `${rows[0].deployment_retention_days} days` });
         }
@@ -93,4 +109,4 @@ async function updateSettings(pool, { tenantId, actorUserId, deploymentRetention
     });
 }
 
-module.exports = { listDeployments, getSettings, updateSettings, MAX_LIMIT };
+module.exports = { listDeployments, getSettings, updateSettings, SuiteOrganizationTakenError, MAX_LIMIT };
