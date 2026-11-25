@@ -792,7 +792,7 @@ test('settings page: an API error carries the server\'s message; 401 goes throug
     global.location = { pathname: `/t/${TENANT}/settings`, assign: (url) => assigned.push(url) };
     t.mock.method(global, 'fetch', async () => new Response('{}', { status: 401 }));
     await assert.rejects(ui.api('GET', '/x'), (err) => err.status === 401);
-    assert.deepStrictEqual(assigned, [`/auth/github/login?returnTo=${encodeURIComponent(`/t/${TENANT}/settings`)}`]);
+    assert.deepStrictEqual(assigned, [`/auth/login?returnTo=${encodeURIComponent(`/t/${TENANT}/settings`)}`]);
     delete global.location;
 });
 
@@ -834,6 +834,16 @@ test('Insights is a workspace setting (D2): a switch under General for admins, i
     assert.match(str(ui.renderGeneral({ workspace: workspace(true), admin: true })), /name="insightsEnabled" type="checkbox" checked>/);
     assert.match(str(ui.renderGeneral({ workspace: workspace(true), admin: false })), /Insights: on/);
     assert.match(str(ui.renderGeneral({ workspace: workspace(false), admin: false })), /Insights: off/);
+});
+
+test('the suite organization (design-docs/SUITE-LOGIN-PLAN.pl.md): admins link or unlink it under General, members see it', () => {
+    const workspace = (suiteOrganization) => ({ settings: { deploymentRetentionDays: 90, insightsEnabled: false, suiteOrganization }, members: [], invitations: [] });
+    const linked = str(ui.renderGeneral({ workspace: workspace('acme'), admin: true }));
+    assert.match(linked, /<form class="settings-form" data-action="save-suite-organization">[\s\S]*name="suiteOrganization"[^>]*value="acme"/);
+    assert.match(linked, /pattern="\[a-z0-9\]\[a-z0-9\._-\]\{0,62\}"/);
+    assert.match(str(ui.renderGeneral({ workspace: workspace(null), admin: true })), /name="suiteOrganization"[^>]*value=""/);
+    assert.match(str(ui.renderGeneral({ workspace: workspace('acme'), admin: false })), /Suite organization: acme/);
+    assert.match(str(ui.renderGeneral({ workspace: workspace(null), admin: false })), /Not linked to a suite organization/);
 });
 
 test('pdi: after a disconnect the card says until when the pdi layer\'s data stays, or when it was removed (D5)', () => {

@@ -458,9 +458,9 @@ test('API: members read deployments with filters; admins set retention within 7-
     assert.strictEqual((await app.inject({ method: 'GET', url: `/tenants/${tenantId}/deployments`, cookies: { sid: mallory } })).statusCode, 404);
 
     const settings = await app.inject({ method: 'GET', url: `/tenants/${tenantId}/settings`, cookies: { sid: alice } });
-    assert.deepStrictEqual(settings.json(), { name: 'Acme', deploymentRetentionDays: 90, insightsEnabled: false });
+    assert.deepStrictEqual(settings.json(), { name: 'Acme', deploymentRetentionDays: 90, insightsEnabled: false, suiteOrganization: null });
     const put = (sid, payload) => app.inject({ method: 'PUT', url: `/tenants/${tenantId}/settings`, cookies: { sid }, payload });
-    assert.deepStrictEqual((await put(alice, { deploymentRetentionDays: 30 })).json(), { name: 'Acme', deploymentRetentionDays: 30, insightsEnabled: false });
+    assert.deepStrictEqual((await put(alice, { deploymentRetentionDays: 30 })).json(), { name: 'Acme', deploymentRetentionDays: 30, insightsEnabled: false, suiteOrganization: null });
     for (const bad of [{ deploymentRetentionDays: 6 }, { deploymentRetentionDays: 731 }, { deploymentRetentionDays: '30' }, { deploymentRetentionDays: 30.5 }, {}]) {
         assert.strictEqual((await put(alice, bad)).statusCode, 400, JSON.stringify(bad));
     }

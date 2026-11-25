@@ -83,6 +83,7 @@ serwisów (`render.yaml` ustawia `DATABASE_URL` sam; sekrety mają `sync: false`
 | `PUBLIC_BASE_URL` | tak | opcjonalnie | Adres serwisu widziany z przeglądarki; `https` włącza ciasteczka `Secure`. Workerowi potrzebny do webhooków Jiry (rejestruje je na `<adres>/webhooks/jira`); bez publicznego `https` Jira synchronizuje się tylko okresowo |
 | `GITHUB_APP_WEBHOOK_SECRET` | opcjonalnie | — | Sekret webhooka GitHub App (sekcja 1); bez niego `/webhooks/github` jest wyłączone |
 | `GITHUB_APP_CLIENT_ID`, `GITHUB_APP_CLIENT_SECRET` | tak | — | Logowanie |
+| `SUITE_ISSUER`, `SUITE_CLIENT_SECRET`, `SUITE_CLIENT_ID` | opcjonalnie | — | Logowanie przez tożsamość suity obok GitHub (`design-docs/SUITE-LOGIN-PLAN.pl.md`); klient `di-release` (domyślnie); `https`, `http` tylko na `localhost`. Workspace wiąże z organizacją suity jego admin w Ustawieniach → General |
 | `GITHUB_APP_ID`, `GITHUB_APP_SLUG`, `GITHUB_APP_PRIVATE_KEY` | tak | tak | Podłączanie repozytoriów (web) i synchronizacja (worker) |
 | `SYNC_INTERVAL_MINUTES` | — | opcjonalnie | Co ile minut synchronizacja (1–1440, domyślnie 15) |
 | `METRICS_TOKEN` | opcjonalnie | — | Włącza `GET /metrics` (format Prometheusa) dla `Authorization: Bearer <token>`; min. 32 znaki, `openssl rand -hex 32`. Bez niego trasy nie ma. Lista metryk: [README.md](README.md), „Metrics” |

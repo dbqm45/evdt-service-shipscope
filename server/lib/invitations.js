@@ -65,7 +65,7 @@ async function listPendingInvitations(pool, { tenantId, actorUserId }) {
     return withScope(pool, { tenantId }, async (client) => {
         await assertAdmin(client, { tenantId, userId: actorUserId });
         const { rows } = await client.query(
-            `SELECT i.id, i.role, u.github_login, i.created_at, i.expires_at
+            `SELECT i.id, i.role, COALESCE(u.github_login, u.display_name) AS github_login, i.created_at, i.expires_at
              FROM invitations i JOIN users u ON u.id = i.created_by
              WHERE i.tenant_id = $1 AND i.accepted_at IS NULL AND i.revoked_at IS NULL AND i.expires_at > now()
              ORDER BY i.created_at`,

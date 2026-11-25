@@ -33,11 +33,9 @@ function registerTenantRoutes(app, ctx) {
             },
         },
     }, async (request, reply) => {
-        const { tenant } = await createTenantWithOwner(pool, {
-            name: request.body.name.trim(),
-            githubUserId: request.user.githubUserId,
-            githubLogin: request.user.githubLogin,
-        });
+        const { tenant } = await createTenantWithOwner(pool, request.user.fromSuite
+            ? { name: request.body.name.trim(), userId: request.user.id }
+            : { name: request.body.name.trim(), githubUserId: request.user.githubUserId, githubLogin: request.user.githubLogin });
         return reply.code(201).send({ tenant: { id: tenant.id, name: tenant.name }, role: 'admin' });
     });
 
@@ -106,12 +104,18 @@ function registerTenantRoutes(app, ctx) {
                 type: 'object',
                 minProperties: 1,
                 additionalProperties: false,
-                properties: { deploymentRetentionDays: { type: 'integer', minimum: 7, maximum: 730 }, insightsEnabled: { type: 'boolean' } },
+                properties: {
+                    deploymentRetentionDays: { type: 'integer', minimum: 7, maximum: 730 },
+                    insightsEnabled: { type: 'boolean' },
+                    // The alias of a suite organization (design-docs/SUITE-LOGIN-PLAN.pl.md); null unlinks.
+                    suiteOrganization: { anyOf: [{ type: 'string', pattern: '^[a-z0-9][a-z0-9._-]{0,62}$' }, { type: 'null' }] },
+                },
             },
         },
     }, async (request) => updateSettings(pool, {
         tenantId: request.params.tenantId, actorUserId: request.user.id,
         deploymentRetentionDays: request.body.deploymentRetentionDays, insightsEnabled: request.body.insightsEnabled,
+        suiteOrganization: request.body.suiteOrganization,
     }));
 
     // Who changed which setting, and when (lib/audit-log.js): the latest events, newest first. Admins only.

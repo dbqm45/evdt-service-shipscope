@@ -35,7 +35,7 @@ async function api(method, path, body){
         body: body === undefined ? undefined : JSON.stringify(body),
     });
     if (res.status === 401) {
-        location.assign(`/auth/github/login?returnTo=${encodeURIComponent(location.pathname)}`);
+        location.assign(`/auth/login?returnTo=${encodeURIComponent(location.pathname)}`);
         throw new ApiError('Not signed in', 401);
     }
     if (res.status === 204) {
@@ -477,7 +477,7 @@ function ServiceTokens(tokens, once){
 /** `pdi`: the workspace is connected with pdi; outgoing events and service tokens belong to that layer (design-docs/PDI-GATE-PLAN.pl.md).
  * @param {{ workspace: { settings: object }|null, admin: boolean, auditEvents?: object[]|null|{ error: string }, eventSubscriptions?: object[]|null|{ error: string }, serviceTokens?: object[]|null|{ error: string }, once?: object, pdi?: boolean }} props */
 function renderGeneral({ workspace, admin, auditEvents = null, eventSubscriptions = null, serviceTokens = null, once = {}, pdi = false }){
-    const page = (body) => Page({ id: 'general', section: 'workspace', title: 'General', hint: admin ? 'How long ShipScope keeps this workspace\'s history, and whether the dashboard shows Insights.' : MEMBER_HINT, body });
+    const page = (body) => Page({ id: 'general', section: 'workspace', title: 'General', hint: admin ? 'How long ShipScope keeps this workspace\'s history, whether the dashboard shows Insights, and who joins from the suite.' : MEMBER_HINT, body });
     if (!workspace) {
         return page(html`<p class="settings-loading">Loading…</p>`);
     }
@@ -499,6 +499,15 @@ function renderGeneral({ workspace, admin, auditEvents = null, eventSubscription
                 <label class="inline"><input name="insightsEnabled" type="checkbox" ${workspace.settings.insightsEnabled ? raw('checked') : ''}> Show Insights on the dashboard</label>
                 <button type="submit" class="btn">Save</button></form>`
             : html`<p class="settings-hint">Insights: ${workspace.settings.insightsEnabled ? 'on' : 'off'}.</p>`,
+    })}${Card({
+        title: 'Suite sign-in',
+        // design-docs/SUITE-LOGIN-PLAN.pl.md: people of this suite organization join with the role their token gives.
+        body: admin
+            ? html`<p class="settings-hint">People of this organization in the suite's identity service join the workspace when they sign in with the suite: the suite's admin role makes them admins, editor and viewer make them members. Leave it empty to unlink.</p>
+                <form class="settings-form" data-action="save-suite-organization">
+                <label>Suite organization (its alias) <input name="suiteOrganization" type="text" maxlength="63" pattern="[a-z0-9][a-z0-9._-]{0,62}" value="${workspace.settings.suiteOrganization || ''}"></label>
+                <button type="submit" class="btn">Save</button></form>`
+            : html`<p class="settings-hint">${workspace.settings.suiteOrganization ? `Suite organization: ${workspace.settings.suiteOrganization}.` : 'Not linked to a suite organization.'}</p>`,
     })}${admin && pdi ? EventSubscriptions(eventSubscriptions) : ''}${admin && pdi ? ServiceTokens(serviceTokens, once) : ''}${admin ? AuditEvents(auditEvents) : ''}`);
 }
 
@@ -1213,7 +1222,7 @@ const AUDIT_EVENT_LABELS = {
     jira_connected: 'connected Jira', jira_disconnected: 'disconnected Jira',
     workspace_created: 'created the workspace', retention_changed: 'set deployment history to', insights_changed: 'turned Insights',
     invitation_created: 'created an invitation as', invitation_revoked: 'revoked an invitation as',
-    member_joined: 'joined as', member_removed: 'removed the member', member_left: 'left the workspace',
+    member_joined: 'joined as', member_removed: 'removed the member', member_left: 'left the workspace', member_role_changed: 'changed the role of', suite_organization_changed: 'linked the workspace to the suite organization',
     github_linked: 'connected the GitHub account', github_unlinked: 'disconnected the GitHub account',
     repo_tracked: 'started tracking', repo_untracked: 'stopped tracking', repo_settings_changed: 'changed version and drift settings of',
     repo_environments_changed: 'changed the environments of', repo_resynced: 'read the deployments again of', repo_flag_stance_changed: 'changed whether flags are used in',
@@ -1580,6 +1589,11 @@ const actions = {
     },
     'save-insights': async (form) => {
         await api('PUT', tenantPath('/settings'), { insightsEnabled: formValues(form).insightsEnabled.length > 0 });
+        return { section: 'workspace', ok: 'Saved.' };
+    },
+    'save-suite-organization': async (form) => {
+        const alias = formValues(form).suiteOrganization.trim();
+        await api('PUT', tenantPath('/settings'), { suiteOrganization: alias || null });
         return { section: 'workspace', ok: 'Saved.' };
     },
     'save-retention': async (form) => {
